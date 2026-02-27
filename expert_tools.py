@@ -13,7 +13,8 @@ from typing import List, Dict, Any
 class ExpertTools:
     """Expert tools for querying the Neo4j podcast episode graph"""
     
-    def __init__(self):
+    def __init__(self, tenant_id: str):
+        self.tenant_id = tenant_id
         # Initialize clients
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
         self.driver = GraphDatabase.driver(
@@ -71,7 +72,7 @@ class ExpertTools:
         """
         
         result = self.driver.execute_query(
-            query, 
+            query, tenant_id=self.tenant_id, 
             embedding=embedding, 
             top_k=top_k
         )
@@ -103,7 +104,7 @@ class ExpertTools:
         """
         
         result = self.driver.execute_query(
-            query, 
+            query, tenant_id=self.tenant_id, 
             question=question, 
             top_k=top_k
         )
@@ -184,7 +185,7 @@ class ExpertTools:
             "High Performance And Low Overhead Graphs With KuzuDB"
         """
         query = """
-        MATCH (e:Episode)-[:HAS_TOPIC]->(t:Topic)
+        MATCH (e:Episode {tenant_id: $tenant_id})-[:HAS_TOPIC]->(t:Topic)
         WHERE toLower(t.name) CONTAINS toLower($question) OR 
               toLower(e.name) CONTAINS toLower($question) OR
               toLower(e.description) CONTAINS toLower($question)
@@ -198,7 +199,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, question=question)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
         
         episodes = []
         for record in result.records:
@@ -257,7 +258,7 @@ class ExpertTools:
             "IS_A_GUEST"
         """
         query = """
-        MATCH (p:Person)-[r]-(e:Episode)
+        MATCH (p:Person)-[r]-(e:Episode {tenant_id: $tenant_id})
         WHERE toLower(p.name) CONTAINS toLower($question)
         RETURN DISTINCT p.name AS person_name,
                type(r) AS relationship_type,
@@ -269,7 +270,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, question=question)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
         
         people = []
         for record in result.records:
@@ -329,7 +330,7 @@ class ExpertTools:
             "The concept discussed in the Data Engineering Podcast..."
         """
         query = """
-        MATCH (e:Episode)-[:HAS_TOPIC]->(t:Topic)-[:COVERS_CONCEPT]->(c:Concept)
+        MATCH (e:Episode {tenant_id: $tenant_id})-[:HAS_TOPIC]->(t:Topic)-[:COVERS_CONCEPT]->(c:Concept)
         WHERE toLower(c.name) CONTAINS toLower($question) OR 
               toLower(c.description) CONTAINS toLower($question)
         RETURN DISTINCT e.name AS episode_name,
@@ -343,7 +344,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, question=question)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
         
         concepts = []
         for record in result.records:
@@ -406,7 +407,7 @@ class ExpertTools:
             Episode -> HAS_TOPIC -> Topic -> COVERS_TECHNOLOGY -> Technology
         """
         query = """
-        MATCH (e:Episode)-[:HAS_TOPIC]->(t:Topic)-[:COVERS_TECHNOLOGY]->(tech:Technology)
+        MATCH (e:Episode {tenant_id: $tenant_id})-[:HAS_TOPIC]->(t:Topic)-[:COVERS_TECHNOLOGY]->(tech:Technology)
         WHERE toLower(tech.name) CONTAINS toLower($question)
         RETURN DISTINCT e.name AS episode_name,
                e.number AS episode_number,
@@ -418,7 +419,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, question=question)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
         
         technologies = []
         for record in result.records:
@@ -453,7 +454,7 @@ class ExpertTools:
             }
         """
         query = """
-        MATCH (e:Episode)
+        MATCH (e:Episode {tenant_id: $tenant_id})
         OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
         OPTIONAL MATCH (e)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
         OPTIONAL MATCH (e)-[:HAS_CHUNK]->(c:Chunk)
@@ -463,7 +464,7 @@ class ExpertTools:
                count(DISTINCT c) AS total_chunks
         """
         
-        result = self.driver.execute_query(query)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
         record = result.records[0]
         
         stats = {
@@ -510,7 +511,7 @@ class ExpertTools:
             ]
         """
         query = """
-        MATCH (e:Episode)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
+        MATCH (e:Episode {tenant_id: $tenant_id})-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
         WHERE toLower(r.url) CONTAINS toLower($reference_string) OR 
               toLower(r.text) CONTAINS toLower($reference_string)
         RETURN e.name AS episode_name,
@@ -523,7 +524,7 @@ class ExpertTools:
         ORDER BY e.number DESC
         """
         
-        result = self.driver.execute_query(query, reference_string=reference_string)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, reference_string=reference_string)
         
         episodes = []
         for record in result.records:
@@ -575,7 +576,7 @@ class ExpertTools:
             ]
         """
         query = """
-        MATCH (e:Episode)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
+        MATCH (e:Episode {tenant_id: $tenant_id})-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
         WHERE toLower(r.url) CONTAINS toLower($search_terms) OR 
               toLower(r.text) CONTAINS toLower($search_terms)
         RETURN e.name AS episode_name,
@@ -588,7 +589,7 @@ class ExpertTools:
         ORDER BY e.number DESC
         """
         
-        result = self.driver.execute_query(query, search_terms=search_terms)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id, search_terms=search_terms)
         
         episodes = []
         for record in result.records:
@@ -607,13 +608,13 @@ class ExpertTools:
     def detect_embedding_model(self) -> str:
         """Detect which embedding model was used for chunks by checking dimensions"""
         query = """
-        MATCH (c:Chunk)
+        MATCH (c:Chunk {tenant_id: $tenant_id})
         WHERE c.embedding IS NOT NULL
         RETURN c.embedding AS embedding
         LIMIT 1
         """
         
-        result = self.driver.execute_query(query)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
         if result.records:
             embedding = result.records[0]['embedding']
             if embedding:
@@ -681,7 +682,7 @@ class ExpertTools:
                c.embedding AS chunk_embedding
         """
         
-        result = self.driver.execute_query(query)
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
         
         # Calculate similarities and filter by threshold
         relevant_chunks = []
@@ -823,7 +824,7 @@ class ExpertTools:
                 // Step 2: Match the relationship to find the parent Episode.
                 // We use the inverse direction of the BELONGS_TO relationship 
                 // to go from the retrieved Chunk node back to the Episode node.
-                MATCH (episode:Episode)<-[:BELONGS_TO_EPISODE]-(chunk)
+                MATCH (episode:Episode {tenant_id: $tenant_id})<-[:BELONGS_TO_EPISODE]-(chunk)
 
                 // Step 3: Return the results, ordered by similarity score.
                 RETURN

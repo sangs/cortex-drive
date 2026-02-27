@@ -28,7 +28,10 @@ dependencies = [
     "openai>=1.107.3",
     "numpy>=2.0.2",
     "nltk",
-    "mcp>=1.0.0"
+    "mcp>=1.0.0",
+    "starlette",
+    "uvicorn",
+    "sse-starlette"
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -41,6 +44,7 @@ package = true
 [project.scripts]
 cortex-os-mentalmodel = "cortex_os_mentalmodel_server:main"
 cortex-os-mentalmodel-http = "cortex_os_mentalmodel_http_server:main"
+cortex-os-mentalmodel-sse = "cortex_os_mentalmodel_server_sse:main"
 
 # Constrain setuptools discovery to specific standalone modules to avoid
 # "Multiple top-level packages discovered in a flat-layout" errors.
@@ -48,5 +52,6 @@ cortex-os-mentalmodel-http = "cortex_os_mentalmodel_http_server:main"
 py-modules = [
     "expert_tools",
     "cortex_os_mentalmodel_server",
-    "cortex_os_mentalmodel_http_server"
+    "cortex_os_mentalmodel_http_server",
+    "cortex_os_mentalmodel_server_sse"
 ]
