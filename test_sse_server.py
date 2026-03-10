@@ -5,7 +5,7 @@ import sys
 
 async def test_server():
     print("Testing connection to Cortex Model SSE Server")
-    headers = {"x-tenant-id": "test_tenant_1"}
+    headers = {"x-clerk-org-id": "test_org_123"}
     
     url = "http://127.0.0.1:8080/sse"
     

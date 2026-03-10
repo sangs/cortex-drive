@@ -345,6 +345,66 @@ wheels = [
 ]
 
 [[package]]
+name = "cortex-model"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "google-adk" },
+    { name = "langchain" },
+    { name = "langchain-experimental" },
+    { name = "langchain-neo4j" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "litellm" },
+    { name = "markdown" },
+    { name = "mcp" },
+    { name = "neo4j" },
+    { name = "neo4j-viz" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pypdf" },
+    { name = "python-dotenv" },
+    { name = "reportlab" },
+    { name = "sse-starlette" },
+    { name = "starlette" },
+    { name = "tqdm" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-adk", specifier = ">=1.0.0" },
+    { name = "langchain" },
+    { name = "langchain-experimental" },
+    { name = "langchain-neo4j" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "litellm" },
+    { name = "markdown" },
+    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "neo4j" },
+    { name = "neo4j-viz" },
+    { name = "nltk" },
+    { name = "numpy", specifier = ">=2.0.2" },
+    { name = "openai", specifier = ">=1.107.3" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pypdf" },
+    { name = "python-dotenv" },
+    { name = "reportlab" },
+    { name = "sse-starlette" },
+    { name = "starlette" },
+    { name = "tqdm" },
+    { name = "uvicorn" },
+]
+
+[package.metadata.requires-dev]
+dev = []
+
+[[package]]
 name = "cryptography"
 version = "46.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1870,66 +1930,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/50/69/4862fabc082f24471
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/00/1f74089c06aec1fac9390e2300a6a6b2381e0dac281783d64ccca9d681fd/neo4j-5.28.2-py3-none-any.whl", hash = "sha256:5c53b5c3eee6dee7e920c9724391aa38d7135a651e71b766da00533b92a91a94", size = 313156, upload-time = "2025-07-30T06:04:31.438Z" },
 ]
-
-[[package]]
-name = "neo4j-employee-graph"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "google-adk" },
-    { name = "langchain" },
-    { name = "langchain-experimental" },
-    { name = "langchain-neo4j" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "litellm" },
-    { name = "markdown" },
-    { name = "mcp" },
-    { name = "neo4j" },
-    { name = "neo4j-viz" },
-    { name = "nltk" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "pypdf" },
-    { name = "python-dotenv" },
-    { name = "reportlab" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "tqdm" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-adk", specifier = ">=1.0.0" },
-    { name = "langchain" },
-    { name = "langchain-experimental" },
-    { name = "langchain-neo4j" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "litellm" },
-    { name = "markdown" },
-    { name = "mcp", specifier = ">=1.0.0" },
-    { name = "neo4j" },
-    { name = "neo4j-viz" },
-    { name = "nltk" },
-    { name = "numpy", specifier = ">=2.0.2" },
-    { name = "openai", specifier = ">=1.107.3" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "pypdf" },
-    { name = "python-dotenv" },
-    { name = "reportlab" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "tqdm" },
-    { name = "uvicorn" },
-]
-
-[package.metadata.requires-dev]
-dev = []
 
 [[package]]
 name = "neo4j-graphrag"

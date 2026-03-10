@@ -61,7 +61,7 @@ class ExpertTools:
         })
         YIELD nodeId, similarity
         MATCH (chunk:Chunk)-[:BELONGS_TO_EPISODE]->(ep:Episode)
-        WHERE id(chunk) = nodeId
+        WHERE id(chunk) = nodeId AND ep.tenant_id = $tenant_id
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
                ep.link AS episode_link,
@@ -93,7 +93,7 @@ class ExpertTools:
     def query_relevant_chunks(self, question: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Search chunks using keyword matching (GDS-free alternative)"""
         query = """
-        MATCH (chunk:Chunk)-[:BELONGS_TO_EPISODE]->(ep:Episode)
+        MATCH (chunk:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_EPISODE]->(ep:Episode {tenant_id: $tenant_id})
         WHERE toLower(chunk.text) CONTAINS toLower($question)
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
@@ -672,7 +672,7 @@ class ExpertTools:
         
         # Query to get all chunks with their embeddings and episode information
         query = """
-        MATCH (c:Chunk)-[:BELONGS_TO_EPISODE]->(e:Episode)
+        MATCH (c:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_EPISODE]->(e:Episode {tenant_id: $tenant_id})
         WHERE c.embedding IS NOT NULL
         RETURN e.name AS episode_name,
                e.number AS episode_number,
@@ -745,10 +745,10 @@ class ExpertTools:
                 YIELD node AS chunk, score AS indexScore
 
                 // Match the relationship to find the parent Episode (seed episode)
-                MATCH (seedEpisode:Episode)<-[:BELONGS_TO_EPISODE]-(chunk)
+                MATCH (seedEpisode:Episode {tenant_id: $tenant_id})<-[:BELONGS_TO_EPISODE]-(chunk)
 
                 // Step 3: Follow the pre-calculated KNN relationships from the seed episodes
-                OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode)
+                OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode {tenant_id: $tenant_id})
 
                 // Step 4: Combine and rank the results
                 RETURN DISTINCT // Use DISTINCT to avoid duplicates if multiple seeds point to the same episode

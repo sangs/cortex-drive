@@ -16,7 +16,7 @@ except Exception as exc:  # pragma: no cover
     ) from exc
 
 
-server = Server[dict[str, Any], RequestT]("cortex-os-mentalmodel")
+server = Server("cortex-os-mentalmodel")
 
 
 @server.tool()
@@ -32,7 +32,10 @@ async def search_episodes_gds_by_question_tool(question: str, k: int, limit: int
     limit: int
         Total number of results to return.
     """
-    expert = ExpertTools()
+    # For stdio testing, we use a default tenant if not specified in env
+    # Prioritize TENANT_ID (Clerk Org), then TEST_TENANT fallback, then default
+    tenant_id = os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
     try:
         return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
     finally:
