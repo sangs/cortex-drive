@@ -214,6 +214,20 @@ class ExpertTools:
         
         return json.dumps(episodes, indent=2)
 
+    def get_tool_context(self) -> str:
+        """
+        Gets the context for how to use & access podcast episode data.
+        Returns the context string from the __MetaContext__ node.
+        """
+        query = """
+        MATCH (n:__MetaContext__ {version: 1, useCase: 'podcastEpisodeAssistant'})
+        RETURN n.context AS context
+        """
+        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
+        if result.records:
+            return result.records[0]['context']
+        return "No context found."
+
     def find_episodes_by_people(self, question: str) -> str:
         """
         Search for episodes that feature specific people (hosts, guests, or listeners).
