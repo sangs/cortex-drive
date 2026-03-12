@@ -34,9 +34,11 @@ const authMiddleware = async (req, res, next) => {
         const token = authHeader.split(' ')[1];
         try {
             const decoded = await clerkClient.verifyToken(token);
-            req.headers['x-tenant-id'] = decoded.sub;
+            // Use org_id if the user is acting on behalf of an org, otherwise use their personal sub
+            const tenantId = decoded.org_id || decoded.sub;
+            req.headers['x-tenant-id'] = tenantId;
             delete req.headers['authorization'];
-            console.log('JWT Auth verified for tenant:', decoded.sub);
+            console.log('JWT Auth verified for tenant:', tenantId);
             return next();
         } catch (err) {
             console.error('JWT verification failed:', err.message);
@@ -46,7 +48,7 @@ const authMiddleware = async (req, res, next) => {
     // 2. Check for Public API Key (Alternative Auth for Trials)
     if (apiKey) {
         const PUBLIC_TRIAL_KEY = process.env.PUBLIC_TRIAL_API_KEY || 'cortex_trial_key_2024';
-        const TRIAL_TENANT_ID = process.env.PUBLIC_TRIAL_TENANT_ID || 'trial_user_001';
+        const TRIAL_TENANT_ID = process.env.TENANT_ID || process.env.PUBLIC_TRIAL_TENANT_ID || 'org_3AacpFBbt39hPmDKyZyNBQuuM6t';
 
         if (apiKey === PUBLIC_TRIAL_KEY) {
             req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
@@ -80,6 +82,11 @@ async function callMcpTool(tenantId, toolName, toolArgs) {
         let buffer = '';
         const decoder = new TextDecoder();
 
+        // 60 second timeout for the entire orchestration step
+        const timeout = setTimeout(() => {
+            reject(new Error(`Orchestration timeout calling ${toolName} after 60s`));
+        }, 60000);
+
         const postJson = async (url, body) => {
             const res = await fetch(url, {
                 method: 'POST',
@@ -94,16 +101,17 @@ async function callMcpTool(tenantId, toolName, toolArgs) {
             for await (const chunk of sseResponse.body) {
                 buffer += decoder.decode(chunk, { stream: true });
                 
-                const lines = buffer.split(/\r?\n/);
+                let lines = buffer.split(/\r?\n/);
                 buffer = lines.pop(); // Keep partial line
 
                 for (let i = 0; i < lines.length; i++) {
                     const line = lines[i];
                     
                     if (line.startsWith('event: endpoint')) {
-                        const nextLine = lines[i + 1] || buffer;
-                        if (nextLine && nextLine.startsWith('data: ')) {
-                            const relative = nextLine.replace('data: ', '').trim();
+                        // The data: line should be either the next line or still in the buffer
+                        let dataLine = lines[i + 1] || buffer;
+                        if (dataLine && dataLine.startsWith('data: ')) {
+                            const relative = dataLine.replace('data: ', '').trim();
                             absoluteEndpoint = `${new URL(mcpServerUrl).origin}${relative.startsWith('/') ? '' : '/'}${relative}`;
                             console.log(`[GATEWAY] Discovered endpoint: ${absoluteEndpoint}. Initializing...`);
                             
@@ -148,6 +156,7 @@ async function callMcpTool(tenantId, toolName, toolArgs) {
                         try {
                             const msg = JSON.parse(jsonStr);
                             console.log(`[GATEWAY] SUCCESS: Received tool result for ${toolName}`);
+                            clearTimeout(timeout);
                             resolve(msg);
                             return; 
                         } catch (e) {
@@ -157,7 +166,8 @@ async function callMcpTool(tenantId, toolName, toolArgs) {
                 }
             }
         } catch (err) {
-            console.error("[GATEWAY] SSE loop error:", err.message);
+            clearTimeout(timeout);
+            console.error(`[GATEWAY] Orchestration Error for ${toolName}:`, err.message);
             reject(err);
         }
     });
@@ -279,11 +289,55 @@ const mcpToolsDefinitions = [
                 required: ["question"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "search_episodes_by_question_tool",
+            description: "Search for relevant episodes using vector similarity search on chunk embeddings. Returns actual transcript text (chunks). Use this for summarization, detailed questions, or specific quotes.",
+            parameters: {
+                type: "object",
+                properties: {
+                    question: { type: "string" },
+                    k: { type: "integer", default: 5 }
+                },
+                required: ["question"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_people_by_episode_tool",
+            description: "Find all people (hosts, guests, etc.) associated with a specific episode. Use this when you have an episode and need to know who the guest or host is.",
+            parameters: {
+                type: "object",
+                properties: {
+                    episode_name: { type: "string" }
+                },
+                required: ["episode_name"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "hybrid_discovery_tool",
+            description: "Advanced Native Hybrid Search (GraphRAG). Finds relevant chunks via vector search and automatically enriches them with Episode metadata and Participant names (Hosts/Guests) from the graph. Use this for general content questions.",
+            parameters: {
+                type: "object",
+                properties: {
+                    question: { type: "string" },
+                    k: { type: "integer", default: 5 }
+                },
+                required: ["question"]
+            }
+        }
     }
 ];
 
 app.post('/query', authMiddleware, async (req, res) => {
-    const { question } = req.body;
+    const { question, history = [] } = req.body;
     const tenantId = req.headers['x-tenant-id'];
 
     if (!question) {
@@ -291,67 +345,100 @@ app.post('/query', authMiddleware, async (req, res) => {
     }
 
     try {
-        console.log(`Orchestrating query for tenant ${tenantId}: "${question}"`);
+        // Prepare current context messages
+        let currentMessages = [
+            { 
+                role: "system", 
+                content: `You are the Cortex Brain Assistant. You have access to a knowledge graph of podcast episodes.
+                
+DIRECTIONS FOR TOOL SELECTION (TIERED HIERARCHY):
+1. LEVEL 1 (STRUCTURED): If the question is about counts, simple lists, or direct properties (e.g., "How many episodes..."), use explicit search tools or Cypher-like logic.
+2. LEVEL 2 (HYBRID/CONTEXTUAL): For "What was discussed" or "What did X say", YOU MUST USE 'hybrid_discovery_tool'. This is the standard entry point for GraphRAG.
+3. LEVEL 3 (SEMANTIC DISCOVERY): For broad discovery across topics where vector search is too narrow, USE 'search_episodes_gds_by_question_tool'.
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4-turbo-preview",
-            messages: [
-                { 
-                    role: "system", 
-                    content: "You are the Cortex Brain Assistant. You have access to tools that search a knowledge graph of podcast episodes. " +
-                             "Always prefer using tools to answer questions. If a tool returns no results, inform the user that no relevant information was found in the episodes. " +
-                             "Do not use your internal knowledge to hallucinate episode contents." 
-                },
-                { role: "user", content: question }
-            ],
-            tools: mcpToolsDefinitions,
-            tool_choice: "auto",
-        });
+CONTEXTUAL RULES:
+- Always resolve pronouns (e.g., "this episode", "they") using the provided conversation history.
+- If you find an episode but don't have participants, call 'get_people_by_episode_tool' to enrich.
+- Formatting: Provide professional, well-formatted responses. Use **bold** for key terms, names, and episode titles.`
+            },
+            ...history.map(m => {
+                const msg = { role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) };
+                if (m.tool_calls) msg.tool_calls = m.tool_calls;
+                if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
+                if (m.name) msg.name = m.name;
+                return msg;
+            }),
+            { role: "user", content: question }
+        ];
 
-        const message = response.choices[0].message;
+        let loopCount = 0;
+        const MAX_LOOPS = 5;
+        let lastToolResult = null;
+        let toolUsed = null;
 
-        if (message.tool_calls) {
-            const toolCall = message.tool_calls[0];
-            const toolName = toolCall.function.name;
-            const toolArgs = JSON.parse(toolCall.function.arguments);
-
-            console.log(`LLM decided to call: ${toolName} with args:`, toolArgs);
-
-            // Execute tool via session-aware helper
-            const mcpData = await callMcpTool(tenantId, toolName, toolArgs);
-            console.log(`Tool ${toolName} returned result.`);
-
-            // Extract the actual text content from the MCP response
-            let toolContent = JSON.stringify(mcpData);
-            if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
-                toolContent = mcpData.result.content[0].text;
-            }
+        while (loopCount < MAX_LOOPS) {
+            loopCount++;
             
-            console.log(`[GATEWAY] Passing to LLM (Tool Content): ${toolContent.substring(0, 500)}...`);
-
-            // Final synthesis
-            const secondResponse = await openai.chat.completions.create({
+            const response = await openai.chat.completions.create({
                 model: "gpt-4-turbo-preview",
-                messages: [
-                    { role: "user", content: question },
-                    message,
-                    {
-                        role: "tool",
-                        tool_call_id: toolCall.id,
-                        name: toolName,
-                        content: toolContent
-                    }
-                ]
+                messages: currentMessages,
+                tools: mcpToolsDefinitions,
+                tool_choice: "auto",
             });
 
-            return res.send({ 
-                answer: secondResponse.choices[0].message.content, 
-                tool_used: toolName,
-                raw_data: toolContent 
-            });
+            const assistantMessage = response.choices[0].message;
+            currentMessages.push(assistantMessage);
+
+            if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+                console.log(`[LOOP ${loopCount}] calling ${assistantMessage.tool_calls.length} tools`);
+                
+                // Execute ALL tool calls in the message
+                for (const toolCall of assistantMessage.tool_calls) {
+                    const toolName = toolCall.function.name;
+                    const toolArgs = JSON.parse(toolCall.function.arguments);
+                    toolUsed = toolName; // Track last for UI simplicity
+
+                    console.log(`  -> ${toolName} with args:`, toolArgs);
+
+                    try {
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs);
+                        
+                        // Extract text content
+                        let toolContent = JSON.stringify(mcpData);
+                        if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
+                            toolContent = mcpData.result.content[0].text;
+                        }
+                        lastToolResult = toolContent;
+
+                        currentMessages.push({
+                            role: "tool",
+                            tool_call_id: toolCall.id,
+                            name: toolName,
+                            content: toolContent
+                        });
+                    } catch (toolErr) {
+                        console.error(`Tool ${toolName} failed:`, toolErr.message);
+                        currentMessages.push({
+                            role: "tool",
+                            tool_call_id: toolCall.id,
+                            name: toolName,
+                            content: `Error calling tool: ${toolErr.message}`
+                        });
+                    }
+                }
+                continue; // LLM might want to call more tools
+            } else {
+                // Final synthesis complete
+                return res.send({ 
+                    answer: assistantMessage.content, 
+                    tool_used: toolUsed,
+                    raw_data: lastToolResult 
+                });
+            }
         }
 
-        return res.send({ answer: message.content });
+        return res.status(500).send({ error: "Maximum orchestration loops reached" });
+
     } catch (err) {
         console.error("LLM Query failed:", err);
         res.status(500).send({ error: "Internal server error during LLM orchestration", details: err.message });

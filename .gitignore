@@ -43,5 +43,13 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Initial Documentation & Notes
-/documents/
+# Logs
+logs/
+*.log
+nohup.out
+
+# Test Artifacts
+/tmp/
+tests/gateway/test_multiturn_orchestration.sh
+/tmp/test_output.txt
+/tmp/query_response.json

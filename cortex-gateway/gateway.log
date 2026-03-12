@@ -1,108 +1,49 @@
-[dotenv@17.3.1] injecting env (9) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+[dotenv@17.3.1] injecting env (9) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
 Cortex Gateway listening at http://localhost:3000
 Proxying to MCP Server at http://localhost:8080
 Orchestration endpoint available at POST /query
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Who are the guests in episode 1?"
-LLM decided to call: find_episodes_by_topic with args: { question: 'episode 1 guests' }
-[GATEWAY] Calling MCP tool find_episodes_by_topic for tenant trial_user_001
+JWT verification failed: clerkClient.verifyToken is not a function
+Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> search_episodes_gds_by_question_tool with args: { question: 'in-memory graph database discussion', k: 5 }
+[GATEWAY] Calling MCP tool search_episodes_gds_by_question_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=f06eace73d874a37888966f58b8ecc4d. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=e810111816f847ceb25969288de8c586. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_topic
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_topic
-Tool find_episodes_by_topic returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool find_episodes_by_topic: 'OPENAI_API_KEY'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "How many topics are in the database?"
-LLM decided to call: get_tool_statistics with args: {}
-[GATEWAY] Calling MCP tool get_tool_statistics for tenant trial_user_001
+[GATEWAY] Handshake complete. Calling tool: search_episodes_gds_by_question_tool
+[GATEWAY] SUCCESS: Received tool result for search_episodes_gds_by_question_tool
+JWT verification failed: clerkClient.verifyToken is not a function
+Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> get_people_by_episode_tool with args: {
+  episode_name: 'High Performance And Low Overhead Graphs With KuzuDB'
+}
+[GATEWAY] Calling MCP tool get_people_by_episode_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=34d8ca67c7114ea1a9f5d6bcdaf62ba9. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=c6c5218a93c449878f9e02ed13efc427. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: get_tool_statistics
-[GATEWAY] SUCCESS: Received tool result for get_tool_statistics
-Tool get_tool_statistics returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool get_tool_statistics: 'OPENAI_API_KEY'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Tell me about Snowflake."
-LLM decided to call: find_episodes_by_technology with args: { question: 'Snowflake' }
-[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant trial_user_001
+[GATEWAY] Handshake complete. Calling tool: get_people_by_episode_tool
+[GATEWAY] SUCCESS: Received tool result for get_people_by_episode_tool
+JWT verification failed: clerkClient.verifyToken is not a function
+Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> hybrid_discovery_tool with args: {
+  question: 'What is KuzuDB and how can it be used? What are the potential use cases?',
+  k: 5
+}
+[GATEWAY] Calling MCP tool hybrid_discovery_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=3fe7659400124fb2958e9acfc03ea9f7. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=a6a15187acdb497986bd5e54ed1970c4. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
-Tool find_episodes_by_technology returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool find_episodes_by_technology: 'OPENAI_API_KEY'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Who are the guests in episode 1?"
-LLM decided to call: find_episodes_by_reference with args: { reference_string: 'episode 1' }
-[GATEWAY] Calling MCP tool find_episodes_by_reference for tenant trial_user_001
+[GATEWAY] Handshake complete. Calling tool: hybrid_discovery_tool
+[GATEWAY] SUCCESS: Received tool result for hybrid_discovery_tool
+JWT verification failed: clerkClient.verifyToken is not a function
+Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> find_episodes_by_people with args: { question: 'sangeetha' }
+[GATEWAY] Calling MCP tool find_episodes_by_people for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=0e168e0512a54b9ba21516aeac806607. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=c888d46bd5944ca1b14ffdeeadb09fd4. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_reference
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_reference
-Tool find_episodes_by_reference returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool find_episodes_by_reference: 'NEO4J_URI'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "How many topics are in the database?"
-LLM decided to call: get_tool_statistics with args: {}
-[GATEWAY] Calling MCP tool get_tool_statistics for tenant trial_user_001
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=6debd54cd6d64de7b4f780e1e7fa127a. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: get_tool_statistics
-[GATEWAY] SUCCESS: Received tool result for get_tool_statistics
-Tool get_tool_statistics returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool get_tool_statistics: 'NEO4J_URI'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Tell me about Snowflake."
-LLM decided to call: find_episodes_by_technology with args: { question: 'Snowflake' }
-[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant trial_user_001
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=87e593b9e00b4c9a8124906b20ff90b4. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
-Tool find_episodes_by_technology returned result.
-[GATEWAY] Passing to LLM (Tool Content): Error executing tool find_episodes_by_technology: 'NEO4J_URI'...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Who are the guests in episode 1?"
-LLM decided to call: find_episodes_by_reference with args: { reference_string: 'episode 1' }
-[GATEWAY] Calling MCP tool find_episodes_by_reference for tenant trial_user_001
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=4883e9638df045d6bf87bb868766f40c. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_reference
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_reference
-Tool find_episodes_by_reference returned result.
-[GATEWAY] Passing to LLM (Tool Content): []...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "How many topics are in the database?"
-LLM decided to call: get_tool_statistics with args: {}
-[GATEWAY] Calling MCP tool get_tool_statistics for tenant trial_user_001
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=ad514b8c358d49d890bb8e273b4c189b. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: get_tool_statistics
-[GATEWAY] SUCCESS: Received tool result for get_tool_statistics
-Tool get_tool_statistics returned result.
-[GATEWAY] Passing to LLM (Tool Content): {
-  "total_episodes": 0,
-  "total_topics": 0,
-  "total_reference_links": 0,
-  "total_chunks": 0
-}...
-Public Trial Access granted for tenant: trial_user_001
-Orchestrating query for tenant trial_user_001: "Tell me about Snowflake."
-LLM decided to call: find_episodes_by_technology with args: { question: 'Snowflake' }
-[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant trial_user_001
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=1728eec29bbd4011bae23d462c8647be. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
-Tool find_episodes_by_technology returned result.
-[GATEWAY] Passing to LLM (Tool Content): []...
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_people
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_people
