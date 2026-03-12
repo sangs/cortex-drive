@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { BrainCircuit, Loader2 } from "lucide-react";
+import { forceCollide } from 'd3-force-3d';
 
 // Dynamically import the graph to avoid SSR issues
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
@@ -51,12 +52,32 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
         return () => window.removeEventListener('resize', updateDimensions);
     }, []);
 
+    const fgRef = useRef<any>(null);
+
+    // Configure d3 forces for better separation
+    useEffect(() => {
+        if (fgRef.current) {
+            // Stronger repulsion (charge)
+            fgRef.current.d3Force('charge').strength(-150);
+            
+            // Add collision force to prevent overlaps
+            fgRef.current.d3Force('collision', forceCollide(12));
+            
+            // Center force to keep it in view
+            fgRef.current.d3Force('center').strength(0.05);
+
+            // Slightly longer links for more breathing room
+            fgRef.current.d3Force('link').distance(50);
+        }
+    }, [data, dimensions]);
+
     // Memoize the graph to avoid unnecessary re-renders
     const graphInstance = useMemo(() => {
         if (dimensions.width === 0) return null;
 
         return (
             <ForceGraph2D
+                ref={fgRef}
                 graphData={data}
                 width={dimensions.width}
                 height={dimensions.height}
@@ -67,6 +88,16 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                 linkColor={() => "rgba(255, 255, 255, 0.08)"}
                 linkDirectionalParticles={2}
                 linkDirectionalParticleSpeed={d => 0.005}
+                cooldownTicks={100}
+                onNodeDragEnd={node => {
+                    node.fx = node.x;
+                    node.fy = node.y;
+                }}
+                onNodeClick={node => {
+                    // Unpin on click to allow auto-layout to take over again
+                    node.fx = undefined;
+                    node.fy = undefined;
+                }}
                 nodeCanvasObject={(node: any, ctx, globalScale) => {
                     const label = node.name;
                     const fontSize = 12 / globalScale;
@@ -74,24 +105,38 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                     const textWidth = ctx.measureText(label).width;
                     
                     // Node Color Logic
-                    let color = '#6366f1'; // Default Indigo
-                    if (node.type === 'Episode') color = '#0ea5e9'; // Cyan
-                    if (node.type === 'Topic') color = '#a855f7'; // Purple
-                    if (node.type === 'Person') color = '#10b981'; // Emerald
+                    let color = '#94a3b8'; // Default Slate 400
+                    if (node.type === 'Episode') color = '#0ea5e9'; // Cyan 500
+                    if (node.type === 'Topic') color = '#a855f7'; // Purple 500
+                    if (node.type === 'Person') color = '#10b981'; // Emerald 500
+                    if (node.type === 'Chunk') color = '#f59e0b'; // Amber 500
+                    if (node.type === 'Technology') color = '#6366f1'; // Indigo 500
+                    if (node.type === 'ReferenceLink') color = '#f43f5e'; // Rose 500
 
                     // Drawing Node
                     ctx.beginPath();
                     ctx.arc(node.x, node.y, 4, 0, 2 * Math.PI, false);
                     ctx.fillStyle = color;
+                    
+                    // Enhanced Glow for visibility
                     ctx.shadowColor = color;
-                    ctx.shadowBlur = 15;
+                    ctx.shadowBlur = 20 / globalScale;
                     ctx.fill();
                     ctx.shadowBlur = 0;
 
-                    // Drawing Label (if scale is high enough)
-                    if (globalScale > 1.5) {
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                        ctx.fillText(label, node.x - textWidth / 2, node.y + 10);
+                    // Drawing Label with background for discernability
+                    if (globalScale > 1.2) {
+                        const bgPadding = 2 / globalScale;
+                        ctx.fillStyle = 'rgba(2, 6, 23, 0.85)';
+                        ctx.fillRect(
+                            node.x - textWidth / 2 - bgPadding,
+                            node.y + 8 - bgPadding,
+                            textWidth + bgPadding * 2,
+                            fontSize + bgPadding * 2
+                        );
+
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                        ctx.fillText(label, node.x - textWidth / 2, node.y + 18);
                     }
                 }}
             />

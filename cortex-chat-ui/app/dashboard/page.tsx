@@ -349,25 +349,33 @@ export default function DashboardPage() {
                         </div>
 
                         {/* Status Legend */}
-                        <div className="absolute bottom-6 left-6 z-20 bg-slate-900/80 backdrop-blur border border-white/5 rounded-2xl p-4 flex flex-col gap-2 pointer-events-none">
-                            <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                 Knowledge Nodes
+                        {graphData.nodes.length > 0 && (
+                            <div className="absolute bottom-6 left-6 z-20 bg-slate-900/80 backdrop-blur border border-white/5 rounded-2xl p-4 flex flex-col gap-2 pointer-events-none">
+                                <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                     Visible Knowledge Nodes
+                                </div>
+                                <div className="flex flex-wrap gap-4">
+                                    {Array.from(new Set(graphData.nodes.map(n => n.type))).map(type => {
+                                        const colors: Record<string, string> = {
+                                            Episode: "bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]",
+                                            Topic: "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]",
+                                            Person: "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]",
+                                            Chunk: "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]",
+                                            Technology: "bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]",
+                                            ReferenceLink: "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"
+                                        };
+                                        const colorClass = colors[type] || "bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.5)]";
+                                        
+                                        return (
+                                            <div key={type} className="flex items-center gap-2">
+                                                <div className={`w-2 h-2 rounded-full ${colorClass}`} />
+                                                <span className="text-[10px] text-slate-400 capitalize">{type}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            <div className="flex flex-wrap gap-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]" />
-                                    <span className="text-[10px] text-slate-400">Episode</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
-                                    <span className="text-[10px] text-slate-400">Topic</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                                    <span className="text-[10px] text-slate-400">Person</span>
-                                </div>
-                            </div>
-                        </div>
+                        )}
                     </section>
                 )}
             </div>
