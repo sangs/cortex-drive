@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { BrainCircuit, Loader2 } from "lucide-react";
+// @ts-ignore
 import { forceCollide } from 'd3-force-3d';
 
 // Dynamically import the graph to avoid SSR issues

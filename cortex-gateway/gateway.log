@@ -1,49 +1,94 @@
-[dotenv@17.3.1] injecting env (9) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+[dotenv@17.3.1] injecting env (11) from .env -- tip: ⚙️  enable debug logging with { debug: true }
 Cortex Gateway listening at http://localhost:3000
 Proxying to MCP Server at http://localhost:8080
 Orchestration endpoint available at POST /query
-JWT verification failed: clerkClient.verifyToken is not a function
-Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> search_episodes_gds_by_question_tool with args: { question: 'in-memory graph database discussion', k: 5 }
-[GATEWAY] Calling MCP tool search_episodes_gds_by_question_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 2 tools
+  -> find_episodes_by_technology with args: { question: 'LLM' }
+[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=e810111816f847ceb25969288de8c586. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=3569d76567c24a4ab6eda63d34fb5252. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: search_episodes_gds_by_question_tool
-[GATEWAY] SUCCESS: Received tool result for search_episodes_gds_by_question_tool
-JWT verification failed: clerkClient.verifyToken is not a function
-Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> get_people_by_episode_tool with args: {
-  episode_name: 'High Performance And Low Overhead Graphs With KuzuDB'
-}
-[GATEWAY] Calling MCP tool get_people_by_episode_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
+  -> find_episodes_by_technology with args: { question: 'vector databases' }
+[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=c6c5218a93c449878f9e02ed13efc427. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=3154a3b2e1674ae581c624e908f2578c. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: get_people_by_episode_tool
-[GATEWAY] SUCCESS: Received tool result for get_people_by_episode_tool
-JWT verification failed: clerkClient.verifyToken is not a function
-Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [LOOP 1] calling 1 tools
   -> hybrid_discovery_tool with args: {
-  question: 'What is KuzuDB and how can it be used? What are the potential use cases?',
+  question: 'What is BAML and what was the discussion around BAML?',
   k: 5
 }
 [GATEWAY] Calling MCP tool hybrid_discovery_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=a6a15187acdb497986bd5e54ed1970c4. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=1ff45cd9753b432194d6ec37f091ad22. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
 [GATEWAY] Handshake complete. Calling tool: hybrid_discovery_tool
 [GATEWAY] SUCCESS: Received tool result for hybrid_discovery_tool
-JWT verification failed: clerkClient.verifyToken is not a function
-Public Trial Access granted for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [LOOP 1] calling 1 tools
-  -> find_episodes_by_people with args: { question: 'sangeetha' }
+  -> get_context with args: {}
+[GATEWAY] Calling MCP tool get_context for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=1d0b4f73302e478fb58f54e18cfe40f1. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: get_context
+[GATEWAY] SUCCESS: Received tool result for get_context
+[LOOP 2] calling 1 tools
+  -> run_cypher_query with args: { query: 'MATCH (e:Episode) RETURN e.name, e.number, e.link LIMIT 5' }
+[GATEWAY] Calling MCP tool run_cypher_query for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=bd6fa78d9d4c495bb00985446a939639. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: run_cypher_query
+[GATEWAY] SUCCESS: Received tool result for run_cypher_query
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> find_episodes_by_topic with args: { question: 'database and snowflake' }
+[GATEWAY] Calling MCP tool find_episodes_by_topic for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=7d4058d0b5a0461493b9d3e7f94ec535. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_topic
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_topic
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> find_episodes_by_technology with args: { question: 'Snowflake' }
+[GATEWAY] Calling MCP tool find_episodes_by_technology for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=693e2ef4b6fc497f8baf76c2f5d0f0ba. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_technology
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_technology
+[LOOP 2] calling 1 tools
+  -> find_episodes_by_topic with args: { question: 'data warehouses' }
+[GATEWAY] Calling MCP tool find_episodes_by_topic for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=f9f5e92be5a049ccab6bbef11585951d. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: find_episodes_by_topic
+[GATEWAY] SUCCESS: Received tool result for find_episodes_by_topic
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> search_episodes_gds_by_question_tool with args: { question: 'snowflake or data warehouse', k: 5 }
+[GATEWAY] Calling MCP tool search_episodes_gds_by_question_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[GATEWAY] SSE Connection established.
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=8bc8ab3e94aa49d5b099200dd313c12a. Initializing...
+[GATEWAY] MCP Initialized response received. Sending notification.
+[GATEWAY] Handshake complete. Calling tool: search_episodes_gds_by_question_tool
+[GATEWAY] SUCCESS: Received tool result for search_episodes_gds_by_question_tool
+JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
+[LOOP 1] calling 1 tools
+  -> find_episodes_by_people with args: { question: 'Sangeetha' }
 [GATEWAY] Calling MCP tool find_episodes_by_people for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
 [GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=c888d46bd5944ca1b14ffdeeadb09fd4. Initializing...
+[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=0a893e3a84d94d70b42ce1bf872eb029. Initializing...
 [GATEWAY] MCP Initialized response received. Sending notification.
 [GATEWAY] Handshake complete. Calling tool: find_episodes_by_people
 [GATEWAY] SUCCESS: Received tool result for find_episodes_by_people

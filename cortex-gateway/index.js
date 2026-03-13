@@ -1,6 +1,6 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { createClerkClient } = require('@clerk/backend');
+const { createClerkClient, verifyToken } = require('@clerk/backend');
 const cors = require('cors');
 const OpenAI = require('openai');
 require('dotenv').config();
@@ -29,23 +29,28 @@ const authMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     const apiKey = req.headers['x-api-key'];
 
-    // 1. Check for Clerk JWT (Primary Auth)
+    // 1. Primary Auth: Clerk JWT
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
         try {
-            const decoded = await clerkClient.verifyToken(token);
-            // Use org_id if the user is acting on behalf of an org, otherwise use their personal sub
-            const tenantId = decoded.org_id || decoded.sub;
+            // Standardizing for @clerk/backend standalone verification
+            const decoded = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
+            
+            // Prioritize: 1. Org from token, 2. Default Org from env, 3. User sub from token
+            const tenantId = decoded.org_id || process.env.TENANT_ID || decoded.sub;
+            
             req.headers['x-tenant-id'] = tenantId;
             delete req.headers['authorization'];
             console.log('JWT Auth verified for tenant:', tenantId);
             return next();
         } catch (err) {
             console.error('JWT verification failed:', err.message);
+            return res.status(401).send({ error: 'Unauthorized: Invalid JWT token' });
         }
     }
 
-    // 2. Check for Public API Key (Alternative Auth for Trials)
+    // 2. Secondary Auth: Public API Key (For Trials/CURL)
+    // Only reachable if NO Authorization header was provided
     if (apiKey) {
         const PUBLIC_TRIAL_KEY = process.env.PUBLIC_TRIAL_API_KEY || 'cortex_trial_key_2024';
         const TRIAL_TENANT_ID = process.env.TENANT_ID || process.env.PUBLIC_TRIAL_TENANT_ID || 'org_3AacpFBbt39hPmDKyZyNBQuuM6t';
@@ -54,10 +59,12 @@ const authMiddleware = async (req, res, next) => {
             req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
             console.log('Public Trial Access granted for tenant:', TRIAL_TENANT_ID);
             return next();
+        } else {
+            return res.status(401).send({ error: 'Unauthorized: Invalid API Key' });
         }
     }
 
-    return res.status(401).send({ error: 'Unauthorized: Missing or invalid authentication' });
+    return res.status(401).send({ error: 'Unauthorized: Authentication required (JWT or API Key)' });
 };
 
 // --- LLM Orchestration Section ---
@@ -327,10 +334,38 @@ const mcpToolsDefinitions = [
             parameters: {
                 type: "object",
                 properties: {
-                    question: { type: "string" },
+                    question: { type: "string", description: "The semantic query or question to search for." },
                     k: { type: "integer", default: 5 }
                 },
                 required: ["question"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "run_cypher_query",
+            description: "Execute a raw Cypher query against the Neo4j graph. Use this for surgical precision, complex joins, or counting nodes (e.g., 'How many episodes?'). Always include 'WHERE n.tenant_id = $tenant_id'.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "The Cypher query string." }
+                },
+                required: ["query"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_node_details",
+            description: "Fetch all properties and labels for a specific node by its 'name'. Use this to 'enrich' your knowledge of an entity once you have its name from a search.",
+            parameters: {
+                type: "object",
+                properties: {
+                    node_name: { type: "string", description: "The 'name' property of the node." }
+                },
+                required: ["node_name"]
             }
         }
     }
@@ -349,17 +384,21 @@ app.post('/query', authMiddleware, async (req, res) => {
         let currentMessages = [
             { 
                 role: "system", 
-                content: `You are the Cortex Brain Assistant. You have access to a knowledge graph of podcast episodes.
-                
-DIRECTIONS FOR TOOL SELECTION (TIERED HIERARCHY):
-1. LEVEL 1 (STRUCTURED): If the question is about counts, simple lists, or direct properties (e.g., "How many episodes..."), use explicit search tools or Cypher-like logic.
-2. LEVEL 2 (HYBRID/CONTEXTUAL): For "What was discussed" or "What did X say", YOU MUST USE 'hybrid_discovery_tool'. This is the standard entry point for GraphRAG.
-3. LEVEL 3 (SEMANTIC DISCOVERY): For broad discovery across topics where vector search is too narrow, USE 'search_episodes_gds_by_question_tool'.
+                content: `You are the Cortex Brain Assistant. You are a Graph Agent with three tiers of reasoning:
 
-CONTEXTUAL RULES:
-- Always resolve pronouns (e.g., "this episode", "they") using the provided conversation history.
-- If you find an episode but don't have participants, call 'get_people_by_episode_tool' to enrich.
-- Formatting: Provide professional, well-formatted responses. Use **bold** for key terms, names, and episode titles.`
+TIERED REASONING STRATEGY:
+1. TIER 1 (ATOMIC PRECISION): 
+   - FOR COUNTS: Use 'get_tool_statistics' for high-level numbers.
+   - FOR LISTS/ENUMERATION: Use 'run_cypher_query' to fetch lists of specific nodes (e.g., 'MATCH (e:Episode) RETURN e.name').
+   - FOR FOLLOW-UPS: Use 'get_node_details("Entity Name")' once you have an entity name from a previous turn.
+2. TIER 2 (HYBRID DISCOVERY): When the question is content-based ("What was said...") and you are discovering new information. USE 'hybrid_discovery_tool'. 
+3. TIER 3 (SEMANTIC EXPLORATION): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
+
+CYPHER RULES:
+- When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.
+- Enumeration: If the user asks "What are the available episodes?" or "List the guests," you MUST enumerate them, not just give a count.
+- Resolve all pronouns (this, they, that episode) by looking at conversation history.
+- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names.`
             },
             ...history.map(m => {
                 const msg = { role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) };

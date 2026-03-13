@@ -929,24 +929,31 @@ class ExpertTools:
     def hybrid_discovery(self, question: str, k: int = 5) -> str:
         """
         Native Hybrid Search (GraphRAG): Performs vector search on chunks and 
-        immediately traverses to parent Episode and related Person nodes.
+        immediately traverses to parent Episode and related nodes.
         
         Returns a unified JSON object with content, metadata, and participants.
         """
-        question_embedding = self.create_question_embedding(question)
+        question_embedding = self.get_embedding(question, model="text-embedding-3-small")
         
         query = """
-        CALL db.index.vector.queryNodes('chunkIndex', $k, $questionEmbedding)
+        CALL db.index.vector.queryNodes('chunkIndex', 100, $questionEmbedding)
         YIELD node AS chunk, score
         MATCH (chunk)-[:BELONGS_TO_EPISODE]->(e:Episode {tenant_id: $tenant_id})
+        
         OPTIONAL MATCH (p:Person)-[r]-(e)
         WHERE type(r) IN ['IS_A_HOST', 'IS_A_GUEST']
+        
+        OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
+        OPTIONAL MATCH (t)-[:COVERS_TECHNOLOGY]->(tech:Technology)
+
         RETURN e.name AS episode_title,
                e.number AS episode_number,
                e.description AS episode_description,
                chunk.text AS chunk_content,
                score AS similarity_score,
-               collect({name: p.name, role: type(r)}) AS participants
+               collect(DISTINCT {name: p.name, role: type(r)}) AS participants,
+               collect(DISTINCT t.name) AS topics,
+               collect(DISTINCT tech.name) AS technologies
         ORDER BY similarity_score DESC
         LIMIT $k
         """
@@ -966,10 +973,58 @@ class ExpertTools:
                 'episode_description': record['episode_description'],
                 'chunk_content': record['chunk_content'],
                 'similarity_score': record['similarity_score'],
-                'participants': record['participants']
+                'participants': record['participants'],
+                'topics': record['topics'],
+                'technologies': record['technologies']
             })
             
         return json.dumps(enriched_results, indent=2)
+
+    def run_cypher_query(self, query: str) -> str:
+        """
+        Execute a raw Cypher query against the Neo4j graph.
+        Use this for surgical precision, complex joins, or counting nodes when pre-built tools are insufficient.
+        Always ensure the query is scoped to the current $tenant_id.
+        """
+        try:
+            result = self.driver.execute_query(
+                query, 
+                tenant_id=self.tenant_id
+            )
+            
+            output = []
+            for record in result.records:
+                output.append(record.data())
+            
+            return json.dumps(output, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def get_node_details(self, node_name: str) -> str:
+        """
+        Fetch all properties and labels for a specific node by its 'name' property.
+        Use this to 'enrich' your knowledge of an entity once you have its name from a search.
+        """
+        query = """
+        MATCH (n {tenant_id: $tenant_id})
+        WHERE toLower(n.name) = toLower($node_name)
+        RETURN n, labels(n) AS labels
+        LIMIT 1
+        """
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id,
+            node_name=node_name
+        )
+        
+        if not result.records:
+            return json.dumps({"message": f"Node with name '{node_name}' not found."})
+            
+        record = result.records[0]
+        return json.dumps({
+            "properties": record['n'].data(),
+            "labels": record['labels']
+        }, indent=2)
 
     def close(self):
         """Close the Neo4j driver"""

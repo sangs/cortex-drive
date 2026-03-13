@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, OrganizationSwitcher } from "@clerk/nextjs";
 import {
     Plus,
     Search,
@@ -47,6 +47,7 @@ export default function DashboardPage() {
             const links = [...currentGraph.links];
 
             const addNode = (node: any) => {
+                if (!node.id) return null;
                 const existing = nodes.find(n => n.id === node.id);
                 if (!existing) {
                     nodes.push(node);
@@ -56,54 +57,80 @@ export default function DashboardPage() {
             };
 
             const addLink = (link: any) => {
+                if (!link.source || !link.target) return;
                 const existing = links.find(l => 
-                    l.source === link.source && l.target === link.target
+                    (l.source === link.source && l.target === link.target) ||
+                    (l.source === link.target && l.target === link.source)
                 );
                 if (!existing) {
                     links.push(link);
                 }
             };
 
-            if (Array.isArray(data)) {
-                data.forEach((item, idx) => {
-                    // Normalize Seed Episode
-                    const seedName = item.episode_name || item.name || item.SeedEpisode || item.EpisodeTitle;
-                    if (seedName) {
-                        const seedNum = item.episode_number || item.SeedEpisodeNumber || item.EpisodeNumber || `seed-${idx}`;
-                        const seedId = `ep-${seedNum}`;
-                        
-                        addNode({ id: seedId, name: seedName, type: "Episode", val: 10 });
+            // Enhanced Normalizer Helper
+            const extractValue = (obj: any, keys: string[]) => {
+                for (const key of keys) {
+                    if (obj[key] !== undefined) return obj[key];
+                    // Handle Cypher keys like 'e.name' or 'n.name'
+                    const bracketKey = key.includes('.') ? key : null;
+                    if (bracketKey && obj[bracketKey] !== undefined) return obj[bracketKey];
+                    // Case insensitive check
+                    const k = Object.keys(obj).find(k => k.toLowerCase() === key.toLowerCase());
+                    if (k) return obj[k];
+                }
+                return null;
+            };
 
-                        // Handle Similar Episode (GDS KNN)
-                        if (item.SimilarEpisode) {
-                            const simNum = item.SimilarEpisodeNumber || `sim-${idx}`;
-                            const simId = `ep-${simNum}`;
-                            addNode({ id: simId, name: item.SimilarEpisode, type: "Episode", val: 8 });
-                            addLink({ source: seedId, target: simId, type: "SIMILAR" });
-                        }
+            const processItem = (item: any, idx: number) => {
+                // 1. Identify "Seed" node (The Primary Subject)
+                const nameKeys = ['episode_name', 'name', 'SeedEpisode', 'EpisodeTitle', 'e.name', 'n.name', 'title'];
+                const idKeys = ['episode_number', 'SeedEpisodeNumber', 'EpisodeNumber', 'id', 'e.episode_number'];
+                
+                const name = extractValue(item, nameKeys);
+                if (!name) return;
 
-                        // Standard metadata nodes
-                        if (item.topics && Array.isArray(item.topics)) {
-                            item.topics.forEach((topic: string) => {
-                                const topicId = `topic-${topic}`;
-                                addNode({ id: topicId, name: topic, type: "Topic", val: 5 });
-                                addLink({ source: seedId, target: topicId });
-                            });
-                        }
+                const num = extractValue(item, idKeys) || `node-${idx}-${Date.now()}`;
+                const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
+                const id = `node-${num}`;
+                
+                addNode({ id, name, type, val: 10 });
 
-                        if (item.person_name) {
-                            const personId = `person-${item.person_name}`;
-                            addNode({ id: personId, name: item.person_name, type: "Person", val: 7 });
-                            addLink({ source: seedId, target: personId });
-                        }
+                // 2. Handle GDS/Hybrid Search "Similar" nodes
+                const simName = extractValue(item, ['SimilarEpisode', 'target_name', 'related_name']);
+                if (simName) {
+                    const simNum = extractValue(item, ['SimilarEpisodeNumber', 'target_id']) || `sim-${idx}`;
+                    const simId = `node-${simNum}`;
+                    addNode({ id: simId, name: simName, type: 'Episode', val: 8 });
+                    addLink({ source: id, target: simId, type: 'SIMILAR' });
+                }
+
+                // 3. Metadata Enrichment (Topics/People/Tech)
+                const metadata = [
+                    { key: ['topics', 'Topics', 'topic'], type: 'Topic', linkType: 'HAS_TOPIC' },
+                    { key: ['person_name', 'Person', 'people'], type: 'Person', linkType: 'HAS_PARTICIPANT' },
+                    { key: ['technologies', 'Technology', 'tech'], type: 'Technology', linkType: 'COVERS_TECHNOLOGY' }
+                ];
+
+                metadata.forEach(m => {
+                    const vals = extractValue(item, m.key);
+                    if (vals) {
+                        const valsArray = Array.isArray(vals) ? vals : [vals];
+                        valsArray.forEach((v: string) => {
+                            if (typeof v !== 'string') return;
+                            const vId = `${m.type.toLowerCase()}-${v}`;
+                            addNode({ id: vId, name: v, type: m.type, val: 5 });
+                            addLink({ source: id, target: vId, type: m.linkType });
+                        });
                     }
                 });
+            };
+
+            if (Array.isArray(data)) {
+                data.forEach((item, idx) => processItem(item, idx));
             } else if (typeof data === 'object' && data !== null) {
-                // Handle case where object is returned directly instead of array
-                const epName = data.episode_name || data.name || data.SeedEpisode || "Data Node";
-                const episodeId = `node-${Date.now()}`;
-                addNode({ id: episodeId, name: epName, type: "Episode", val: 10 });
+                processItem(data, 0);
             }
+
             return { nodes, links };
         } catch (e) {
             console.error("Failed to parse graph data", e);
@@ -246,17 +273,36 @@ export default function DashboardPage() {
                     )}
                 </nav>
 
-                <div className="p-4 border-t border-white/5 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <UserButton afterSignOutUrl="/" />
-                        <div className="flex flex-col">
-                            <span className="text-sm font-medium">My Brain</span>
-                            <span className="text-xs text-slate-500 truncate max-w-[120px]">Authenticated</span>
-                        </div>
+                <div className="p-4 border-t border-white/5 flex flex-col gap-4">
+                    <div className="px-2">
+                        <OrganizationSwitcher 
+                            afterCreateOrganizationUrl="/dashboard"
+                            afterLeaveOrganizationUrl="/dashboard"
+                            afterSelectOrganizationUrl="/dashboard"
+                            appearance={{
+                                baseTheme: undefined,
+                                elements: {
+                                    rootBox: "w-full",
+                                    organizationSwitcherTrigger: "w-full bg-white/5 border border-white/5 px-4 py-2 rounded-xl text-white hover:bg-white/10 transition-all",
+                                    organizationPreviewTextContainer: "text-white",
+                                    organizationPreviewMainIdentifier: "text-white font-medium",
+                                }
+                            }}
+                        />
                     </div>
-                    <button className="p-2 text-slate-500 hover:text-white transition-colors">
-                        <Settings className="w-5 h-5" />
-                    </button>
+                    
+                    <div className="flex items-center justify-between px-2">
+                        <div className="flex items-center gap-3">
+                            <UserButton afterSignOutUrl="/" />
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium">My Brain</span>
+                                <span className="text-xs text-slate-500 truncate max-w-[120px]">Authenticated</span>
+                            </div>
+                        </div>
+                        <button className="p-2 text-slate-500 hover:text-white transition-colors">
+                            <Settings className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
             </aside>
 

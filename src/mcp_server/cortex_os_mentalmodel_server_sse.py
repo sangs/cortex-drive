@@ -198,16 +198,47 @@ async def get_people_by_episode_tool(
         expert.close()
 
 @mcp.tool()
+async def run_cypher_query(
+    query: str = Field(description="The raw Cypher query to execute. Always use $tenant_id for data isolation.")
+) -> str:
+    """
+    Execute a raw Cypher query against the Neo4j graph.
+    Use this for surgical precision, complex joins, or counting nodes when pre-built tools are insufficient.
+    Returns JSON results.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return expert.run_cypher_query(query)
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def get_node_details(
+    node_name: str = Field(description="The 'name' property of the node to fetch details for.")
+) -> str:
+    """
+    Fetch all properties and labels for a specific node by its 'name'.
+    Use this to 'enrich' your knowledge of an entity once you have its name from a search.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return expert.get_node_details(node_name)
+    finally:
+        expert.close()
+
+@mcp.tool()
 async def hybrid_discovery_tool(
-    question: str,
-    k: int = 5
+    question: str = Field(description="The semantic query or question to search for."),
+    k: Optional[int] = Field(5, description="Number of results to return. Default 5.")
 ) -> str:
     """
     Perform a native Hybrid Search (GraphRAG).
     Finds relevant chunks via vector search and automatically enriches them with
     Episode metadata and Participant names (Hosts/Guests) from the graph.
+    
     Returns JSON with content, similarity, metadata, and participants.
-    Use this for content-based questions where you also need participant context.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     expert = ExpertTools(tenant_id=tenant_id)
