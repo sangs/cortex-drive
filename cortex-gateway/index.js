@@ -368,6 +368,31 @@ const mcpToolsDefinitions = [
                 required: ["node_name"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "search_resume_graph",
+            description: "Search for entities across Sangeetha's Interactive Resume Graph. Use this whenever the user asks about professional background, projects, publications, startups, hackathons, certifications, or companies.",
+            parameters: {
+                type: "object",
+                properties: {
+                    keyword: { type: "string", description: "The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon')." }
+                },
+                required: ["keyword"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "explore_graph_schema",
+            description: "Introspect the Neo4j database to find exactly what Node Labels and Relationships exist. Call this tool BEFORE writing a Cypher query if you are unsure of the data structure.",
+            parameters: {
+                type: "object",
+                properties: {}
+            }
+        }
     }
 ];
 
@@ -384,7 +409,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         let currentMessages = [
             { 
                 role: "system", 
-                content: `You are the Cortex Brain Assistant. You are a Graph Agent with three tiers of reasoning:
+                content: `You are the Cortex Brain Assistant. You are a Graph Agent with four tiers of reasoning:
 
 TIERED REASONING STRATEGY:
 1. TIER 1 (ATOMIC PRECISION): 
@@ -393,6 +418,12 @@ TIERED REASONING STRATEGY:
    - FOR FOLLOW-UPS: Use 'get_node_details("Entity Name")' once you have an entity name from a previous turn.
 2. TIER 2 (HYBRID DISCOVERY): When the question is content-based ("What was said...") and you are discovering new information. USE 'hybrid_discovery_tool'. 
 3. TIER 3 (SEMANTIC EXPLORATION): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
+4. TIER 4 (CAREER & RESUME): When the user asks about Sangeetha's professional background, resume, projects, startups, hackathons, certifications, companies, or publications. USE 'search_resume_graph'.
+
+GRAPH SCHEMA AND ONTOLOGY:
+You MUST dynamically discover the schema!
+- If you need to map out podcast histories, open source projects, books, or any domain you are unsure of, use the \`explore_graph_schema()\` tool FIRST to fetch the active Neo4j ontology.
+- Rely on that tool's output to construct perfect, hallucination-free Cypher queries.
 
 CYPHER RULES:
 - When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.

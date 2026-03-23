@@ -57,3 +57,4 @@ tests/gateway/test_multiturn_orchestration.sh
 /tmp/test_output.txt
 /tmp/query_response.json
 not_used/
+cortex-gateway/gateway.log

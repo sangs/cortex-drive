@@ -74,7 +74,7 @@ class ModelAuditor:
 
             # 4. Orphaned Chunks
             print("Auditing orphaned chunks...")
-            q4 = "MATCH (c:Chunk) WHERE NOT (c)-[:BELONGS_TO_EPISODE]->(:Episode) RETURN count(c) as Count"
+            q4 = "MATCH (c:Chunk) WHERE NOT (c)<-[:CONTAINS]-(:Source) RETURN count(c) as Count"
             report["orphaned_chunks"] = session.run(q4).single()["Count"]
 
         return report

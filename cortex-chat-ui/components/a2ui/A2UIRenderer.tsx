@@ -3,6 +3,9 @@
 import React from "react";
 import KnowledgeNode from "./KnowledgeNode";
 
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
 interface A2UIMessage {
     type: string;
     props: any;
@@ -14,25 +17,13 @@ const COMPONENT_MAP: Record<string, React.ComponentType<any>> = {
 };
 
 export default function A2UIRenderer({ message }: { message: A2UIMessage | string }) {
-    // If message is just a string, render as formatted text
+    // If message is just a string, render as formatted markdown
     if (typeof message === "string") {
-        const lines = message.split('\n');
         return (
-            <div className="text-slate-300 leading-relaxed space-y-2">
-                {lines.map((line, idx) => {
-                    // Simple bolding: **text** -> <strong>text</strong>
-                    const parts = line.split(/(\*\*.*?\*\*)/g);
-                    return (
-                        <p key={idx} className="min-h-[1.5em]">
-                            {parts.map((part, i) => {
-                                if (part.startsWith('**') && part.endsWith('**')) {
-                                    return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
-                                }
-                                return part;
-                            })}
-                        </p>
-                    );
-                })}
+            <div className="text-slate-300 leading-relaxed text-sm prose prose-invert prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message}
+                </ReactMarkdown>
             </div>
         );
     }

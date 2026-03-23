@@ -102,7 +102,7 @@ async def find_episodes_by_people(question: str) -> str:
     Search for episodes that feature specific people (hosts, guests, or listeners).
     Searches for people whose names contain the given question string
     and returns all episodes where they appear, along with their relationship type
-    to the episode (e.g., IS_A_HOST, IS_A_GUEST, LISTENS_TO_EPISODE, etc.).
+    to the episode (e.g., HOSTS, GUEST_ON, LISTENS_TO_EPISODE, etc.).
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     expert = ExpertTools(tenant_id=tenant_id)
@@ -225,6 +225,36 @@ async def get_node_details(
     expert = ExpertTools(tenant_id=tenant_id)
     try:
         return expert.get_node_details(node_name)
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def search_resume_graph(
+    keyword: str = Field(description="The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon').")
+) -> str:
+    """
+    Search for entities across the Interactive Resume Graph.
+    Matches keywords against Node Names and Descriptions for any node that represents 
+    a professional entity (Company, Role, Project, Publication, Startup, Hackathon, etc.).
+    Explicitly excludes Podcast-related conceptual nodes.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return expert.search_resume_graph(keyword)
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def explore_graph_schema() -> str:
+    """
+    Introspect the Neo4j database to find exactly what Node Labels and Relationships exist.
+    Call this tool whenever you don't know the exact schema needed to write a Cypher query.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return expert.explore_graph_schema()
     finally:
         expert.close()
 

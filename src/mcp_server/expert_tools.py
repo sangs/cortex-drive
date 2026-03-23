@@ -8,6 +8,7 @@ import os
 import json
 import numpy as np
 from typing import List, Dict, Any, Optional
+from schema_guard import PROJECT_GRAPH_NODES
 
 
 class ExpertTools:
@@ -60,7 +61,7 @@ class ExpertTools:
             queryVector: $embedding
         })
         YIELD nodeId, similarity
-        MATCH (chunk:Chunk)-[:BELONGS_TO_EPISODE]->(ep:Episode)
+        MATCH (chunk:Chunk)-[:BELONGS_TO_SOURCE]->(s:Source)<-[:HAS_SOURCE]-(ep:Episode)
         WHERE id(chunk) = nodeId AND ep.tenant_id = $tenant_id
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
@@ -93,7 +94,7 @@ class ExpertTools:
     def query_relevant_chunks(self, question: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Search chunks using keyword matching (GDS-free alternative)"""
         query = """
-        MATCH (chunk:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_EPISODE]->(ep:Episode {tenant_id: $tenant_id})
+        MATCH (chunk:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_SOURCE]->(s:Source {tenant_id: $tenant_id})<-[:HAS_SOURCE]-(ep:Episode {tenant_id: $tenant_id})
         WHERE toLower(chunk.text) CONTAINS toLower($question)
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
@@ -234,7 +235,7 @@ class ExpertTools:
         
         This method searches for people whose names contain the given question string
         and returns all episodes where they appear, along with their relationship type
-        to the episode (e.g., IS_A_HOST, IS_A_GUEST, LISTENS_TO_EPISODE, etc.).
+        to the episode (e.g., HOSTS, GUEST_ON, LISTENS_TO_EPISODE, etc.).
         
         Args:
             question (str): The name or partial name of the person to search for.
@@ -245,7 +246,7 @@ class ExpertTools:
             str: A JSON-formatted string containing a list of dictionaries, each containing:
                 - person_name (str): The full name of the person
                 - relationship_type (str): The type of relationship to the episode
-                                         (e.g., "IS_A_HOST", "IS_A_GUEST", "LISTENS_TO_EPISODE")
+                                         (e.g., "HOSTS", "GUEST_ON", "LISTENS_TO_EPISODE")
                 - episode_name (str): The name of the episode
                 - episode_number (int): The episode number
                 - episode_link (str): The URL link to the episode
@@ -255,7 +256,7 @@ class ExpertTools:
             [
               {
                 "person_name": "John Doe",
-                "relationship_type": "IS_A_GUEST",
+                "relationship_type": "GUEST_ON",
                 "episode_name": "Episode Name",
                 "episode_number": 123,
                 "episode_link": "https://...",
@@ -269,7 +270,7 @@ class ExpertTools:
             >>> print(results[0]['person_name'])
             "Prashanth Rao"
             >>> print(results[0]['relationship_type'])
-            "IS_A_GUEST"
+            "GUEST_ON"
         """
         query = """
         MATCH (p:Person)-[r]-(e:Episode {tenant_id: $tenant_id})
@@ -471,7 +472,7 @@ class ExpertTools:
         MATCH (e:Episode {tenant_id: $tenant_id})
         OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
         OPTIONAL MATCH (e)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
-        OPTIONAL MATCH (e)-[:HAS_CHUNK]->(c:Chunk)
+        OPTIONAL MATCH (e)-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(c:Chunk)
         RETURN count(DISTINCT e) AS total_episodes,
                count(DISTINCT t) AS total_topics,
                count(DISTINCT r) AS total_reference_links,
@@ -686,7 +687,7 @@ class ExpertTools:
         
         # Query to get all chunks with their embeddings and episode information
         query = """
-        MATCH (c:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_EPISODE]->(e:Episode {tenant_id: $tenant_id})
+        MATCH (c:Chunk {tenant_id: $tenant_id})-[:BELONGS_TO_SOURCE]->(s:Source {tenant_id: $tenant_id})<-[:HAS_SOURCE]-(e:Episode {tenant_id: $tenant_id})
         WHERE c.embedding IS NOT NULL
         RETURN e.name AS episode_name,
                e.number AS episode_number,
@@ -761,7 +762,7 @@ class ExpertTools:
                 YIELD node AS chunk, score AS indexScore
 
                 // Match the relationship to find the parent Episode (seed episode)
-                MATCH (seedEpisode:Episode {tenant_id: $tenant_id})<-[:BELONGS_TO_EPISODE]-(chunk)
+                MATCH (seedEpisode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
 
                 // Step 3: Follow the pre-calculated KNN relationships from the seed episodes
                 OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode {tenant_id: $tenant_id})
@@ -840,7 +841,7 @@ class ExpertTools:
                 // Step 2: Match the relationship to find the parent Episode.
                 // We use the inverse direction of the BELONGS_TO relationship 
                 // to go from the retrieved Chunk node back to the Episode node.
-                MATCH (episode:Episode {tenant_id: $tenant_id})<-[:BELONGS_TO_EPISODE]-(chunk)
+                MATCH (episode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
 
                 // Step 3: Return the results, ordered by similarity score.
                 RETURN
@@ -938,7 +939,7 @@ class ExpertTools:
         query = """
         CALL db.index.vector.queryNodes('chunkIndex', 100, $questionEmbedding)
         YIELD node AS chunk, score
-        MATCH (chunk)-[:BELONGS_TO_EPISODE]->(e:Episode {tenant_id: $tenant_id})
+        MATCH (chunk)<-[:CONTAINS]-(s:Source)<-[:HAS_SOURCE]-(e:Episode {tenant_id: $tenant_id})
         
         OPTIONAL MATCH (p:Person)-[r]-(e)
         WHERE type(r) IN ['IS_A_HOST', 'IS_A_GUEST']
@@ -949,6 +950,7 @@ class ExpertTools:
         RETURN e.name AS episode_title,
                e.number AS episode_number,
                e.description AS episode_description,
+               e.link AS link,
                chunk.text AS chunk_content,
                score AS similarity_score,
                collect(DISTINCT {name: p.name, role: type(r)}) AS participants,
@@ -967,15 +969,34 @@ class ExpertTools:
         
         enriched_results = []
         for record in result.records:
+            # Map legacy metadata arrays into the Universal Graph relationships schema
+            relationships = []
+            
+            for p in (record['participants'] or []):
+                if p and p.get('name'):
+                    relationships.append({"target_name": p['name'], "target_type": "Person", "rel_type": p['role'], "link": p.get('link')})
+            
+            for t in (record['topics'] or []):
+                if t:
+                    relationships.append({"target_name": t, "target_type": "Topic", "rel_type": "HAS_TOPIC"})
+                    
+            for tech in (record['technologies'] or []):
+                if tech:
+                    relationships.append({"target_name": tech, "target_type": "Technology", "rel_type": "COVERS_TECHNOLOGY"})
+            
             enriched_results.append({
+                'name': record['episode_title'],  # explicit name mapping for the frontend
+                'type': 'Episode',
+                'link': record['link'],
                 'episode_title': record['episode_title'],
                 'episode_number': record['episode_number'],
                 'episode_description': record['episode_description'],
                 'chunk_content': record['chunk_content'],
                 'similarity_score': record['similarity_score'],
-                'participants': record['participants'],
                 'topics': record['topics'],
-                'technologies': record['technologies']
+                'technologies': record['technologies'],
+                'participants': record['participants'],
+                'relationships': relationships
             })
             
         return json.dumps(enriched_results, indent=2)
@@ -1025,6 +1046,96 @@ class ExpertTools:
             "properties": record['n'].data(),
             "labels": record['labels']
         }, indent=2)
+
+    def search_resume_graph(self, keyword: str) -> str:
+        """
+        Search for entities across the Interactive Resume Graph dynamically.
+        Matches keywords against Node Names and Descriptions strictly for nodes 
+        defined in the PROJECT_GRAPH_NODES schema guard.
+        
+        Args:
+            keyword (str): Search term (e.g., "startup", "clerk", "hackathon", "architectural")
+            
+        Returns:
+            str: JSON string containing a list of matching nodes with their Labels and Properties.
+        """
+        query = """
+        MATCH (node)
+        WHERE node.tenant_id = $tenant_id
+          AND any(label IN labels(node) WHERE label IN $allowed_labels)
+          AND (toLower(node.name) CONTAINS toLower($keyword) 
+               OR toLower(node.description) CONTAINS toLower($keyword)
+               OR toLower(node.text) CONTAINS toLower($keyword)
+               OR any(label IN labels(node) WHERE toLower(label) CONTAINS toLower($keyword) OR toLower($keyword) CONTAINS toLower(label)))
+        
+        OPTIONAL MATCH (node)-[r]-(neighbor)
+        WHERE neighbor IS NOT NULL 
+          AND NOT neighbor:Chunk AND NOT neighbor:Episode AND NOT neighbor:Topic AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:Concept AND NOT neighbor:__MetaContext__
+        
+        WITH node, collect(DISTINCT {
+            target_name: coalesce(neighbor.name, neighbor.text, "Unknown"),
+            target_type: labels(neighbor)[0],
+            rel_type: type(r),
+            link: coalesce(neighbor.link, neighbor.url, null),
+            description: coalesce(neighbor.description, neighbor.text, null)
+        }) AS raw_relationships
+        
+        // Filter out null collections (when no neighbors matched)
+        WITH node, [rel IN raw_relationships WHERE rel.target_name IS NOT NULL AND rel.target_name <> "Unknown"] AS relationships
+
+        RETURN labels(node) AS EntityTypes, properties(node) AS Details, relationships
+        LIMIT 15
+        """
+        try:
+            result = self.driver.execute_query(
+                query, 
+                tenant_id=self.tenant_id,
+                keyword=keyword,
+                allowed_labels=PROJECT_GRAPH_NODES
+            )
+            
+            output = []
+            for record in result.records:
+                # Clean up internal metadata properties before returning to LLM
+                details = record["Details"]
+                details.pop("embedding", None)
+                details.pop("tenant_id", None)
+                
+                output.append({
+                    "name": details.get("name", "Unknown Node"),
+                    "type": record["EntityTypes"][0] if record["EntityTypes"] else "Node",
+                    "EntityTypes": record["EntityTypes"],
+                    "Details": details,
+                    "relationships": record["relationships"]
+                })
+            
+            return json.dumps(output, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def explore_graph_schema(self) -> str:
+        """
+        Dynamically extracts the ontology (node labels and relationship types) exactly as they exist in the Neo4j database.
+        Returns a simplified list of valid relationships in the format (StartNode)-[:REL_TYPE]->(EndNode).
+        """
+        query = "CALL db.schema.visualization() YIELD relationships RETURN relationships"
+        try:
+            with self.driver.session() as session:
+                res = session.run(query)
+                schema_rules = []
+                for r in res:
+                    for rel in r["relationships"]:
+                        start = rel.start_node.labels[0] if rel.start_node.labels else "Unknown"
+                        end = rel.end_node.labels[0] if rel.end_node.labels else "Unknown"
+                        
+                        # filter out vector similarities to save LLM tokens
+                        if rel.type not in ["SIMILAR", "IS_SIMILAR", "SEMANTICALLY_SIMILAR_KNN"]:
+                            schema_rules.append(f"({start})-[:{rel.type}]->({end})")
+                
+                unique_rules = sorted(list(set(schema_rules)))
+                return json.dumps({"Active_Database_Schema": unique_rules}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     def close(self):
         """Close the Neo4j driver"""

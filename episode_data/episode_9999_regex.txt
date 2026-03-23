@@ -1,0 +1,1 @@
+This is a dummy transcript test to verify the regex extractor. No adjacent JSON file exists for this text file. It should extract 9999 from the filename.

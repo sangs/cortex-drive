@@ -1,0 +1,136 @@
+{
+  "name": "Instrument On DataNMesh",
+  "description": "Instrument Data on DataMesh - Publishing Pipeline",
+  "employer": "JPMorgan Chase",
+  "location": "Jersey City, NJ",
+  "startDate": null,
+  "endDate": null,
+  "duration": null,
+  "purpose": {
+    "description": "To provide AWM teams with a standardized way to access Instrument Reference Data.",
+    "objectives": [
+      "Publish Instrument Reference Data on DataMesh",
+      "Implement an automated pipeline for data publication",
+      "Centralize schema for consistent data discovery"
+    ]
+  },
+  "value": {
+    "description": "The project aims to eliminate fragmentation in data access across the organization.",
+    "benefits": [
+      "Single standardized source for Instrument Reference Data",
+      "Automatic notifications for consumers regarding new data availability",
+      "Enhanced data discovery consistency across the enterprise"
+    ],
+    "metrics": null
+  },
+  "outcomes": [
+    {
+      "description": "Successful implementation of an automated pipeline for Instrument Reference Data.",
+      "successCriteria": [
+        "Elimination of bespoke integrations",
+        "Availability of centralized schema on federated data catalog",
+        "Timely notifications to consumers upon data availability"
+      ],
+      "measurableResults": null
+    }
+  ],
+  "technologies": [
+    {
+      "name": "AWS S3",
+      "description": "Storage service for hosting parquet files for the Instrument Reference Data."
+    },
+    {
+      "name": "AWS Glue",
+      "description": "Service to process parquet files and create data partitions based on business requirements."
+    },
+    {
+      "name": "AWS Lambda",
+      "description": "Used to implement partition logic according to lines of business."
+    },
+    {
+      "name": "Amazon EventBridge",
+      "description": "Used to trigger AWS Glue jobs upon arrival of new data in S3."
+    },
+    {
+      "name": "SNS (Simple Notification Service)",
+      "description": "Service to send notifications to consumers when new data partitions are ready."
+    }
+  ],
+  "approach": {
+    "description": "Implementation of an automated publishing pipeline for Instrument Reference Data.",
+    "methodology": null,
+    "plan": {
+      "name": "Automated Data Publishing Pipeline",
+      "description": "A pipeline that triggers daily to publish Instrument reference data.",
+      "methods": [
+        {
+          "name": "Data Ingestion",
+          "description": "Automated daily ingestion of Instrument data.",
+          "steps": [
+            "Trigger pipeline once daily Start of Day (SOD)",
+            "Fetch Instrument, Pricing, and Classification data from various sources"
+          ]
+        },
+        {
+          "name": "Data Processing",
+          "description": "Processing of parquet files to implement partition logic.",
+          "steps": [
+            "Generate parquet files with Instrument reference data",
+            "Trigger AWS Glue jobs for data partitioning",
+            "Send SNS notifications to consumers"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "AWS S3",
+          "description": "For storing parquet files of Instrument reference data.",
+          "category": "Storage"
+        },
+        {
+          "name": "AWS Glue",
+          "description": "For data processing and partitioning.",
+          "category": "Data Processing"
+        },
+        {
+          "name": "Amazon EventBridge",
+          "description": "For triggering workflows based on events.",
+          "category": "Event Management"
+        },
+        {
+          "name": "SNS",
+          "description": "For notifications related to data availability.",
+          "category": "Messaging"
+        }
+      ],
+      "timeline": null,
+      "milestones": null
+    }
+  },
+  "team": {
+    "name": "Asset & Wealth Management Data Team",
+    "description": "Team responsible for implementing the Data Mesh initiative.",
+    "roles": [
+      {
+        "name": "Lead Software Engineer",
+        "description": "Technical lead and hands-on engineer for the project.",
+        "responsibilities": [
+          {
+            "description": "Lead the project implementation and technical decisions.",
+            "tasks": [
+              "Design the automated pipeline architecture",
+              "Configure AWS services for data processing",
+              "Oversee data publishing process"
+            ],
+            "deliverables": [
+              "Documented architecture design",
+              "Functional automated pipeline",
+              "User notifications system"
+            ]
+          }
+        ]
+      }
+    ],
+    "members": null
+  }
+}

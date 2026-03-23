@@ -93,7 +93,8 @@ export default function DashboardPage() {
                 const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
                 const id = `node-${num}`;
                 
-                addNode({ id, name, type, val: 10 });
+                const seedDetails = item.Details || item;
+                addNode({ id, name, type, val: 10, ...seedDetails });
 
                 // 2. Handle GDS/Hybrid Search "Similar" nodes
                 const simName = extractValue(item, ['SimilarEpisode', 'target_name', 'related_name']);
@@ -123,6 +124,22 @@ export default function DashboardPage() {
                         });
                     }
                 });
+
+                // 4. Universal Schema-Agnostic Relationships Array (For Resumes, Projects, etc)
+                const relationships = extractValue(item, ['relationships', 'Relationships', 'edges']);
+                if (relationships && Array.isArray(relationships)) {
+                    relationships.forEach((rel, rIdx) => {
+                        const targetName = extractValue(rel, ['target_name', 'name', 'target']);
+                        if (!targetName) return;
+                        
+                        const targetType = extractValue(rel, ['target_type', 'type', 'label']) || 'Node';
+                        const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
+                        const targetId = rel.target_id || `${targetType.toLowerCase()}-${targetName.replace(/\\s+/g, '-')}`;
+                        
+                        addNode({ id: targetId, name: targetName, type: targetType, val: 5, ...rel });
+                        addLink({ source: id, target: targetId, type: relType });
+                    });
+                }
             };
 
             if (Array.isArray(data)) {

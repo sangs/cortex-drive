@@ -1,0 +1,131 @@
+{
+  "name": "Instrument On DataNMesh",
+  "description": "Instrument Data on DataMesh - Publishing Pipeline",
+  "employer": "JPMorgan Chase",
+  "location": "Jersey City, NJ",
+  "startDate": null,
+  "endDate": null,
+  "duration": null,
+  "purpose": {
+    "description": "To provide AWM teams with a standardized way to access Instrument Reference Data through DataMesh.",
+    "objectives": [
+      "Publish Instrument Reference Data on DataMesh",
+      "Eliminate bespoke integrations across AWM teams",
+      "Implement an automated data publishing pipeline"
+    ]
+  },
+  "value": {
+    "description": "The project aims to centralize access to Instrument Reference Data, improving data discovery and efficiency.",
+    "benefits": [
+      "Consistent data access across AWM teams",
+      "Reduced complexity in data integration",
+      "Automated notifications on data availability"
+    ],
+    "metrics": [
+      "Reduction in time spent on bespoke integrations",
+      "Increase in user satisfaction with data access",
+      "Improvement in data discovery accuracy"
+    ]
+  },
+  "outcomes": [
+    {
+      "description": "A standardized source for Instrument Reference Data accessible through DataMesh was established.",
+      "successCriteria": [
+        "Successful publication of Instrument data to DataMesh",
+        "Increased usage of the federated data catalog",
+        "Positive feedback from AWM teams"
+      ],
+      "measurableResults": [
+        "Number of consumers accessing Instrument Reference Data",
+        "Frequency of automated notifications sent",
+        "Reduction in individual integration efforts"
+      ]
+    }
+  ],
+  "technologies": [
+    {
+      "name": "AWS S3",
+      "description": "Cloud storage service used to hold parquet files containing Instrument reference data."
+    },
+    {
+      "name": "AWS Glue",
+      "description": "Managed ETL service used to process parquet files and create data partitions based on business requirements."
+    },
+    {
+      "name": "Amazon EventBridge",
+      "description": "Serverless event bus that triggers AWS Glue jobs upon the arrival of new data."
+    },
+    {
+      "name": "AWS Lambda",
+      "description": "Serverless compute service used to implement partition logic for processing data."
+    }
+  ],
+  "approach": {
+    "description": "Implement an automated pipeline to publish instrument data to DataMesh.",
+    "methodology": null,
+    "plan": {
+      "name": "Automated Data Publishing Pipeline",
+      "description": "A daily pipeline that publishes Instrument reference data, ensuring high availability and standardization.",
+      "methods": [
+        {
+          "name": "Data Ingestion and Processing",
+          "description": "Automate the ingestion of data and its processing for downstream applications.",
+          "steps": [
+            "Trigger pipeline daily upon data availability",
+            "Generate parquet files with Instrument reference data",
+            "Process data using AWS Glue to create partitions"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "AWS Lambda",
+          "description": "Used for executing partition logic.",
+          "category": "Compute"
+        },
+        {
+          "name": "AWS Glue",
+          "description": "Used for data transformation and processing.",
+          "category": "Data Processing"
+        },
+        {
+          "name": "AWS S3",
+          "description": "Storage for parquet files.",
+          "category": "Storage"
+        },
+        {
+          "name": "Amazon EventBridge",
+          "description": "Triggers workflows based on incoming data.",
+          "category": "Event Management"
+        }
+      ],
+      "timeline": null,
+      "milestones": null
+    }
+  },
+  "team": {
+    "name": "Asset & Wealth Management Team",
+    "description": "Team responsible for implementing the project within JPMorgan Chase.",
+    "roles": [
+      {
+        "name": "Lead Software Engineer",
+        "description": "Responsible for leading the project and implementing technical solutions.",
+        "responsibilities": [
+          {
+            "description": "Lead the implementation of the automated pipeline",
+            "tasks": [
+              "Design the pipeline architecture",
+              "Oversee data processing and integration",
+              "Coordinate with stakeholders for requirements"
+            ],
+            "deliverables": [
+              "Completed automated pipeline",
+              "Documentation of the architecture"
+            ]
+          }
+        ]
+      }
+    ],
+    "members": null
+  }
+}

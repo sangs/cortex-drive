@@ -1,0 +1,125 @@
+{
+    "name": "Metadata Agent",
+    "description": "Development of an AI-driven Metadata Agent for intuitive access to data catalogs in Asset & Wealth Management.",
+    "purpose": {
+      "description": "To enable users within the Asset and Wealth Management organization seamless access to various data product catalogs using natural language queries.",
+      "objectives": [
+        "Develop a Metadata Agent to improve discoverability of data products.",
+        "Integrate AI systems to read metadata and enhance query accuracy."
+      ]
+    },
+    "value": {
+      "description": "The project enhances user experience and efficiency in accessing data products by utilizing AI technology.",
+      "benefits": [
+        "Significantly improves discoverability of instrument reference data.",
+        "Facilitates intuitive user interaction through natural language processing."
+      ],
+      "metrics": [
+        "User satisfaction ratings from metadata access.",
+        "Reduction in time spent searching for relevant data products."
+      ]
+    },
+    "outcomes": [
+      {
+        "description": "The Metadata Agent allows users to discover data products using natural language queries.",
+        "successCriteria": [
+          "Users can easily access relevant data through the agent.",
+          "Natural language queries return semantically relevant results."
+        ],
+        "measurableResults": [
+          "Increase in the number of successful searches.",
+          "Higher user satisfaction scores."
+        ]
+      }
+    ],
+    "technologies": [
+      {
+        "name": "Data Explorer (DEx)",
+        "description": "Internal data catalog used to source metadata for the agent."
+      },
+      {
+        "name": "PG Vector",
+        "description": "Database technology utilized for storing and processing vector embeddings for similarity search."
+      },
+      {
+        "name": "Snowflake",
+        "description": "Data warehouse platform used for storing and retrieving instrument reference data.",
+        "category": "Data Storage"
+      },
+      {
+        "name": "Python",
+        "description": "Programming language used for the development of the Metadata Agent.",
+        "category": "Development"
+      },
+      {
+        "name": "Large Language Model (LLM)",
+        "description": "AI model used for generating structured answers from user queries."
+      }
+    ],
+    "approach": {
+      "description": "An end-to-end solution designed to facilitate metadata retrieval through user-friendly queries.",
+      "methodology": null,
+      "plan": {
+        "name": "Metadata Agent Development",
+        "description": "Creating a metadata agent that enhances data accessibility through AI-driven query processing.",
+        "methods": [
+          {
+            "name": "Vector Similarity Search Implementation",
+            "description": "Developing the capability to perform vector similarity searches for natural language queries.",
+            "steps": [
+              "Extract metadata from Data Explorer.",
+              "Transform metadata into embeddings.",
+              "Implement vector similarity search functionality.",
+              "Integrate with LLM for response generation."
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "Jenkins",
+            "description": "An open-source automation server used to build, test, and deploy software through continuous integration and delivery pipelines.",
+            "category": "Continuous Integration (CI)"
+          },
+          {
+            "name": "Spinnaker",
+            "description": "A multi-cloud continuous delivery platform designed for reliable, repeatable, and safe application deployments.",
+            "category": "Continuous Deployment (CD)"
+          }
+        ],
+        "timeline": "Project duration was approximately 6 months.",
+        "milestones": [
+          "Completion of metadata extraction and transformation.",
+          "Successful integration of vector search functionality.",
+          "Deployment of the Metadata Agent for user testing."
+        ]
+      }
+    },
+    "team": {
+      "name": "Asset & Wealth Management AI Development Team",
+      "description": "Team responsible for designing and implementing AI systems within the Asset & Wealth Management division.",
+      "roles": [
+        {
+          "name": "Lead Software Engineer",
+          "description": "Oversees the project development and ensures alignment with organizational goals.",
+          "responsibilities": [
+            {
+              "description": "Lead the design and implementation of the Metadata Agent.",
+              "tasks": [
+                "Define system architecture.",
+                "Coordinate with stakeholders.",
+                "Supervise the development process."
+              ],
+              "deliverables": [
+                "Completed Metadata Agent."
+              ]
+            }
+          ]
+        }
+      ],
+      "members": [
+        "Lead Software Engineer",
+        "Data Scientist",
+        "AI Engineer"
+      ]
+    }
+  }

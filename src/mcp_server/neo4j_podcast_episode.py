@@ -11,8 +11,8 @@ class PersonRel(str, Enum):
     SUBSCRIBES_TO = "SUBSCRIBES_TO"
     LISTENS_TO = "LISTENS_TO"
     LEARNING_FROM = "LEARNING_FROM"
-    IS_A_HOST = "IS_A_HOST"
-    IS_A_GUEST = "IS_A_GUEST"
+    HOSTS = "HOSTS"
+    GUEST_ON = "GUEST_ON"
 
 
 class PodcastEpisodeRel(str, Enum):
@@ -109,5 +109,5 @@ class Person(BaseModel):
     rel_subscribes_to: PersonRel = Field(default=PersonRel.SUBSCRIBES_TO)
     rel_listens_to: PersonRel = Field(default=PersonRel.LISTENS_TO)
     rel_learning_from: PersonRel = Field(default=PersonRel.LEARNING_FROM)
-    rel_is_a_host: PersonRel = Field(default=PersonRel.IS_A_HOST)
-    rel_is_a_guest: PersonRel = Field(default=PersonRel.IS_A_GUEST)
+    rel_hosts: PersonRel = Field(default=PersonRel.HOSTS)  # Replaced rel_is_a_host
+    rel_guests_on: PersonRel = Field(default=PersonRel.GUEST_ON)  # Replaced rel_is_a_guest

@@ -35,6 +35,7 @@ interface GraphViewerProps {
 
 export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+    const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Initial sizing and resize listener
@@ -69,6 +70,9 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
 
             // Slightly longer links for more breathing room
             fgRef.current.d3Force('link').distance(50);
+            
+            // Re-ignite the physics engine to calculate coordinates for newly added nodes during additive chat queries
+            fgRef.current.d3ReheatSimulation();
         }
     }, [data, dimensions]);
 
@@ -94,10 +98,12 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                     node.fx = node.x;
                     node.fy = node.y;
                 }}
+                onBackgroundClick={() => setSelectedNode(null)}
                 onNodeClick={node => {
                     // Unpin on click to allow auto-layout to take over again
                     node.fx = undefined;
                     node.fy = undefined;
+                    setSelectedNode(node as unknown as GraphNode);
                 }}
                 nodeCanvasObject={(node: any, ctx, globalScale) => {
                     const label = node.name;
@@ -165,6 +171,57 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
             )}
 
             {graphInstance}
+
+            {/* Selected Node Details Panel */}
+            {selectedNode && (
+                <div className="absolute top-4 right-4 w-80 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 shadow-2xl rounded-xl p-5 z-20 text-slate-300 transition-all">
+                    <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-lg font-bold text-white leading-tight pr-4">{selectedNode.name}</h3>
+                        <button 
+                            onClick={() => setSelectedNode(null)} 
+                            className="text-slate-500 hover:text-white transition-colors p-1"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    
+                    <div className="text-sm space-y-4">
+                        <div className="inline-block px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold tracking-wide">
+                            {selectedNode.type}
+                        </div>
+
+                        {selectedNode.description && (
+                            <p className="text-slate-300 leading-relaxed">{selectedNode.description}</p>
+                        )}
+                        
+                        {selectedNode.link && (
+                            <div className="pt-2">
+                                <a 
+                                    href={selectedNode.link} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-sm font-medium transition-all shadow-md shadow-indigo-900/20"
+                                >
+                                    Open Link ↗
+                                </a>
+                            </div>
+                        )}
+                        
+                        {/* Dynamic extra properties block */}
+                        <div className="pt-3 border-t border-slate-800/50 space-y-2">
+                            {Object.entries(selectedNode)
+                                .filter(([k, v]) => !['id', 'name', 'type', 'description', 'link', 'x', 'y', 'vx', 'vy', 'index', 'fx', 'fy', 'color', 'val'].includes(k) && typeof v !== 'object')
+                                .map(([key, value]) => (
+                                    <div key={key} className="flex flex-col gap-0.5">
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{key}</span>
+                                        <span className="text-slate-300">{String(value)}</span>
+                                    </div>
+                                ))
+                            }
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

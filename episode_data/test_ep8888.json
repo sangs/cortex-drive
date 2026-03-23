@@ -1,0 +1,15 @@
+{
+  "podcast": {
+    "title": "Quantum Chronicles",
+    "id": "quantum-chronicles-001"
+  },
+  "episode": {
+    "number": 8888,
+    "name": "NeuralWeave: The Future of Quantum Frameworks",
+    "description": "A deep dive into the imaginary NeuralWeave framework.",
+    "link": "https://example.com/8888"
+  },
+  "person": {
+      "listeners": [{"name": "Sangeetha Ramadurai"}]
+  }
+}

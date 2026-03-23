@@ -1,19 +1,22 @@
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import os
 
 # --- Schema Constants ---
 
 CORTEX_MODEL_NODES = [
     'Podcast', 'Episode', 'Chunk', 'Topic', 
-    'Concept', 'ReferenceLink', 'Person', 'Technology'
+    'Concept', 'ReferenceLink', 'Person', 'Technology', 'Source'
 ]
 
 PROJECT_GRAPH_NODES = [
     'Project', 'Purpose', 'Objective', 'Value', 'Benefit', 'Metric',
     'Outcome', 'SuccessCriteria', 'MeasurableResult', 'Approach',
     'Plan', 'Method', 'MethodStep', 'Tool', 'Timeline', 'Milestone',
-    'Team', 'Role', 'Responsibility', 'Task', 'Deliverable', 'TeamMember'
+    'Team', 'Role', 'Responsibility', 'Task', 'Deliverable', 'TeamMember',
+    'Company', 'Degree', 'Institution', 'Skill',
+    'Startup', 'Hackathon', 'Certification', 'Publication', 'OpenSource', 'SocialLearning'
 ]
 
 SYSTEM_NODES = [
@@ -24,9 +27,12 @@ CORTEX_MODEL_RELATIONSHIPS = [
     'BELONGS_TO_EPISODE', 'COVERED_BY_EPISODE', 'COVERS_CONCEPT', 
     'COVERS_TECHNOLOGY', 'GUEST_ON', 'HAS_CHUNK', 'HAS_EPISODE', 
     'HAS_REFERENCE_LINK', 'HAS_TOPIC', 'HOSTS', 'INTERVIEWED_BY', 
-    'IS_A_GUEST', 'IS_A_HOST', 'IS_SIMILAR', 'LEARNING_FROM', 
+    'IS_SIMILAR', 'LEARNING_FROM', 
+    # Deprecated: 'IS_A_GUEST' replaced by 'GUEST_ON'
+    # Deprecated: 'IS_A_HOST' replaced by 'HOSTS'
     'LISTENS_TO', 'LISTENS_TO_EPISODE', 'MENTIONED', 
-    'SEMANTICALLY_SIMILAR_KNN', 'SIMILAR', 'SUBSCRIBES_TO'
+    'SEMANTICALLY_SIMILAR_KNN', 'SIMILAR', 'SUBSCRIBES_TO',
+    'HAS_SOURCE', 'CONTAINS', 'BELONGS_TO_SOURCE'
 ]
 
 PROJECT_GRAPH_RELATIONSHIPS = [
@@ -34,7 +40,10 @@ PROJECT_GRAPH_RELATIONSHIPS = [
     'HAS_OBJECTIVE', 'DEFINES_OUTCOMES', 'HAS_BENEFIT', 'MEASURED_BY',
     'HAS_CRITERIA', 'HAS_RESULTS', 'HAS_PLAN', 'USES_METHOD', 'USES_TOOL',
     'HAS_TIMELINE', 'HAS_MILESTONES', 'HAS_STEP', 'HAS_ROLE', 'INCLUDES',
-    'RESPONSIBLE_FOR', 'HAS_TASK', 'HAS_DELIVERABLE'
+    'RESPONSIBLE_FOR', 'HAS_TASK', 'HAS_DELIVERABLE',
+    'HELD_ROLE', 'AT', 'CONTRIBUTED_TO', 'WORKED_AT',
+    'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL',
+    'PARTICIPATED_IN', 'BUILT_DURING', 'AUTHORED', 'CO_AUTHORED', 'EARNED', 'LED', 'DERIVED_FROM'
 ]
 
 class Neo4jBaseModel(BaseModel):
@@ -71,8 +80,8 @@ class ChunkNode(Neo4jBaseModel):
     text: str = Field(..., min_length=1, description="The transcript text segment.")
     embedding: List[float] = Field(..., description="Vector representation of the chunk text.")
     order: int = Field(..., description="Sequence order within the episode.")
-    fileName: str = Field(..., description="Source file name.")
-    fileSource: Optional[str] = Field(None, description="Origin source identifier (e.g. ep1654).")
+    startTime: Optional[int] = Field(None, description="Start time offset in seconds.")
+    endTime: Optional[int] = Field(None, description="End time offset in seconds.")
     
     @validator('embedding')
     def validate_embedding_dimensions(cls, v):
@@ -82,6 +91,16 @@ class ChunkNode(Neo4jBaseModel):
             # but usually, inconsistency here breaks kNN
             pass
         return v
+    
+class SourceNode(Neo4jBaseModel):
+    """Schema for data sources (Local files, URLs, YouTube videos, etc)."""
+    type: str = Field(..., description="Adapter source type e.g., LocalFile, URL, YouTube")
+    fileName: Optional[str] = Field(None, description="Original file name if applicable.")
+    fileSource: Optional[str] = Field(None, description="Origin source identifier (e.g. ep1654).")
+    ingestedAt: Optional[str] = Field(None, description="Datetime of ingestion.")
+    url: Optional[str] = Field(None, description="Web URL if ingested from web.")
+    videoId: Optional[str] = Field(None, description="YouTube Video ID if applicable.")
+    
 
 class TopicNode(Neo4jBaseModel):
     """Schema for inferred Topics."""
@@ -118,12 +137,34 @@ class GenericProjectNode(Neo4jBaseModel):
     text: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    link: Optional[str] = None
 
 class InfrastructureNode(Neo4jBaseModel):
     """Schema for system/infrastructure nodes like __MetaContext__."""
     useCase: Optional[str] = None
     context: Optional[str] = None
     version: Optional[int] = None
+
+class CompanyNode(Neo4jBaseModel):
+    """Schema for Company or Organization nodes."""
+    name: str = Field(..., description="Name of the company or organization.")
+    industry: Optional[str] = None
+    description: Optional[str] = None
+
+class InstitutionNode(Neo4jBaseModel):
+    """Schema for Educational Institutions."""
+    name: str = Field(..., description="Name of the university/institution.")
+    location: Optional[str] = None
+
+class DegreeNode(Neo4jBaseModel):
+    """Schema for degrees earned."""
+    name: str = Field(..., description="Name of the degree.")
+    year: str = Field(..., description="Graduation year.")
+
+class SkillNode(Neo4jBaseModel):
+    """Schema for technical and soft skills."""
+    name: str = Field(..., description="Name of the skill.")
+    category: Optional[str] = None
 
 def validate_upsert(label: str, data: Dict[str, Any]):
     """
@@ -138,6 +179,7 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         'ReferenceLink': ReferenceLinkNode,
         'Technology': TechnologyNode,
         'Concept': ConceptNode,
+        'Source': SourceNode,
         # Project Graph Labels
         'Project': GenericProjectNode,
         'Purpose': GenericProjectNode,
@@ -161,6 +203,16 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         'Task': GenericProjectNode,
         'Deliverable': GenericProjectNode,
         'TeamMember': GenericProjectNode,
+        'Company': CompanyNode,
+        'Degree': DegreeNode,
+        'Institution': InstitutionNode,
+        'Skill': SkillNode,
+        'Startup': GenericProjectNode,
+        'Hackathon': GenericProjectNode,
+        'Certification': GenericProjectNode,
+        'Publication': GenericProjectNode,
+        'OpenSource': GenericProjectNode,
+        'SocialLearning': GenericProjectNode,
         # System/Infrastructure
         '__MetaContext__': InfrastructureNode
     }

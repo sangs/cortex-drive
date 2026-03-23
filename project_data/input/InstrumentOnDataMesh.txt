@@ -1,0 +1,12 @@
+Project:
+- Name: Instrument On DataNMesh
+- Lengthy name: Instrument Data on DataMesh - Publishing Pipeline
+- Team, Employer, Location: Asset & Wealth Management, JPMorgan Chase, Jersey City, NJ
+- Role held: Lead Software Engineer, VP
+- Description:
+1) Led the instrument reference data to Data Mesh initiative as both technical lead and hands-on engineer
+2)
+Situation: Prior to DataMesh implementation, each AWM (Asset and Wealth Management) team and organization-wide consumer had bespoke integrations with Instrument data sources for their individual workflows. This created a fragmented landscape where discovering data and understanding schemas was inconsistent and inefficient across the organization.
+Task: My goal was to publish Instrument Reference Data on DataMesh to provide AWM teams with a standardized way to access Instrument Reference Data. I needed to implement an automated pipeline that would make the Instrument data schema available on the AWM and enterprise-wide federated data catalog platform.
+Action: I implemented an automated pipeline to publish instrument data on DataMesh. The pipeline triggers once daily Start of Day (SOD) Instrument reference data—comprising Instrument, Pricing, and Classification data from various sources—becomes available. The automation generates parquet files with Instrument reference data on AWS S3, which serves as the golden source of truth for all instrument reference data. I configured EventBridge rules to trigger AWS Glue jobs upon arrival of parquet files on AWS S3, implementing partition logic based on lines of business through Lambda functions. The AWS Glue jobs process parquet files and create data partitions based on Lines of Business (LOB) and business date requirements, with SNS notifications sent to consumers and DataMesh stakeholders when new data partitions are ready.
+Result: The automated pipeline successfully eliminated bespoke integrations, providing a single standardized source for Instrument Reference Data accessible through DataMesh. Consumers now receive automatic notifications when new data is available, and the centralized schema on the federated data catalog platform enables consistent data discovery across the enterprise.
