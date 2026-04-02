@@ -1156,6 +1156,12 @@ class ExpertTools:
         Matches keywords against Node Names and Descriptions strictly for nodes 
         defined in the PROJECT_GRAPH_NODES schema guard.
         
+        NOTE: You are a professional assistant. User content is often organized using 
+        internal STAR (Situation, Task, Action, Result) logic or 'Interview Notes'. 
+        You MUST NEVER mention these labels or terms (STAR, PreparatoryNote, Interview Note) 
+        in your narrative response. Use the data content to answer, but keep the 
+        methodology invisible.
+        
         Args:
             keyword (str): Search term (e.g., "startup", "clerk", "hackathon", "architectural")
             
@@ -1166,9 +1172,15 @@ class ExpertTools:
         discovery_synonyms = ["portfolio", "overview", "background", "experience"]
         is_discovery_request = any(s in keyword.lower() for s in discovery_synonyms)
         
-        search_keyword = keyword
+        # Step 1.5: Clean punctuation and filter stop words to prevent noise (e.g. 'at' matching everything)
+        stop_words = {"show", "me", "how", "did", "she", "what", "is", "the", "and", "a", "an", "at", "in", "of", "for", "with", "on", "to", "from", "by"}
+        clean_keyword = keyword.lower().replace(".", "").replace(",", "").replace("?", "").replace("!", "")
+        keywords = [w for w in clean_keyword.split() if w not in stop_words]
+        final_keyword_str = " ".join(keywords) if keywords else keyword
+
+        search_keyword = final_keyword_str
         if is_discovery_request:
-            search_keyword = "Category" if not "Category" in keyword else keyword
+            search_keyword = "Category" if not "Category" in keyword else final_keyword_str
 
         query = """
         WITH split(toLower(coalesce($keyword, "")), ' ') AS keywords
@@ -1176,11 +1188,14 @@ class ExpertTools:
         WHERE node.tenant_id = $tenant_id
           AND any(label IN labels(node) WHERE label IN $allowed_labels)
         
-        // Context Awareness: Check if parent Category matches the keywords
+        // Context Awareness: Check if parent Category OR associated Company matches the keywords
         OPTIONAL MATCH (parentCat:Category)-[:CONTAINS]->(node)
         WHERE parentCat.tenant_id = $tenant_id
+
+        OPTIONAL MATCH (node)-[:AT|GRADUATED_FROM|HELD_ROLE|PARTICIPATED_IN|CONTRIBUTED_TO*1..2]-(comp:Company)
+        WHERE comp.tenant_id = $tenant_id
         
-        WITH node, keywords, parentCat
+        WITH node, keywords, parentCat, comp
         WHERE (
                 any(word IN keywords WHERE toLower(node.name) CONTAINS word)
                 OR any(word IN keywords WHERE toLower(node.description) CONTAINS word)
@@ -1188,6 +1203,12 @@ class ExpertTools:
                 OR any(label IN labels(node) WHERE any(word IN keywords WHERE toLower(label) CONTAINS word))
                 OR any(word IN keywords WHERE toLower(word) = toLower(node.type))
                 OR any(word IN keywords WHERE toLower(parentCat.name) CONTAINS word)
+                OR any(word IN keywords WHERE toLower(comp.name) CONTAINS word)
+                // Semantic Expansion for Infrastructure/Modernization/Education
+                OR (any(word IN keywords WHERE word IN ['infra', 'infrastructure', 'pipeline', 'msk', 'kafka', 'datamesh', 'modernize', 'modernization']) 
+                    AND (node:Project OR node:Company OR node:Technology))
+                OR (any(word IN keywords WHERE word IN ['academic', 'education', 'cert', 'certification', 'degree', 'foundation']) 
+                    AND (node:Degree OR node:Institution OR node:Certification OR node:ProfessionalEducation))
         )
         
         OPTIONAL MATCH (node)-[r]-(neighbor)
@@ -1196,21 +1217,27 @@ class ExpertTools:
           AND NOT neighbor:Chunk AND NOT neighbor:Episode AND NOT neighbor:Topic AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:Concept AND NOT neighbor:__MetaContext__
           AND NOT neighbor:PreparatoryNote AND NOT neighbor:ReferenceLink
         
-        WITH node, collect(DISTINCT {
+        // Deep Link Flattening (ReferenceLinks)
+        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
+        
+        WITH node, collect(DISTINCT ref.url) AS ref_urls, collect(DISTINCT {
             target_name: coalesce(neighbor.name, neighbor.text, neighbor.description, labels(neighbor)[0], "Unknown"),
             target_type: labels(neighbor)[0],
             rel_type: type(r),
-            link: coalesce(neighbor.link, neighbor.url, neighbor.links[0], null),
+            link: coalesce(neighbor.link, neighbor.url, (CASE WHEN neighbor.links IS NOT NULL THEN neighbor.links[0] ELSE NULL END), null),
             description: left(coalesce(neighbor.description, neighbor.text, ""), 300),
             start: r.start,
             end: r.end,
             year: r.year,
-            date: r.date,
-            target_properties: properties(neighbor)
+            date: r.date
+            // Removed target_properties: properties(neighbor) to resolve token bloat (TPM Limit)
         }) AS raw_relationships
         
-        // Filter out null collections 
-        WITH node, [rel IN raw_relationships WHERE rel.target_name IS NOT NULL AND rel.target_name <> "Unknown"] AS relationships
+        WITH node, ref_urls, [rel IN raw_relationships WHERE rel.target_name IS NOT NULL AND rel.target_name <> "Unknown"] AS relationships
+        
+        // Final link consolidation (Node property + ReferenceLinks + url/link fallbacks)
+        WITH node, relationships, 
+             [url IN (coalesce(node.links, []) + ref_urls + [node.link, node.url]) WHERE url IS NOT NULL AND url <> ""] AS all_links
         
         // Prioritize Category, Hackathon and Leadership nodes for discovery (Truncate Description/Text for Context Health)
         RETURN labels(node) AS EntityTypes, 
@@ -1219,7 +1246,7 @@ class ExpertTools:
                  type: coalesce(node.type, labels(node)[0]),
                  description: left(coalesce(node.description, ""), 300),
                  text: left(coalesce(node.text, ""), 300),
-                 link: node.link, links: node.links, url: node.url,
+                 links: all_links,
                  year: node.year, date: node.date,
                  employer: node.employer, location: node.location,
                  tenant_id: node.tenant_id
@@ -1228,10 +1255,12 @@ class ExpertTools:
                CASE 
                  WHEN 'Category' IN labels(node) THEN 2 
                  WHEN 'Hackathon' IN labels(node) OR 'ThoughtLeadership' IN labels(node) THEN 1
+                 // Boost Project nodes that match the query strongly
+                 WHEN 'Project' IN labels(node) THEN 1
                  ELSE 0 
                END as priority
         ORDER BY priority DESC, CASE WHEN node.year IS NULL THEN -1 ELSE toInteger(node.year) END DESC, node.name ASC
-        LIMIT 25
+        LIMIT 15
         """
         try:
             result = self.driver.execute_query(
@@ -1277,18 +1306,6 @@ class ExpertTools:
 
                 # Iterate relationship arrays
                 for r in rels:
-                    # Check target properties (Peek-through logic)
-                    t_props = r.get("target_properties", {})
-                    if t_props:
-                        for key in ["start", "end", "year", "date", "startDate", "endDate"]:
-                            val = str(t_props.get(key, ""))
-                            if any(word in val.lower() for word in ["present", "active", "current"]):
-                                years.append(2030)
-                            else:
-                                match = re.search(r'(\d{4})', val)
-                                if match:
-                                    years.append(int(match.group(1)))
-                    
                     # Check rel properties directly
                     for key in ["start", "end", "year", "date"]:
                         val = str(r.get(key, ""))
@@ -1308,7 +1325,7 @@ class ExpertTools:
                 # --- DEEP SORTING: Sort the relationships themselves chronologically ---
                 def get_rel_year(r):
                     r_years = []
-                    # 1. Check rel properties directly
+                    # Check rel properties directly
                     for key in ["start", "end", "year", "date"]:
                         val = str(r.get(key, ""))
                         if any(word in val.lower() for word in ["present", "active", "current"]):
@@ -1317,19 +1334,6 @@ class ExpertTools:
                             match = re.search(r'(\d{4})', val)
                             if match:
                                 r_years.append(int(match.group(1)))
-                    
-                    # 2. Check target node properties (peek-through)
-                    t_props = r.get("target_properties", {})
-                    if t_props:
-                        for key in ["start", "end", "year", "date", "startDate", "endDate"]:
-                            val = str(t_props.get(key, ""))
-                            if any(word in val.lower() for word in ["present", "active", "current"]):
-                                r_years.append(2030)
-                            else:
-                                match = re.search(r'(\d{4})', val)
-                                if match:
-                                    r_years.append(int(match.group(1)))
-                                    
                     return max(r_years) if r_years else 1990
 
                 # Sort nested relationships: Year (DESC), Name (ASC)

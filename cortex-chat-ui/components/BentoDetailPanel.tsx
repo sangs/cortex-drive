@@ -40,21 +40,44 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         }
     }[persona];
 
-    // Discover neighbors of type "ReferenceLink"
-    const referenceLinks = React.useMemo(() => {
-        if (!node || !allLinks.length) return [];
+    // Consolidate links from both the node.links array and any specific neighbor ReferenceLinks
+    const displayLinks = React.useMemo(() => {
+        const links = new Set<string>();
         
-        const nodeId = node.id || node.name;
-        // Find all targets connected to this node
-        const relatedNodeIds = allLinks
-            .filter(l => l.source === nodeId || l.target === nodeId)
-            .map(l => l.source === nodeId ? l.target : l.source);
+        // 1. Primary Source: Consolidated links array from backend
+        if (Array.isArray(node.links)) {
+            node.links.forEach((l: string) => { if (l) links.add(l); });
+        }
+
+        // 2. Fallbacks: Single link/url properties
+        if (node.link) links.add(node.link);
+        if (node.url) links.add(node.url);
+
+        // 3. Legacy: Check neighbor nodes (ReferenceLink) - already filtered by backend but good for safety
+        if (allNodes.length && allLinks.length) {
+            const nodeId = node.id || node.name;
+            const relatedIds = allLinks
+                .filter(l => l.source === nodeId || l.target === nodeId)
+                .map(l => l.source === nodeId ? l.target : l.source);
             
-        // Filter global nodes for type ReferenceLink
-        return allNodes.filter(n => 
-            relatedNodeIds.includes(n.id) && 
-            (n.type === 'ReferenceLink' || n.labels?.includes('ReferenceLink'))
-        );
+            allNodes
+                .filter(n => relatedIds.includes(n.id) && (n.type === 'ReferenceLink' || n.labels?.includes('ReferenceLink')))
+                .forEach(n => {
+                    const url = n.url || n.link;
+                    if (url) links.add(url);
+                });
+        }
+
+        return Array.from(links).map(url => ({
+            url,
+            label: url.includes('github.com') ? 'GitHub Repository' :
+                   url.includes('linkedin.com') ? 'LinkedIn Profile' :
+                   url.includes('infoq.com') ? 'InfoQ Publication' :
+                   url.includes('aws.amazon.com') ? 'AWS Case Study' :
+                   url.includes('medium.com') ? 'Engineering Blog' :
+                   url.match(/\.(pdf|doc|docx)$/i) ? 'Whitepaper / Doc' :
+                   'External Resource'
+        }));
     }, [node, allNodes, allLinks]);
 
     return (
@@ -131,24 +154,24 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                         </div>
                     </div>
 
-                    {/* Resources / Links Gallery (NEW) */}
-                    {referenceLinks.length > 0 && (
+                    {/* Resources / Links Gallery */}
+                    {displayLinks.length > 0 && (
                         <div className="p-6 rounded-2xl bg-sky-500/5 border border-sky-500/10 flex flex-col gap-4">
                             <div className="flex items-center gap-3 text-sky-400">
                                 <ExternalLink className="w-4 h-4" />
                                 <span className="text-xs font-semibold uppercase tracking-wider text-sky-300">Resource Gallery</span>
                             </div>
                             <div className="flex flex-col gap-2">
-                                {referenceLinks.map((linkNode: any) => (
+                                {displayLinks.map((link, idx) => (
                                     <a 
-                                        key={linkNode.id}
-                                        href={linkNode.url || linkNode.link}
+                                        key={idx}
+                                        href={link.url}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 hover:border-sky-500/30 transition-all group"
                                     >
                                         <span className="text-xs text-slate-300 group-hover:text-white truncate pr-4">
-                                            {linkNode.name || linkNode.description || "View Reference"}
+                                            {link.label}
                                         </span>
                                         <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-sky-400 shrink-0" />
                                     </a>
@@ -190,14 +213,14 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
 
                 {/* Footer Action */}
                 <footer className="mt-8 pt-6 border-t border-white/5">
-                    {node.link || node.url ? (
+                    {displayLinks.length > 0 ? (
                         <a 
-                            href={node.link || node.url} 
+                            href={displayLinks[0].url} 
                             target="_blank" 
                             rel="noopener noreferrer"
-                            className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-all font-bold group shadow-lg shadow-indigo-600/20"
+                            className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-all font-bold group shadow-lg shadow-indigo-600/20 text-white"
                         >
-                            Open Documentation
+                            {displayLinks.length === 1 ? 'Open Documentation' : 'View Primary Resource'}
                             <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                         </a>
                     ) : (

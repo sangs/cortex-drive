@@ -130,7 +130,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:PARTICIPATED_IN {role: "Project Lead", start: "2025", end: "2025"}]->(h1)
     MERGE (cat)-[:CONTAINS]->(h1)
     
-    MERGE (star1:PreparatoryNote {name: "STAR: Humanless Autocode"})
+    MERGE (star1:PreparatoryNote {name: "Core Detail: Humanless Autocode"})
     SET star1.text = "Situation: IaC reviews were time-consuming and inconsistent... Task: Showcase automated code review at scale using Sourcegraph Cody... Action: Led project, implemented dependency graph analysis and multi-PR generation... Result: Successfully demonstrated automated code review at scale for IaC, dramatically reducing review time while improving safety."
     MERGE (h1)-[:HAS_PRIVATE_NOTE]->(star1)
 
@@ -142,7 +142,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:PARTICIPATED_IN {role: "Lead Developer", start: "2026", end: "2026"}]->(h2)
     MERGE (cat)-[:CONTAINS]->(h2)
     
-    MERGE (star2:PreparatoryNote {name: "STAR: Volarisation Engine"})
+    MERGE (star2:PreparatoryNote {name: "Core Detail: Volarisation Engine"})
     SET star2.text = "Situation: Early-stage patent triage was opaque and slow... Task: Develop PoC for transparent, logic-first patent research... Action: Built agentic workflow with IBM Watsonx Orchestrate on IBM Cloud... Result: Formalized PoC for life-sciences commercialization with high explainability."
     MERGE (h2)-[:HAS_PRIVATE_NOTE]->(star2)
     
@@ -158,7 +158,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:PARTICIPATED_IN {role: "Innovation Lead", start: "2025", end: "2025"}]->(h3)
     MERGE (cat)-[:CONTAINS]->(h3)
     
-    MERGE (star3:PreparatoryNote {name: "STAR: Global Hackathons"})
+    MERGE (star3:PreparatoryNote {name: "Core Detail: Global Hackathons"})
     SET star3.text = "Situation: Innovation required contributing to the technical community through open-source... Task: Advance organizational technical capabilities through hackathons... Action: Led projects delivering MCP-based AI solutions (MongoDB, Neo4j)... Result: Created ripple effects across the organization; AI Agent examples accelerated adoption of agent frameworks."
     MERGE (h3)-[:HAS_PRIVATE_NOTE]->(star3)
     """,
@@ -176,7 +176,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:AUTHORED {date: "01/2026"}]->(t1)
     MERGE (cat)-[:CONTAINS]->(t1)
     
-    MERGE (star_t1:PreparatoryNote {name: "STAR: InfoQ Publication"})
+    MERGE (star_t1:PreparatoryNote {name: "Core Detail: InfoQ Publication"})
     SET star_t1.text = "Situation: Blind automation in AI often leads to governance failures... Task: Define safe human-in-the-loop engineering guardrails... Action: Co-authored article in InfoQArchitecture Cohort... Result: Established workflow/alignment patterns adopted by platform teams."
     MERGE (t1)-[:HAS_PRIVATE_NOTE]->(star_t1)
 
@@ -193,7 +193,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:LED {role: "Core Team Member", start: "06/2021", end: "07/2025"}]->(t2)
     MERGE (cat)-[:CONTAINS]->(t2)
     
-    MERGE (star_t2:PreparatoryNote {name: "STAR: Ignite Community"})
+    MERGE (star_t2:PreparatoryNote {name: "Core Detail: Ignite Community"})
     SET star_t2.text = "Situation: Employees lacked structured opportunities for skills-dev outside day-jobs... Task: Run ecosystem for organic learning and innovation... Action: Organized monthly sessions, mentored leadership potential... Result: Community grew organically, leading to internal mobility and collaboration across JPMC."
     MERGE (t2)-[:HAS_PRIVATE_NOTE]->(star_t2)
 
@@ -209,10 +209,11 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "07/2025"}]->(t3)
     MERGE (cat)-[:CONTAINS]->(t3)
 
-    MERGE (star_t3:PreparatoryNote {name: "STAR: Open-Source AI Agents"})
+    MERGE (star_t3:PreparatoryNote {name: "Core Detail: Open-Source AI Agents"})
     SET star_t3.text = "Situation: JPMC was exploring AI Agent frameworks... Task: Contribute practical examples of agent development... Action: Developed news Agent based on Microsoft AutoGen framework... Result: Accelerated adoption of AI Agent patterns and created practitioners network."
     MERGE (t3)-[:HAS_PRIVATE_NOTE]->(star_t3)
     """,
+
 
     # 5.5 EDUCATION & CONTINUOUS LEARNING
     """
