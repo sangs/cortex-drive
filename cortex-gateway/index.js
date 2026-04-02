@@ -40,8 +40,17 @@ const authMiddleware = async (req, res, next) => {
             const tenantId = decoded.org_id || process.env.TENANT_ID || decoded.sub;
             
             req.headers['x-tenant-id'] = tenantId;
+            // Forward the individual user ID so the MCP server can identify the owner
+            req.headers['x-user-id'] = decoded.sub || '';
+            
+            // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
+            const isAdmin = decoded.org_role === 'org:admin' || decoded.org_role === 'admin';
+            if (isAdmin) {
+                req.headers['x-schema-readable'] = 'true';
+            }
+            
             delete req.headers['authorization'];
-            console.log('JWT Auth verified for tenant:', tenantId);
+            console.log('JWT Auth verified for tenant:', tenantId, 'user:', decoded.sub, 'admin:', isAdmin);
             return next();
         } catch (err) {
             console.error('JWT verification failed:', err.message);
@@ -57,6 +66,7 @@ const authMiddleware = async (req, res, next) => {
 
         if (apiKey === PUBLIC_TRIAL_KEY) {
             req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
+            req.headers['x-user-id'] = 'trial-user';  // Trial users are never owners
             console.log('Public Trial Access granted for tenant:', TRIAL_TENANT_ID);
             return next();
         } else {
@@ -69,14 +79,14 @@ const authMiddleware = async (req, res, next) => {
 
 // --- LLM Orchestration Section ---
 
-async function callMcpTool(tenantId, toolName, toolArgs) {
-    console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}`);
+async function callMcpTool(tenantId, toolName, toolArgs, userId = '') {
+    console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
     
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
     
     const sseResponse = await fetch(`${mcpServerUrl}/sse`, {
-        headers: { "x-tenant-id": tenantId }
+        headers: { "x-tenant-id": tenantId, "x-user-id": userId }
     });
 
     if (!sseResponse.ok) {
@@ -97,7 +107,7 @@ async function callMcpTool(tenantId, toolName, toolArgs) {
         const postJson = async (url, body) => {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+                headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, 'x-user-id': userId },
                 body: JSON.stringify(body)
             });
             return res;
@@ -386,17 +396,47 @@ const mcpToolsDefinitions = [
     {
         type: "function",
         function: {
-            name: "explore_graph_schema",
-            description: "Introspect the Neo4j database to find exactly what Node Labels and Relationships exist. Call this tool BEFORE writing a Cypher query if you are unsure of the data structure.",
+            name: "get_cluster_context",
+            description: "Fetch the semantic neighbors and relationships for a specific node to expand the graph view. Use this for DIRECTED AUTONOMY to proactively discover related context.",
             parameters: {
                 type: "object",
-                properties: {}
+                properties: {
+                    node_name: { type: "string", description: "The 'name' property of the seed node." },
+                    depth: { type: "integer", default: 1, description: "Traverse distance (1 or 2)." }
+                },
+                required: ["node_name"]
             }
         }
     }
 ];
 
-app.post('/query', authMiddleware, async (req, res) => {
+/**
+ * HR Security Policy: Whitelist of labels safe for Guest/Trial traversal.
+ */
+const HR_SAFE_LABELS = [
+    'Category', 'Project', 'Role', 'Hackathon', 'ThoughtLeadership', 
+    'Achievement', 'Outcome', 'Company', 'Person', 'Education', 
+    'Certification', 'OpenSource', 'SocialLearning', 'Publication'
+];
+
+/**
+ * Security Middleware to enforce HR-Safe boundaries for Guest users.
+ */
+const securityMiddleware = (req, res, next) => {
+    const userId = req.headers['x-user-id'];
+    const isGuest = userId === 'trial-user';
+
+    if (isGuest) {
+        req.securityPrompt = `\n[SECURITY POLICY] You are in HR-GUEST MODE. 
+- Access is restricted to Public Professional Data only.
+- DO NOT attempt to use 'run_cypher_query' or 'explore_graph_schema'.
+- Use 'search_resume_graph' for all professional inquiries.
+- ALL private STAR/Preparatory data is firewalled and inaccessible to you in this mode.`;
+    }
+    next();
+};
+
+app.post('/query', authMiddleware, securityMiddleware, async (req, res) => {
     const { question, history = [] } = req.body;
     const tenantId = req.headers['x-tenant-id'];
 
@@ -406,10 +446,8 @@ app.post('/query', authMiddleware, async (req, res) => {
 
     try {
         // Prepare current context messages
-        let currentMessages = [
-            { 
-                role: "system", 
-                content: `You are the Cortex Brain Assistant. You are a Graph Agent with four tiers of reasoning:
+        const systemPrompt = `You are the Cortex Brain Assistant. You are a Graph Agent with four tiers of reasoning:
+${req.securityPrompt || ''}
 
 TIERED REASONING STRATEGY:
 1. TIER 1 (ATOMIC PRECISION): 
@@ -419,6 +457,10 @@ TIERED REASONING STRATEGY:
 2. TIER 2 (HYBRID DISCOVERY): When the question is content-based ("What was said...") and you are discovering new information. USE 'hybrid_discovery_tool'. 
 3. TIER 3 (SEMANTIC EXPLORATION): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
 4. TIER 4 (CAREER & RESUME): When the user asks about Sangeetha's professional background, resume, projects, startups, hackathons, certifications, companies, or publications. USE 'search_resume_graph'.
+5. DIRECTED AUTONOMY (PROACTIVE EXPANSION): 
+   - When the user identifies a core entity (Project, Episode, Person, Technology), do NOT just provide the text answer. 
+   - Proactively call 'get_cluster_context(node_name)' to discover and render its local "solar system" of neighbors in the graph visualizer. 
+   - Goal: The graph should grow autonomously based on the conversation context.
 
 GRAPH SCHEMA AND ONTOLOGY:
 You MUST dynamically discover the schema!
@@ -429,8 +471,11 @@ CYPHER RULES:
 - When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.
 - Enumeration: If the user asks "What are the available episodes?" or "List the guests," you MUST enumerate them, not just give a count.
 - Resolve all pronouns (this, they, that episode) by looking at conversation history.
-- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names.`
-            },
+- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names.
+- Chronology: Always list professional and academic milestones in **descending chronological order** (Newest first). Do NOT re-sort tool results alphabetically or oldest-first. Respect the order returned by the discovery tools.`;
+
+        let currentMessages = [
+            { role: "system", content: systemPrompt },
             ...history.map(m => {
                 const msg = { role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) };
                 if (m.tool_calls) msg.tool_calls = m.tool_calls;
@@ -450,7 +495,7 @@ CYPHER RULES:
             loopCount++;
             
             const response = await openai.chat.completions.create({
-                model: "gpt-4-turbo-preview",
+                model: "gpt-4o",
                 messages: currentMessages,
                 tools: mcpToolsDefinitions,
                 tool_choice: "auto",
@@ -471,7 +516,7 @@ CYPHER RULES:
                     console.log(`  -> ${toolName} with args:`, toolArgs);
 
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs);
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, req.headers['x-user-id'] || '');
                         
                         // Extract text content
                         let toolContent = JSON.stringify(mcpData);

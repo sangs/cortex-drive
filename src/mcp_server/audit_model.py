@@ -5,10 +5,10 @@ from typing import List, Dict, Any
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 from schema_guard import (
-    CORTEX_MODEL_NODES, 
+    CORTEX_DRIVE_NODES, 
     PROJECT_GRAPH_NODES,
     SYSTEM_NODES,
-    CORTEX_MODEL_RELATIONSHIPS,
+    CORTEX_DRIVE_RELATIONSHIPS,
     PROJECT_GRAPH_RELATIONSHIPS
 )
 
@@ -16,12 +16,12 @@ load_dotenv()
 
 class ModelAuditor:
     """
-    Audit and Cleanup tool for CortexModel Neo4j database.
+    Audit and Cleanup tool for CortexDrive Neo4j database.
     Ensures data follows the schema guardrails and multi-tenancy rules.
     """
 
-    CORE_LABELS = CORTEX_MODEL_NODES + PROJECT_GRAPH_NODES + SYSTEM_NODES
-    CORE_RELATIONSHIPS = CORTEX_MODEL_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
+    CORE_LABELS = CORTEX_DRIVE_NODES + PROJECT_GRAPH_NODES + SYSTEM_NODES
+    CORE_RELATIONSHIPS = CORTEX_DRIVE_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
 
     def __init__(self):
         self.uri = os.environ.get("NEO4J_URI")
@@ -140,7 +140,7 @@ class ModelAuditor:
         print(f"Relationship purge complete. Total deleted: {total}")
 
 def main():
-    parser = argparse.ArgumentParser(description="CortexModel Neo4j Auditor")
+    parser = argparse.ArgumentParser(description="CortexDrive Neo4j Auditor")
     parser.add_argument("--mode", choices=["audit", "fix-tenant", "purge-illegal", "full-cleanup"], default="audit")
     parser.add_argument("--tenant-id", help="The target tenant_id to apply during repair")
     

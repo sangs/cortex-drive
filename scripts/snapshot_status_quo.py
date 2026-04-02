@@ -4,10 +4,10 @@ from datetime import datetime
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 from schema_guard import (
-    CORTEX_MODEL_NODES, 
+    CORTEX_DRIVE_NODES, 
     PROJECT_GRAPH_NODES, 
     SYSTEM_NODES,
-    CORTEX_MODEL_RELATIONSHIPS, 
+    CORTEX_DRIVE_RELATIONSHIPS, 
     PROJECT_GRAPH_RELATIONSHIPS
 )
 
@@ -29,8 +29,8 @@ class StatusQuoAuditor:
             raise ValueError("NEO4J_URI not found in .env")
         
         self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.pwd))
-        self.legal_labels = CORTEX_MODEL_NODES + PROJECT_GRAPH_NODES + SYSTEM_NODES
-        self.legal_relationships = CORTEX_MODEL_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
+        self.legal_labels = CORTEX_DRIVE_NODES + PROJECT_GRAPH_NODES + SYSTEM_NODES
+        self.legal_relationships = CORTEX_DRIVE_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
 
     def close(self):
         self.driver.close()

@@ -6,10 +6,10 @@ from openai import OpenAI
 from neo4j import GraphDatabase
 from schema_guard import (
     validate_upsert, 
-    CORTEX_MODEL_NODES, 
+    CORTEX_DRIVE_NODES, 
     PROJECT_GRAPH_NODES, 
     SYSTEM_NODES,
-    CORTEX_MODEL_RELATIONSHIPS, 
+    CORTEX_DRIVE_RELATIONSHIPS, 
     PROJECT_GRAPH_RELATIONSHIPS
 )
 from expert_tools import ExpertTools

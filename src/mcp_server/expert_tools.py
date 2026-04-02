@@ -7,6 +7,7 @@ from neo4j import GraphDatabase
 import os
 import json
 import numpy as np
+import re
 from typing import List, Dict, Any, Optional
 from schema_guard import PROJECT_GRAPH_NODES
 
@@ -215,19 +216,21 @@ class ExpertTools:
         
         return json.dumps(episodes, indent=2)
 
-    def get_tool_context(self) -> str:
+    def get_tool_context(self, use_case: Optional[str] = None) -> str:
         """
-        Gets the context for how to use & access podcast episode data.
-        Returns the context string from the __MetaContext__ node.
+        Gets the behavior context for how to use & access graph data.
+        If use_case is provided, fetches specific context. Otherwise, fetches all.
         """
-        query = """
-        MATCH (n:__MetaContext__ {version: 1, useCase: 'podcastEpisodeAssistant'})
-        RETURN n.context AS context
-        """
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
+        if use_case:
+            query = "MATCH (n:__MetaContext__ {tenant_id: $tenant_id, useCase: $use_case}) RETURN n.context AS context"
+            result = self.driver.execute_query(query, tenant_id=self.tenant_id, use_case=use_case)
+        else:
+            query = "MATCH (n:__MetaContext__ {tenant_id: $tenant_id}) RETURN n.context AS context"
+            result = self.driver.execute_query(query, tenant_id=self.tenant_id)
+            
         if result.records:
-            return result.records[0]['context']
-        return "No context found."
+            return "\n\n".join([r['context'] for r in result.records if r['context']])
+        return "No behavioral instructions found for this graph context."
 
     def find_episodes_by_people(self, question: str) -> str:
         """
@@ -1001,26 +1004,88 @@ class ExpertTools:
             
         return json.dumps(enriched_results, indent=2)
 
-    def run_cypher_query(self, query: str) -> str:
+    def run_cypher_query(self, query: str, requesting_user_id: str = "", schema_readable: bool = False) -> str:
         """
         Execute a raw Cypher query against the Neo4j graph.
-        Use this for surgical precision, complex joins, or counting nodes when pre-built tools are insufficient.
-        Always ensure the query is scoped to the current $tenant_id.
+
+        Owner bypass: If requesting_user_id matches the OWNER_USER_ID environment
+        variable, all sanitization is skipped and the full query is executed.
+
+        Non-owners are blocked from backward traversals that could expose private
+        nodes (Chunk, Source, PreparatoryNote) even if they share the same tenant.
+
+        Args:
+            query (str): The Cypher query string. Should include $tenant_id param.
+            requesting_user_id (str): Clerk 'sub' claim of the calling user.
+
+        Returns:
+            str: JSON string with query results, or an error dict if blocked.
         """
+        import re
+
+        # --- Owner Detection ---
+        # OWNER_USER_ID is the Clerk user sub claim of the graph creator.
+        # Set this in your .env file. Owner can run ANY query without restriction.
+        owner_user_id = os.environ.get("OWNER_USER_ID", "")
+        is_owner = bool(owner_user_id and requesting_user_id == owner_user_id)
+
+        # --- Schema Readable Permission Check ---
+        # If not owner and not authorized for schema, block introspection keywords
+        if not is_owner and not schema_readable:
+            INTRO_KEYWORDS = ["CALL", "db.labels", "db.schema", "SHOW", "db.relationshipTypes", "introspection"]
+            if any(k.lower() in query.lower() for k in INTRO_KEYWORDS):
+                msg = "Access Denied: Schema Readable permission required for introspection (CALL, db.schema, SHOW, etc.)."
+                print(f"[CYPHER BLOCKED] user={requesting_user_id} reason=UNAUTHORIZED_SCHEMA_READ")
+                return json.dumps({"error": msg})
+
+        if is_owner:
+            print(f"[CYPHER] Owner bypass granted for user: {requesting_user_id}")
+        else:
+            # --- Sanitizer: Forbidden traversal patterns for non-owners ---
+            # These patterns detect backward traversals into the Source Domain
+            # (Chunk, Source) or direct access to private nodes (PreparatoryNote).
+            # The No-Bounce Firewall: traversal can go DOWN and OUT, not backward UP.
+            FORBIDDEN_PATTERNS = [
+                # Backward edge into raw chunk content
+                (r"<-\s*\[\s*:CONTAINS", "Backward traversal into Chunk via CONTAINS"),
+                # Backward edge into Source node from the graph
+                (r"<-\s*\[\s*:HAS_SOURCE", "Backward traversal into Source via HAS_SOURCE"),
+                # Direct label match on private note nodes
+                (r"\(\s*\w*\s*:PreparatoryNote", "Direct access to PreparatoryNote nodes"),
+                # Private note relationship traversal
+                (r":HAS_PRIVATE_NOTE", "Traversal via HAS_PRIVATE_NOTE relationship"),
+                # Direct raw chunk label access
+                (r"\(\s*\w*\s*:Chunk\b", "Direct access to Chunk nodes"),
+                # Direct access to Source nodes (only owner can browse sources)
+                (r"\(\s*\w*\s*:ResumeChunk", "Direct access to ResumeChunk nodes"),
+            ]
+
+            for pattern, reason in FORBIDDEN_PATTERNS:
+                if re.search(pattern, query, re.IGNORECASE):
+                    msg = (
+                        f"Query blocked by security policy: {reason}. "
+                        f"This traversal path is restricted to the graph owner. "
+                        f"Use search_resume_graph or hybrid_discovery_tool instead."
+                    )
+                    print(f"[CYPHER BLOCKED] user={requesting_user_id} reason={reason}")
+                    return json.dumps({"error": msg})
+
+            print(f"[CYPHER] Query approved for non-owner user: {requesting_user_id}")
+
+        # --- Execute approved / bypassed query ---
         try:
             result = self.driver.execute_query(
-                query, 
+                query,
                 tenant_id=self.tenant_id
             )
-            
+
             output = []
             for record in result.records:
                 output.append(record.data())
-            
+
             return json.dumps(output, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
-
     def get_node_details(self, node_name: str) -> str:
         """
         Fetch all properties and labels for a specific node by its 'name' property.
@@ -1047,6 +1112,44 @@ class ExpertTools:
             "labels": record['labels']
         }, indent=2)
 
+    def expand_node_topology(self, node_name: str) -> str:
+        """
+        Explore the 1-hop neighborhood of a node. 
+        Returns all connected nodes and relationship types.
+        Use this for 'drill-down' discovery (e.g., 'What are the projects in this category?').
+        """
+        query = """
+        MATCH (node {tenant_id: $tenant_id})-[r]-(neighbor)
+        WHERE toLower(node.name) = toLower($node_name)
+          AND neighbor.tenant_id = $tenant_id
+          AND any(label IN labels(neighbor) WHERE label IN $allowed_labels)
+        RETURN labels(neighbor) AS EntityTypes, properties(neighbor) AS Details, type(r) AS RelationshipType
+        LIMIT 20
+        """
+        try:
+            result = self.driver.execute_query(
+                query, 
+                tenant_id=self.tenant_id,
+                node_name=node_name,
+                allowed_labels=PROJECT_GRAPH_NODES
+            )
+            
+            output = []
+            for record in result.records:
+                details = record["Details"]
+                details.pop("embedding", None)
+                details.pop("tenant_id", None)
+                
+                output.append({
+                    "name": details.get("name") or details.get("text") or details.get("description") or record["EntityTypes"][0],
+                    "type": record["EntityTypes"][0],
+                    "Relationship": record["RelationshipType"],
+                    "Details": details
+                })
+            return json.dumps(output, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     def search_resume_graph(self, keyword: str) -> str:
         """
         Search for entities across the Interactive Resume Graph dynamically.
@@ -1059,38 +1162,82 @@ class ExpertTools:
         Returns:
             str: JSON string containing a list of matching nodes with their Labels and Properties.
         """
+        # Step 1: Detect high-level semantic requests (Portfolio / Overview)
+        discovery_synonyms = ["portfolio", "overview", "background", "experience"]
+        is_discovery_request = any(s in keyword.lower() for s in discovery_synonyms)
+        
+        search_keyword = keyword
+        if is_discovery_request:
+            search_keyword = "Category" if not "Category" in keyword else keyword
+
         query = """
+        WITH split(toLower(coalesce($keyword, "")), ' ') AS keywords
         MATCH (node)
         WHERE node.tenant_id = $tenant_id
           AND any(label IN labels(node) WHERE label IN $allowed_labels)
-          AND (toLower(node.name) CONTAINS toLower($keyword) 
-               OR toLower(node.description) CONTAINS toLower($keyword)
-               OR toLower(node.text) CONTAINS toLower($keyword)
-               OR any(label IN labels(node) WHERE toLower(label) CONTAINS toLower($keyword) OR toLower($keyword) CONTAINS toLower(label)))
+        
+        // Context Awareness: Check if parent Category matches the keywords
+        OPTIONAL MATCH (parentCat:Category)-[:CONTAINS]->(node)
+        WHERE parentCat.tenant_id = $tenant_id
+        
+        WITH node, keywords, parentCat
+        WHERE (
+                any(word IN keywords WHERE toLower(node.name) CONTAINS word)
+                OR any(word IN keywords WHERE toLower(node.description) CONTAINS word)
+                OR any(word IN keywords WHERE toLower(node.text) CONTAINS word)
+                OR any(label IN labels(node) WHERE any(word IN keywords WHERE toLower(label) CONTAINS word))
+                OR any(word IN keywords WHERE toLower(word) = toLower(node.type))
+                OR any(word IN keywords WHERE toLower(parentCat.name) CONTAINS word)
+        )
         
         OPTIONAL MATCH (node)-[r]-(neighbor)
         WHERE neighbor IS NOT NULL 
+          AND neighbor.tenant_id = $tenant_id
           AND NOT neighbor:Chunk AND NOT neighbor:Episode AND NOT neighbor:Topic AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:Concept AND NOT neighbor:__MetaContext__
+          AND NOT neighbor:PreparatoryNote AND NOT neighbor:ReferenceLink
         
         WITH node, collect(DISTINCT {
-            target_name: coalesce(neighbor.name, neighbor.text, "Unknown"),
+            target_name: coalesce(neighbor.name, neighbor.text, neighbor.description, labels(neighbor)[0], "Unknown"),
             target_type: labels(neighbor)[0],
             rel_type: type(r),
-            link: coalesce(neighbor.link, neighbor.url, null),
-            description: coalesce(neighbor.description, neighbor.text, null)
+            link: coalesce(neighbor.link, neighbor.url, neighbor.links[0], null),
+            description: left(coalesce(neighbor.description, neighbor.text, ""), 300),
+            start: r.start,
+            end: r.end,
+            year: r.year,
+            date: r.date,
+            target_properties: properties(neighbor)
         }) AS raw_relationships
         
-        // Filter out null collections (when no neighbors matched)
+        // Filter out null collections 
         WITH node, [rel IN raw_relationships WHERE rel.target_name IS NOT NULL AND rel.target_name <> "Unknown"] AS relationships
-
-        RETURN labels(node) AS EntityTypes, properties(node) AS Details, relationships
-        LIMIT 15
+        
+        // Prioritize Category, Hackathon and Leadership nodes for discovery (Truncate Description/Text for Context Health)
+        RETURN labels(node) AS EntityTypes, 
+               {
+                 name: node.name, 
+                 type: coalesce(node.type, labels(node)[0]),
+                 description: left(coalesce(node.description, ""), 300),
+                 text: left(coalesce(node.text, ""), 300),
+                 link: node.link, links: node.links, url: node.url,
+                 year: node.year, date: node.date,
+                 employer: node.employer, location: node.location,
+                 tenant_id: node.tenant_id
+               } AS Details, 
+               relationships,
+               CASE 
+                 WHEN 'Category' IN labels(node) THEN 2 
+                 WHEN 'Hackathon' IN labels(node) OR 'ThoughtLeadership' IN labels(node) THEN 1
+                 ELSE 0 
+               END as priority
+        ORDER BY priority DESC, CASE WHEN node.year IS NULL THEN -1 ELSE toInteger(node.year) END DESC, node.name ASC
+        LIMIT 25
         """
         try:
             result = self.driver.execute_query(
                 query, 
                 tenant_id=self.tenant_id,
-                keyword=keyword,
+                keyword=search_keyword,
                 allowed_labels=PROJECT_GRAPH_NODES
             )
             
@@ -1101,19 +1248,127 @@ class ExpertTools:
                 details.pop("embedding", None)
                 details.pop("tenant_id", None)
                 
+                # Priority mapping from Cypher
+                priority = record.get("priority", 0)
+                details["priority"] = priority
+
+                # Infer Year for Y-Axis Sorting
+                rels = record["relationships"]
+                years = []
+                
+                # Check node properties first (startDate, endDate, year, date)
+                # NOTE: node.year is stored as a string (e.g. "2026") — must
+                # parse to int explicitly; negating a string silently yields 0.
+                for prop in ["startDate", "endDate", "year", "date"]:
+                    raw = details.get(prop, "")
+                    val = str(raw) if raw is not None else ""
+                    if any(word in val.lower() for word in ["present", "active", "current"]):
+                        years.append(2030)  # Boost future/active
+                    else:
+                        match = re.search(r'(\d{4})', val)
+                        if match:
+                            years.append(int(match.group(1)))
+
+                # Direct parse of the year string property (e.g. "2026" -> 2026)
+                # This is the critical fix: ensures inferred_year is always an int.
+                raw_year = details.get("year", "")
+                if raw_year and str(raw_year).isdigit():
+                    years.append(int(str(raw_year)))
+
+                # Iterate relationship arrays
+                for r in rels:
+                    # Check target properties (Peek-through logic)
+                    t_props = r.get("target_properties", {})
+                    if t_props:
+                        for key in ["start", "end", "year", "date", "startDate", "endDate"]:
+                            val = str(t_props.get(key, ""))
+                            if any(word in val.lower() for word in ["present", "active", "current"]):
+                                years.append(2030)
+                            else:
+                                match = re.search(r'(\d{4})', val)
+                                if match:
+                                    years.append(int(match.group(1)))
+                    
+                    # Check rel properties directly
+                    for key in ["start", "end", "year", "date"]:
+                        val = str(r.get(key, ""))
+                        if any(word in val.lower() for word in ["present", "active", "current"]):
+                            years.append(2030)
+                        else:
+                            match = re.search(r'(\d{4})', val)
+                            if match:
+                                years.append(int(match.group(1)))
+                
+                # Default for Category nodes: always treat them as high priority/current
+                if 'Category' in record["EntityTypes"]:
+                   years.append(2030)
+
+                details["inferred_year"] = max(years) if years else 1990
+                
+                # --- DEEP SORTING: Sort the relationships themselves chronologically ---
+                def get_rel_year(r):
+                    r_years = []
+                    # 1. Check rel properties directly
+                    for key in ["start", "end", "year", "date"]:
+                        val = str(r.get(key, ""))
+                        if any(word in val.lower() for word in ["present", "active", "current"]):
+                            r_years.append(2030)
+                        else:
+                            match = re.search(r'(\d{4})', val)
+                            if match:
+                                r_years.append(int(match.group(1)))
+                    
+                    # 2. Check target node properties (peek-through)
+                    t_props = r.get("target_properties", {})
+                    if t_props:
+                        for key in ["start", "end", "year", "date", "startDate", "endDate"]:
+                            val = str(t_props.get(key, ""))
+                            if any(word in val.lower() for word in ["present", "active", "current"]):
+                                r_years.append(2030)
+                            else:
+                                match = re.search(r'(\d{4})', val)
+                                if match:
+                                    r_years.append(int(match.group(1)))
+                                    
+                    return max(r_years) if r_years else 1990
+
+                # Sort nested relationships: Year (DESC), Name (ASC)
+                rels.sort(key=lambda r: (-get_rel_year(r), r.get("target_name", "")))
+                
                 output.append({
-                    "name": details.get("name", "Unknown Node"),
+                    "name": details.get("name") or details.get("text") or details.get("description") or (record["EntityTypes"][0] if record["EntityTypes"] else "Node"),
                     "type": record["EntityTypes"][0] if record["EntityTypes"] else "Node",
                     "EntityTypes": record["EntityTypes"],
-                    "Details": details,
-                    "relationships": record["relationships"]
+                    "Details": {
+                        **details,
+                        "description": (details.get("description", "")[:300] + "...") if len(details.get("description", "")) > 300 else details.get("description", ""),
+                        "text": (details.get("text", "")[:300] + "...") if len(details.get("text", "")) > 300 else details.get("text", "")
+                    },
+                    "relationships": rels
                 })
             
+            # Multi-level sort for top-level nodes: Priority (DESC), Year (DESC), Name (ASC)
+            output.sort(key=lambda x: (
+                -x["Details"].get("priority", 0),
+                -x["Details"].get("inferred_year", 0),
+                x["name"]
+            ))
+
             return json.dumps(output, indent=2)
         except Exception as e:
+            import traceback
+            import sys
+            traceback.print_exc(file=sys.stderr)
             return json.dumps({"error": str(e)})
 
-    def explore_graph_schema(self) -> str:
+    def explore_graph_schema(self, schema_readable: bool = False) -> str:
+        """
+        Introspect the Neo4j database to find exactly what Node Labels and Relationships exist.
+        Locked down to users with 'Schema Readable' permission (Admins/Owner).
+        """
+        if not schema_readable:
+            return json.dumps({"error": "Access Denied: Schema Readable permission required to introspect the graph ontology."})
+
         """
         Dynamically extracts the ontology (node labels and relationship types) exactly as they exist in the Neo4j database.
         Returns a simplified list of valid relationships in the format (StartNode)-[:REL_TYPE]->(EndNode).
@@ -1134,6 +1389,63 @@ class ExpertTools:
                 
                 unique_rules = sorted(list(set(schema_rules)))
                 return json.dumps({"Active_Database_Schema": unique_rules}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def get_cluster_context(self, node_name: str, depth: int = 1) -> str:
+        """
+        Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
+        Use this for Directed Autonomy to proactively discover related context.
+        
+        Args:
+            node_name (str): The 'name' property of the seed node.
+            depth (int): The distance to traverse (1 for immediate neighbors, 2 for extended context).
+        """
+        # Limit depth to 1 or 2 to avoid graph blowout
+        safe_depth = max(1, min(depth, 2))
+        
+        query = f"""
+        MATCH (n {{name: $node_name, tenant_id: $tenant_id}})
+        OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m {{tenant_id: $tenant_id}})
+        WITH n, collect(path) AS paths
+        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p
+        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels
+        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node
+        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel
+        WITH n, 
+             collect(DISTINCT node) AS nodes, 
+             collect(DISTINCT rel) AS rels
+        RETURN 
+            [node IN nodes WHERE node IS NOT NULL | {{
+                id: node.name,
+                name: node.name,
+                type: labels(node)[0],
+                description: left(coalesce(node.description, node.text, ""), 200),
+                url: node.url,
+                year: node.year,
+                date: node.date
+            }}] AS nodes,
+            [rel IN rels WHERE rel IS NOT NULL | {{
+                source: startNode(rel).name,
+                target: endNode(rel).name,
+                type: type(rel)
+            }}] AS links
+        """
+        try:
+            result = self.driver.execute_query(
+                query, 
+                tenant_id=self.tenant_id, 
+                node_name=node_name
+            )
+            if not result.records:
+                return json.dumps({"error": f"Node '{node_name}' not found."})
+            
+            record = result.records[0]
+            # Ensure the seed node is included if no relationships found
+            return json.dumps({
+                "nodes": record["nodes"],
+                "links": record["links"]
+            }, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 

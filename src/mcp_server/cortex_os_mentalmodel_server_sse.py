@@ -19,6 +19,10 @@ from expert_tools import ExpertTools
 
 # Contextvar to hold the tenant_id extracted from the request headers
 tenant_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("tenant_id", default="")
+# Contextvar to hold the authenticated Clerk user ID (sub claim)
+user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", default="")
+# Contextvar to hold the 'Schema Readable' permission state
+schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
 
 mcp = FastMCP("cortex-os-mentalmodel")
 
@@ -204,12 +208,14 @@ async def run_cypher_query(
     """
     Execute a raw Cypher query against the Neo4j graph.
     Use this for surgical precision, complex joins, or counting nodes when pre-built tools are insufficient.
-    Returns JSON results.
+    Returns JSON results. NOTE: Sensitive node traversals are blocked for non-owner users.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    schema_readable = schema_readable_var.get()
     expert = ExpertTools(tenant_id=tenant_id)
     try:
-        return expert.run_cypher_query(query)
+        return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
     finally:
         expert.close()
 
@@ -252,9 +258,10 @@ async def explore_graph_schema() -> str:
     Call this tool whenever you don't know the exact schema needed to write a Cypher query.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    schema_readable = schema_readable_var.get()
     expert = ExpertTools(tenant_id=tenant_id)
     try:
-        return expert.explore_graph_schema()
+        return expert.explore_graph_schema(schema_readable=schema_readable)
     finally:
         expert.close()
 
@@ -277,12 +284,30 @@ async def hybrid_discovery_tool(
     finally:
         expert.close()
 
+@mcp.tool()
+async def get_cluster_context(
+    node_name: str = Field(description="The 'name' property of the node to fetch neighbors for."),
+    depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1.")
+) -> str:
+    """
+    Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
+    Use this for Directed Autonomy to proactively discover related nodes and hidden context.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return expert.get_cluster_context(node_name, depth=depth)
+    finally:
+        expert.close()
+
 # FastMCP exposes a starlette app for SSE via .sse_app()
 app = mcp.sse_app()
 
 from starlette.datastructures import QueryParams, Headers
 
 class TenantASGIMiddleware:
+    """ASGI middleware that extracts tenant_id and user_id from request headers."""
+
     def __init__(self, app):
         self.app = app
 
@@ -294,22 +319,36 @@ class TenantASGIMiddleware:
         headers = Headers(scope=scope)
         query_params = QueryParams(scope.get("query_string", b"").decode())
 
+        # Extract tenant (org) identity
         tenant_id = (
-            headers.get("x-clerk-org-id") or 
+            headers.get("x-clerk-org-id") or
             headers.get("x-tenant-id") or
             query_params.get("org_id") or
             query_params.get("tenant_id")
         )
 
-        token = None
-        if tenant_id:
-            token = tenant_id_var.set(tenant_id)
+        # Extract 'Schema Readable' permission header (set by Gateway for Admins)
+        schema_readable = headers.get("x-schema-readable", "").lower() == "true"
+
+        # Extract user identity
+        user_id = (
+            headers.get("x-user-id") or
+            headers.get("x-clerk-user-id") or
+            query_params.get("user_id")
+        )
+
+        tenant_token = tenant_id_var.set(tenant_id) if tenant_id else None
+        user_token = user_id_var.set(user_id) if user_id else None
+        schema_token = schema_readable_var.set(schema_readable)
 
         try:
             await self.app(scope, receive, send)
         finally:
-            if token:
-                tenant_id_var.reset(token)
+            if tenant_token:
+                tenant_id_var.reset(tenant_token)
+            if user_token:
+                user_id_var.reset(user_token)
+            schema_readable_var.reset(schema_token)
 
 app.add_middleware(TenantASGIMiddleware)
 app.add_middleware(

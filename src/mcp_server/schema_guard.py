@@ -5,7 +5,7 @@ import os
 
 # --- Schema Constants ---
 
-CORTEX_MODEL_NODES = [
+CORTEX_DRIVE_NODES = [
     'Podcast', 'Episode', 'Chunk', 'Topic', 
     'Concept', 'ReferenceLink', 'Person', 'Technology', 'Source'
 ]
@@ -15,15 +15,18 @@ PROJECT_GRAPH_NODES = [
     'Outcome', 'SuccessCriteria', 'MeasurableResult', 'Approach',
     'Plan', 'Method', 'MethodStep', 'Tool', 'Timeline', 'Milestone',
     'Team', 'Role', 'Responsibility', 'Task', 'Deliverable', 'TeamMember',
-    'Company', 'Degree', 'Institution', 'Skill',
-    'Startup', 'Hackathon', 'Certification', 'Publication', 'OpenSource', 'SocialLearning'
+    'Company', 'Degree', 'Institution', 'Skill', 'Category', 'PreparatoryNote',
+    'Startup', 'Hackathon', 'Certification', 'Publication', 'OpenSource', 'SocialLearning',
+    'ProfessionalEducation',
+    # Thought leadership and community nodes created by the resume seeder
+    'ThoughtLeadership', 'Community', 'Person'
 ]
 
 SYSTEM_NODES = [
     '__MetaContext__'
 ]
 
-CORTEX_MODEL_RELATIONSHIPS = [
+CORTEX_DRIVE_RELATIONSHIPS = [
     'BELONGS_TO_EPISODE', 'COVERED_BY_EPISODE', 'COVERS_CONCEPT', 
     'COVERS_TECHNOLOGY', 'GUEST_ON', 'HAS_CHUNK', 'HAS_EPISODE', 
     'HAS_REFERENCE_LINK', 'HAS_TOPIC', 'HOSTS', 'INTERVIEWED_BY', 
@@ -47,7 +50,7 @@ PROJECT_GRAPH_RELATIONSHIPS = [
 ]
 
 class Neo4jBaseModel(BaseModel):
-    """Base model for all entries in CortexModel Neo4j database."""
+    """Base model for all entries in CortexDrive Neo4j database."""
     tenant_id: str = Field(..., description="The Clerk Organization ID for data isolation.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Generic metadata store.")
 

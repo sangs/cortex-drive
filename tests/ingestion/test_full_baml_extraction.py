@@ -14,7 +14,7 @@ def test_full_baml_ingestion():
     tenant_id = "org_test_123"
     
     # Path to the sample transcript
-    transcript_path = "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/input-podcast-episodes-data/AnthropicAndModelContextProtocol-MCP-WithDavidSoriaParra-ep1836.txt"
+    transcript_path = os.path.join(os.getcwd(), "input-podcast-episodes-data", "AnthropicAndModelContextProtocol-MCP-WithDavidSoriaParra-ep1836.txt")
     
     with open(transcript_path, 'r') as f:
         transcript_text = f.read()

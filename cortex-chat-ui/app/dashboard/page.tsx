@@ -16,11 +16,14 @@ import {
     Network,
     GripVertical,
     ChevronRight,
-    ChevronLeft
+    ChevronLeft,
+    Trash2
 } from "lucide-react";
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
-import GraphViewer from "@/components/GraphViewer";
+import EnterpriseGraph from "@/components/EnterpriseGraph";
+import BentoDetailPanel from "@/components/BentoDetailPanel";
 import { useMCP } from "@/hooks/use-mcp";
+import { getThemeForType } from "@/utils/GraphTheme";
 
 export default function DashboardPage() {
     const { isConnected, query } = useMCP();
@@ -37,17 +40,33 @@ export default function DashboardPage() {
     // Layout State
     const [chatWidth, setChatWidth] = useState(40); // percentage
     const [isGraphVisible, setIsGraphVisible] = useState(true);
+    const [selectedNode, setSelectedNode] = useState<any | null>(null);
+    const [focusYear, setFocusYear] = useState<string | null>(null);
     const isResizing = useRef(false);
 
     // Helper to parse tool data into graph format
     const parseDataToGraph = (rawData: string, currentGraph: { nodes: any[], links: any[] }) => {
         try {
             const data = JSON.parse(rawData);
-            const nodes = [...currentGraph.nodes];
-            const links = [...currentGraph.links];
+            
+            // === SEMANTIC INTERSECTION HEURISTIC ===
+            // Scan the incoming JSON string payload for any overlapping topological footprint.
+            let intersectionFound = false;
+            if (currentGraph.nodes.length > 0) {
+                const rawStringContent = rawData.toLowerCase();
+                intersectionFound = currentGraph.nodes.some((existingNode: any) => {
+                    const nameMatch = existingNode.name && rawStringContent.includes(existingNode.name.toLowerCase());
+                    const idMatch = existingNode.id && rawStringContent.includes(existingNode.id.toLowerCase());
+                    return nameMatch || idMatch;
+                });
+            }
+            
+            // Append if connected (intersection > 0), Reset canvas if completely unrelated (intersection == 0)
+            const nodes = intersectionFound ? [...currentGraph.nodes] : [];
+            const links = intersectionFound ? [...currentGraph.links] : [];
 
             const addNode = (node: any) => {
-                if (!node.id) return null;
+                if (!node.id || node.type === 'PreparatoryNote') return null;
                 const existing = nodes.find(n => n.id === node.id);
                 if (!existing) {
                     nodes.push(node);
@@ -58,6 +77,12 @@ export default function DashboardPage() {
 
             const addLink = (link: any) => {
                 if (!link.source || !link.target) return;
+                
+                // Ensure both source and target exist in the current node set
+                const sourceExists = nodes.some(n => n.id === link.source);
+                const targetExists = nodes.some(n => n.id === link.target);
+                if (!sourceExists || !targetExists) return;
+
                 const existing = links.find(l => 
                     (l.source === link.source && l.target === link.target) ||
                     (l.source === link.target && l.target === link.source)
@@ -83,25 +108,30 @@ export default function DashboardPage() {
 
             const processItem = (item: any, idx: number) => {
                 // 1. Identify "Seed" node (The Primary Subject)
-                const nameKeys = ['episode_name', 'name', 'SeedEpisode', 'EpisodeTitle', 'e.name', 'n.name', 'title'];
-                const idKeys = ['episode_number', 'SeedEpisodeNumber', 'EpisodeNumber', 'id', 'e.episode_number'];
+                const nameKeys = ['episode_name', 'name', 'SeedEpisode', 'EpisodeTitle', 'e.name', 'n.name', 'title', 'target_name'];
+                const idKeys = ['episode_number', 'SeedEpisodeNumber', 'EpisodeNumber', 'id', 'e.episode_number', 'target_id'];
+                const dateKeys = ['date', 'air_date', 'startDate', 'published_at', 'year'];
                 
                 const name = extractValue(item, nameKeys);
                 if (!name) return;
 
-                const num = extractValue(item, idKeys) || `node-${idx}-${Date.now()}`;
-                const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
-                const id = `node-${num}`;
+                const id = name; // Standardize on name for cross-layer parity
                 
+                // Identify normalized time marker
+                const timeValue = extractValue(item, dateKeys);
+                const year = timeValue ? (String(timeValue).match(/\d{4}/)?.[0] || null) : null;
+                const date = timeValue || null;
+
+                const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
                 const seedDetails = item.Details || item;
-                addNode({ id, name, type, val: 10, ...seedDetails });
+                addNode({ id, name, type, val: 10, year, date, ...seedDetails });
 
                 // 2. Handle GDS/Hybrid Search "Similar" nodes
                 const simName = extractValue(item, ['SimilarEpisode', 'target_name', 'related_name']);
                 if (simName) {
                     const simNum = extractValue(item, ['SimilarEpisodeNumber', 'target_id']) || `sim-${idx}`;
                     const simId = `node-${simNum}`;
-                    addNode({ id: simId, name: simName, type: 'Episode', val: 8 });
+                    addNode({ id: simId, name: simName, type: item.type || 'Episode', val: 8, year, date });
                     addLink({ source: id, target: simId, type: 'SIMILAR' });
                 }
 
@@ -115,11 +145,12 @@ export default function DashboardPage() {
                 metadata.forEach(m => {
                     const vals = extractValue(item, m.key);
                     if (vals) {
-                        const valsArray = Array.isArray(vals) ? vals : [vals];
-                        valsArray.forEach((v: string) => {
-                            if (typeof v !== 'string') return;
-                            const vId = `${m.type.toLowerCase()}-${v}`;
-                            addNode({ id: vId, name: v, type: m.type, val: 5 });
+                        const valsArray = Array.isArray(vals) ? (Array.isArray(vals[0]) ? vals[0] : vals) : [vals];
+                        valsArray.forEach((v: any) => {
+                            const vName = typeof v === 'string' ? v : (v.name || v.text);
+                            if (!vName) return;
+                            const vId = vName; // Standardize on name
+                            addNode({ id: vId, name: vName, type: m.type, val: 5, year, date });
                             addLink({ source: id, target: vId, type: m.linkType });
                         });
                     }
@@ -133,11 +164,19 @@ export default function DashboardPage() {
                         if (!targetName) return;
                         
                         const targetType = extractValue(rel, ['target_type', 'type', 'label']) || 'Node';
-                        const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
-                        const targetId = rel.target_id || `${targetType.toLowerCase()}-${targetName.replace(/\\s+/g, '-')}`;
+                        if (targetType === 'PreparatoryNote') return;
                         
-                        addNode({ id: targetId, name: targetName, type: targetType, val: 5, ...rel });
-                        addLink({ source: id, target: targetId, type: relType });
+                        const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
+                        const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
+                        const targetId = targetName; // Standardize on name
+                        
+                        // Pass temporal metadata to relationship targets
+                        const relTimeValue = extractValue(rel, ['date', 'year', 'startDate']);
+                        const relYear = relTimeValue ? (String(relTimeValue).match(/\d{4}/)?.[0] || year) : year;
+                        const relDate = relTimeValue || date;
+
+                        addNode({ id: targetId, name: targetName, type: targetType, val: 5, year: relYear, date: relDate, ...rel });
+                        addLink({ source: id, target: targetId, type: relType, ...rel });
                     });
                 }
             };
@@ -148,7 +187,13 @@ export default function DashboardPage() {
                 processItem(data, 0);
             }
 
-            return { nodes, links };
+            // Final Integrity Pass: Remove links pointing to non-existent nodes
+            const finalLinks = links.filter(l => 
+                nodes.some(n => n.id === l.source) && 
+                nodes.some(n => n.id === l.target)
+            );
+
+            return { nodes, links: finalLinks };
         } catch (e) {
             console.error("Failed to parse graph data", e);
             return currentGraph;
@@ -179,10 +224,34 @@ export default function DashboardPage() {
                 content: result.answer 
             }]);
 
-            // 2. Update graph data if raw_data is present
             if (result.raw_data) {
                 const newGraph = parseDataToGraph(result.raw_data, graphData);
                 setGraphData(newGraph);
+                
+                // 3. Auto-Shift Timeline: Scan for the most relevant year in the results
+                try {
+                    const data = JSON.parse(result.raw_data);
+                    const items = Array.isArray(data) ? data : [data];
+                    
+                    const dateKeys = ['date', 'air_date', 'startDate', 'published_at', 'year'];
+                    let detectedYear = null;
+                    
+                    for (const item of items) {
+                        for (const key of dateKeys) {
+                            const val = item[key] || item.Details?.[key] || item.properties?.[key];
+                            const match = val ? String(val).match(/\d{4}/) : null;
+                            if (match) {
+                                detectedYear = match[0];
+                                break;
+                            }
+                        }
+                        if (detectedYear) break;
+                    }
+                    
+                    if (detectedYear) setFocusYear(detectedYear);
+                } catch (e) {
+                    console.warn("Auto-shift: raw_data is not valid JSON or missing timeline markers", e);
+                }
             }
         } catch (err: any) {
             console.error("Orchestration failed", err);
@@ -404,35 +473,58 @@ export default function DashboardPage() {
                         </div>
                         
                         {/* The Visual Engine */}
-                        <div className="w-full h-full">
-                            <GraphViewer 
+                        <div className="w-full h-full relative group">
+                            {/* Manual Clear Control Overlay */}
+                            {graphData.nodes.length > 0 && (
+                                <div className="absolute top-4 left-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                        onClick={() => {
+                                            setGraphData({ nodes: [], links: [] });
+                                            setSelectedNode(null);
+                                        }}
+                                        className="bg-slate-800/80 hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/50 px-3 py-1.5 rounded-md text-xs font-semibold backdrop-blur-md transition-all flex items-center gap-2 shadow-xl"
+                                        title="Manually clear the visual canvas"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Clear Map
+                                    </button>
+                                </div>
+                            )}
+
+                            <EnterpriseGraph 
                                 data={graphData} 
-                                isProcessing={isProcessing} 
+                                focusYear={focusYear}
+                                selectedNodeId={selectedNode?.id}
+                                onNodeClick={(node) => setSelectedNode(node)}
+                                onTimelineChange={(year) => setFocusYear(year)}
+                            />
+
+                            {/* Bento Vault (Slide-out) */}
+                            <BentoDetailPanel 
+                                node={selectedNode}
+                                allNodes={graphData.nodes}
+                                allLinks={graphData.links}
+                                onClose={() => setSelectedNode(null)}
                             />
                         </div>
 
-                        {/* Status Legend */}
+                        {/* Status Legend (Absolute but offset to prevent covering timeline) */}
                         {graphData.nodes.length > 0 && (
-                            <div className="absolute bottom-6 left-6 z-20 bg-slate-900/80 backdrop-blur border border-white/5 rounded-2xl p-4 flex flex-col gap-2 pointer-events-none">
+                            <div className="absolute top-[80px] left-6 z-20 bg-slate-900/80 backdrop-blur border border-white/5 rounded-2xl p-4 flex flex-col gap-2 pointer-events-none transition-all">
                                 <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                                      Visible Knowledge Nodes
                                 </div>
                                 <div className="flex flex-wrap gap-4">
-                                    {Array.from(new Set(graphData.nodes.map(n => n.type))).map(type => {
-                                        const colors: Record<string, string> = {
-                                            Episode: "bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]",
-                                            Topic: "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]",
-                                            Person: "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]",
-                                            Chunk: "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]",
-                                            Technology: "bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]",
-                                            ReferenceLink: "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"
-                                        };
-                                        const colorClass = colors[type] || "bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.5)]";
+                                    {Array.from(new Set(graphData.nodes.map(n => n.type)))
+                                        .filter(type => type !== "PreparatoryNote")
+                                        .map(type => {
+                                        const theme = getThemeForType(type);
+                                        const colorClass = theme.tailwind;
                                         
                                         return (
                                             <div key={type} className="flex items-center gap-2">
-                                                <div className={`w-2 h-2 rounded-full ${colorClass}`} />
-                                                <span className="text-[10px] text-slate-400 capitalize">{type}</span>
+                                                <div className={`w-2.5 h-2.5 rounded-full ${colorClass} ring-1 ring-white/10`} />
+                                                <span className="text-[10px] text-slate-300 font-medium capitalize">{type}</span>
                                             </div>
                                         );
                                     })}
