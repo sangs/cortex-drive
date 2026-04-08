@@ -28,7 +28,7 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
         radius: 8
     },
     ThoughtLeadership: {
-        hsl: 'hsl(280, 60%, 50%)',      // Deep Purple
+        hsl: 'hsl(245, 65%, 55%)',      // Indigo
         tailwind: 'bg-indigo-600 shadow-[0_0_8px_rgba(79,70,229,0.5)]',
         radius: 8
     },

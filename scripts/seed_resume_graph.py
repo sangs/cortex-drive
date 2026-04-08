@@ -51,9 +51,14 @@ RESUME_CYPHER_QUERIES = [
     MERGE (c1:Company {name: "Self, Cortex-Drive"})
     MERGE (r1:Role {name: "Founder & Sr. Software Engineer"})
     MERGE (p)-[:CURRENTLY_BUILDING {start: "08/2025", end: "Present"}]->(r1)
+    MERGE (p)-[:HELD_ROLE {start: "08/2025", end: "Present"}]->(r1)
     MERGE (r1)-[:AT]->(c1)
     MERGE (cat1)-[:CONTAINS]->(r1)
     MERGE (cat2)-[:CONTAINS]->(r1)
+
+    MERGE (star_founder:PreparatoryNote {name: "STAR: Founder, Cortex-Drive"})
+    SET star_founder.text = "Situation: Institutional memory is often lost across siloed tools and turnover. Task: Build a context-aware intelligent layer ('Cortex-Drive') to recover decision provenance. Action: Architected high-fidelity MCP server, Neo4j graphRAG, and Zero-Trust ABAC governance. Result: Enabled stable, traceable institutional memory across federated contexts."
+    MERGE (r1)-[:HAS_PRIVATE_NOTE]->(star_founder)
 
     // JPMC
     MERGE (c2:Company {name: "JPMorgan Chase", location: "Jersey City, NJ"})
@@ -188,13 +193,13 @@ RESUME_CYPHER_QUERIES = [
     // Ignite
     MERGE (t2:ThoughtLeadership:Community {name: "Ignite Social Learning Community @ JPMC"})
     SET t2.type = "ThoughtLeadership",
-        t2.description = "Innovation Leadership: Core team member and lead for Ignite Cloud community, driving organic network growth and innovation through structured social learning.",
+        t2.description = "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impact of social learning in enterprise tech.",
         t2.links = ["https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"]
-    MERGE (p)-[:LED {role: "Core Team Member", start: "06/2021", end: "07/2025"}]->(t2)
+    MERGE (p)-[:FEATURE_GUEST {role: "Lead & Featured Guest", start: "06/2021", end: "07/2025"}]->(t2)
     MERGE (cat)-[:CONTAINS]->(t2)
     
     MERGE (star_t2:PreparatoryNote {name: "Core Detail: Ignite Community"})
-    SET star_t2.text = "Situation: Employees lacked structured opportunities for skills-dev outside day-jobs... Task: Run ecosystem for organic learning and innovation... Action: Organized monthly sessions, mentored leadership potential... Result: Community grew organically, leading to internal mobility and collaboration across JPMC."
+    SET star_t2.text = "Situation: Employees lacked structured opportunities for skills-dev outside day-jobs... Task: Run ecosystem for organic learning and innovation... Action: Organized monthly sessions, mentored leadership potential, and represented the community in high-profile internal/external interviews... Result: Community grew organically, leading to internal mobility and collaboration across JPMC, while establishing a model for social learning."
     MERGE (t2)-[:HAS_PRIVATE_NOTE]->(star_t2)
 
     WITH t2, cat, p
@@ -269,7 +274,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p1)
     MERGE (cat)-[:CONTAINS]->(p1)
     MERGE (n1:PreparatoryNote {name: "STAR: Metadata Agent"})
-    SET n1.text = "Situation: Metadata was scattered across AWM data catalogs... Task: Develop AI Agent for natural language discovery... Action: Architected end-to-end with AWS Lambda/Bedrock/PG Vector, built RAG pattern... Result: Reduced discovery time from hours to seconds."
+    SET n1.text = "Situation: Metadata was scattered across AWM data catalogs. Task: Develop AI Agent for natural language discovery. Action: Architected end-to-end with AWS Lambda/Bedrock/PG Vector, built RAG pattern. Result: Reduced discovery time from hours to seconds."
     MERGE (p1)-[:HAS_PRIVATE_NOTE]->(n1)
 
     // DataMesh Publishing
@@ -278,7 +283,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p2)
     MERGE (cat)-[:CONTAINS]->(p2)
     MERGE (n2:PreparatoryNote {name: "STAR: DataMesh Publishing"})
-    SET n2.text = "Situation: Bespoke integrations created a fragmented data landscape... Task: Publish Instrument Reference Data on DataMesh... Action: Implemented automated pipeline using AWS Lambda/Step Functions/Glue... Result: Established single standardized source for enterprise reference data."
+    SET n2.text = "Situation: Bespoke integrations created a fragmented data landscape. Task: Publish Instrument Reference Data on DataMesh. Action: Implemented automated pipeline using AWS Lambda/Step Functions/Glue. Result: Established single standardized source for enterprise reference data."
     MERGE (p2)-[:HAS_PRIVATE_NOTE]->(n2)
 
     // DataMesh Infrastructure
@@ -287,7 +292,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p3)
     MERGE (cat)-[:CONTAINS]->(p3)
     MERGE (n3:PreparatoryNote {name: "STAR: DataMesh Infrastructure"})
-    SET n3.text = "Situation: Lacked approved Terraform modules for Lake Formation... Task: Resolve architecture blockers... Action: Collaborated with platform teams to create enterprise Terraform modules... Result: Removed critical blockers and established reusable infrastructure patterns."
+    SET n3.text = "Situation: Lacked approved Terraform modules for Lake Formation. Task: Resolve architecture blockers. Action: Collaborated with platform teams to create enterprise Terraform modules. Result: Removed critical blockers and established reusable infrastructure patterns."
     MERGE (p3)-[:HAS_PRIVATE_NOTE]->(n3)
     """,
 
@@ -302,7 +307,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p4)
     MERGE (cat)-[:CONTAINS]->(p4)
     MERGE (n4:PreparatoryNote {name: "STAR: Gain/Loss MS"})
-    SET n4.text = "Situation: Costly dependency on vendor product for real-time gain/loss... Task: Replace vendor product with cloud-native MS... Action: Designed/implemented greenfield MS using Spring/AWS EKS/Kafka... Result: Saved $338k annually and removed external dependency."
+    SET n4.text = "Situation: Costly dependency on vendor product for real-time gain/loss. Task: Replace vendor product with cloud-native MS. Action: Designed/implemented greenfield MS using Spring/AWS EKS/Kafka. Result: Saved $338k annually and removed external dependency."
     MERGE (p4)-[:HAS_PRIVATE_NOTE]->(n4)
 
     // Short Orders
@@ -311,7 +316,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p5)
     MERGE (cat)-[:CONTAINS]->(p5)
     MERGE (n5:PreparatoryNote {name: "STAR: Short Orders MS"})
-    SET n5.text = "Situation: Vendor dependency for locating daily open short orders... Task: Implement cloud-native MS to improve integration... Action: Used AWS MSK, CloudWatch, and Datadog for monitoring/alerting... Result: Eliminated licensing costs and gained full control over daily operations."
+    SET n5.text = "Situation: Vendor dependency for locating daily open short orders. Task: Implement cloud-native MS to improve integration. Action: Used AWS MSK, CloudWatch, and Datadog for monitoring/alerting. Result: Eliminated licensing costs and gained full control over daily operations."
     MERGE (p5)-[:HAS_PRIVATE_NOTE]->(n5)
 
     // Corporate Action
@@ -319,7 +324,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p6)
     MERGE (cat)-[:CONTAINS]->(p6)
     MERGE (n6:PreparatoryNote {name: "STAR: Corp Action Automation"})
-    SET n6.text = "Situation: Manual report generation was time-consuming and prone to delays... Task: Automate Corporate Action reports... Action: Designed/implemented automation microservice integrated with data sources... Result: Improved stakeholder satisfaction through timely and consistent delivery."
+    SET n6.text = "Situation: Manual report generation was time-consuming and prone to delays. Task: Automate Corporate Action reports. Action: Designed/implemented automation microservice integrated with data sources. Result: Improved stakeholder satisfaction through timely and consistent delivery."
     MERGE (p6)-[:HAS_PRIVATE_NOTE]->(n6)
 
     // Settlement Verification
@@ -327,7 +332,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p7)
     MERGE (cat)-[:CONTAINS]->(p7)
     MERGE (n7:PreparatoryNote {name: "STAR: Settlement Verification"})
-    SET n7.text = "Situation: Sybase dependency for settlement verification needed strategic exit... Task: Maintain functionality during migration... Action: Led brownfield enhancements, worked with stakeholders on business criteria... Result: Successfully replaced Sybase without disruption to order-raising."
+    SET n7.text = "Situation: Sybase dependency for settlement verification needed strategic exit. Task: Maintain functionality during migration. Action: Led brownfield enhancements, worked with stakeholders on business criteria. Result: Successfully replaced Sybase without disruption to order-raising."
     MERGE (p7)-[:HAS_PRIVATE_NOTE]->(n7)
     """,
 
@@ -335,44 +340,85 @@ RESUME_CYPHER_QUERIES = [
     """
     // Mezocliq
     MATCH (r:Role {name: "Sr. Software Engineer (Mezocliq)"})
-    MATCH (cat:Category {name: "Professional Experience"})
+    MATCH (cat1:Category {name: "Professional Experience"})
     
     MERGE (pm1:Project {name: "Cloud-Native Platform Orchestration & Workflow System"})
     MERGE (r)-[:CONTRIBUTED_TO {start: "2013", end: "2021"}]->(pm1)
-    MERGE (cat)-[:CONTAINS]->(pm1)
+    MERGE (cat1)-[:CONTAINS]->(pm1)
 
     MERGE (pm2:Project {name: "Enterprise Access Control, Search, and Distributed Infrastructure"})
     MERGE (r)-[:CONTRIBUTED_TO {start: "2013", end: "2021"}]->(pm2)
-    MERGE (cat)-[:CONTAINS]->(pm2)
+    MERGE (cat1)-[:CONTAINS]->(pm2)
 
-    WITH cat
+    WITH cat1
     // Goldman Sachs
     MATCH (rg:Role {name: "Sr. Software Engineer, Consultant"})
     MERGE (pg1:Project {name: "Executive Workflow Management Platform (Ten Thousand Women)"})
     MERGE (rg)-[:CONTRIBUTED_TO {start: "2007", end: "2009"}]->(pg1)
-    MERGE (cat)-[:CONTAINS]->(pg1)
+    MERGE (cat1)-[:CONTAINS]->(pg1)
 
     MERGE (pg2:Project {name: "Capital Attribution & Market Risk Data Platform"})
     MERGE (rg)-[:CONTRIBUTED_TO {start: "2007", end: "2009"}]->(pg2)
-    MERGE (cat)-[:CONTAINS]->(pg2)
+    MERGE (cat1)-[:CONTAINS]->(pg2)
 
-    WITH cat
+    WITH cat1
     // GE
     MATCH (re:Role {name: "IT Systems Specialist"})
     MERGE (pge1:Project {name: "Radiology Imaging Platform Integration"})
     MERGE (re)-[:CONTRIBUTED_TO {start: "1999", end: "2006"}]->(pge1)
-    MERGE (cat)-[:CONTAINS]->(pge1)
+    MERGE (cat1)-[:CONTAINS]->(pge1)
 
     MERGE (pge2:Project {name: "Image Management & Distributed Event Processing System"})
     MERGE (re)-[:CONTRIBUTED_TO {start: "1999", end: "2006"}]->(pge2)
-    MERGE (cat)-[:CONTAINS]->(pge2)
+    MERGE (cat1)-[:CONTAINS]->(pge2)
 
-    WITH cat
+    WITH cat1
     // Macmet
     MATCH (rm:Role {name: "Software Engineer"})
     MERGE (pma:Project {name: "Simulation systems development and evaluation (Macmet)"})
     MERGE (rm)-[:CONTRIBUTED_TO {start: "1997", end: "1999"}]->(pma)
-    MERGE (cat)-[:CONTAINS]->(pma)
+    MERGE (cat1)-[:CONTAINS]->(pma)
+    """,
+
+    # 8.1 LEGACY STAR NOTES (BACKFILL)
+    """
+    // Mezocliq
+    MATCH (pm1:Project {name: "Cloud-Native Platform Orchestration & Workflow System"})
+    MERGE (n_pm1:PreparatoryNote {name: "STAR: Mezocliq Workflow"})
+    SET n_pm1.text = "Situation: Mezocliq platform required a scalable, modular architecture for UI orchestration and workflow execution. Task: Design and implement microservices-based architecture for UI logic and approval rules. Action: Developed Quarkus-based microservices, implemented containerization with Docker/K8s, and established CI/CD. Result: Delivered scalable platform with independent deployment and faster release cycles."
+    MERGE (pm1)-[:HAS_PRIVATE_NOTE]->(n_pm1)
+
+    WITH count(*) AS scope
+    MATCH (pm2:Project {name: "Enterprise Access Control, Search, and Distributed Infrastructure"})
+    MERGE (n_pm2:PreparatoryNote {name: "STAR: Mezocliq Security"})
+    SET n_pm2.text = "Situation: Needed robust access control and high-performance search for analytics platforms. Task: Design flexible privilege model and enable full-text search across datasets. Action: Designed Cassandra-based privilege model, implemented Elasticsearch search, and integrated Hazelcast distributed caching. Result: Enabled fine-grained access control and significantly improved search/discovery performance."
+    MERGE (pm2)-[:HAS_PRIVATE_NOTE]->(n_pm2)
+
+    WITH count(*) AS scope
+    // Goldman Sachs
+    MATCH (pg1:Project {name: "Executive Workflow Management Platform (Ten Thousand Women)"})
+    MERGE (n_pg1:PreparatoryNote {name: "STAR: GS Ten Thousand Women"})
+    SET n_pg1.text = "Situation: The executive office needed a system to manage project submissions and approvals for a global initiative. Task: Lead development of a production-ready workflow application. Action: Led development using J2EE/Struts/Hibernate, designed end-to-end multi-stage approval workflow. Result: Delivered fully functional platform improving operational efficiency for global administrators."
+    MERGE (pg1)-[:HAS_PRIVATE_NOTE]->(n_pg1)
+
+    WITH count(*) AS scope
+    MATCH (pg2:Project {name: "Capital Attribution & Market Risk Data Platform"})
+    MERGE (n_pg2:PreparatoryNote {name: "STAR: GS Risk Management"})
+    SET n_pg2.text = "Situation: Risk and capital attribution processes needed re-design due to evolving reporting needs. Task: Implement capital attribution logic and redesign market risk data workflows. Action: Designed data structures in DB2, implemented business logic, and integrated with internal dashboard framework. Result: Improved accuracy of capital attribution and enabled better alignment with risk organizational structures."
+    MERGE (pg2)-[:HAS_PRIVATE_NOTE]->(n_pg2)
+
+    WITH count(*) AS scope
+    // GE
+    MATCH (pge1:Project {name: "Radiology Imaging Platform Integration"})
+    MERGE (n_pge1:PreparatoryNote {name: "STAR: GE PACS Integration"})
+    SET n_pge1.text = "Situation: Radiologists needed seamless access to 3D clinical applications from siloed PACS systems. Task: Integrate PACS with 3D applications to provide a unified diagnostic experience. Action: Implemented universal medical application interface enabling access directly from PACS. Result: Successfully provided unified diagnostic access, improving workflow; demonstrated at RSNA conferences."
+    MERGE (pge1)-[:HAS_PRIVATE_NOTE]->(n_pge1)
+
+    WITH count(*) AS scope
+    MATCH (pge2:Project {name: "Image Management & Distributed Event Processing System"})
+    MERGE (n_pge2:PreparatoryNote {name: "STAR: GE Workflows"})
+    SET n_pge2.text = "Situation: Medical imaging required robust workflows for processing and storage across distributed systems. Task: Design scalable workflows and evaluate distributed communication models. Action: Designed patient data workflows and prototyped event communication using CORBA/ACE. Result: Improved reliability and scalability of imaging workflows for large-scale medical image data."
+    MERGE (pge2)-[:HAS_PRIVATE_NOTE]->(n_pge2)
     """,
 
     # 8.5 META-CONTEXT: INTERACTIVE RESUME
@@ -493,8 +539,15 @@ def seed_resume_graph():
                 print(f"  -> Running Query {i}/{len(RESUME_CYPHER_QUERIES)}")
                 session.run(query)
                 
-            tenant_id = os.getenv("TENANT_ID") or "test-tenant"
-            print(f"  -> Stamping graph with tenant isolation header: {tenant_id}")
+            tenant_id = os.getenv("TENANT_ID")
+            if not tenant_id or not tenant_id.startswith("org_"):
+                raise EnvironmentError(
+                    "CRITICAL: 'TENANT_ID' environment variable is missing or invalid. "
+                    "Seeding aborted to prevent accidental data corruption with placeholder IDs."
+                )
+            
+            print(f"  -> Authoritative Identity confirmed: {tenant_id}")
+            print(f"  -> Stamping graph with tenant isolation header.")
             # Stamp ALL resume-domain nodes explicitly by label.
             # Using an inclusion list is safer than an exclusion list
             # because new node types are NOT stamped by accident.

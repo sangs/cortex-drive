@@ -70,11 +70,13 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
 
         return Array.from(links).map(url => ({
             url,
-            label: url.includes('github.com') ? 'GitHub Repository' :
-                   url.includes('linkedin.com') ? 'LinkedIn Profile' :
-                   url.includes('infoq.com') ? 'InfoQ Publication' :
-                   url.includes('aws.amazon.com') ? 'AWS Case Study' :
-                   url.includes('medium.com') ? 'Engineering Blog' :
+            label: (url.includes('github.com')) ? 'GitHub Repository' :
+                   (url.includes('linkedin.com') || url.includes('lnkd.in')) ? 'LinkedIn Profile' :
+                   (url.includes('infoq.com')) ? 'InfoQ Publication' :
+                   (url.includes('aws.amazon.com')) ? 'AWS Case Study' :
+                   (url.includes('medium.com')) ? 'Engineering Blog' :
+                   (url.includes('drive.proton.me')) ? 'Secure Document (Proton)' :
+                   (url.includes('sites.google.com')) ? 'Project Website' :
                    url.match(/\.(pdf|doc|docx)$/i) ? 'Whitepaper / Doc' :
                    'External Resource'
         }));

@@ -74,6 +74,31 @@ async def search_episodes_by_question_tool(
     expert = ExpertTools(tenant_id=tenant_id)
     try:
         return expert.search_episodes_by_question(question, k=k)
+    except Exception as e:
+        print(f"Error in search_episodes_by_question_tool: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def query_relevant_chunks_hybrid_tool(
+    question: str = Field(description="The natural language question or topic to search for using Hybrid (Vector + BM25) search."),
+    top_k: Optional[int] = Field(10, description="Number of results to return. Default 10.")
+) -> str:
+    """
+    Perform a High-Fidelity Hybrid Search (BM25 + Vector) with Reciprocal Rank Fusion (RRF).
+    This is the most accurate tool for finding specific context from transcripts.
+    It combines conceptual depth (Vector) with literal keyword precision (BM25).
+    
+    Returns JSON with episode metadata and transcript chunks.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    expert = ExpertTools(tenant_id=tenant_id)
+    try:
+        return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
+    except Exception as e:
+        print(f"Error in query_relevant_chunks_hybrid_tool: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -245,9 +270,10 @@ async def search_resume_graph(
     Explicitly excludes Podcast-related conceptual nodes.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or "trial-user"
     expert = ExpertTools(tenant_id=tenant_id)
     try:
-        return expert.search_resume_graph(keyword)
+        return expert.search_resume_graph(keyword, requesting_user_id=user_id)
     finally:
         expert.close()
 

@@ -20,9 +20,12 @@ import {
     Trash2
 } from "lucide-react";
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
-import EnterpriseGraph from "@/components/EnterpriseGraph";
-import BentoDetailPanel from "@/components/BentoDetailPanel";
+import dynamic from "next/dynamic";
 import { useMCP } from "@/hooks/use-mcp";
+
+// 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
+const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
+const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
 
 export default function DashboardPage() {
@@ -30,7 +33,7 @@ export default function DashboardPage() {
     const [messages, setMessages] = useState<any[]>([
         {
             role: "assistant",
-            content: "Hello! I'm your Cortex Brain. Ask me anything about your podcast library, or start an analysis.",
+            content: "Cortex-Drive: Grounded Intelligence at Scale. Ask me anything across your enterprise context graph or explore your portfolio.",
         }
     ]);
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
@@ -47,32 +50,25 @@ export default function DashboardPage() {
     // Helper to parse tool data into graph format
     const parseDataToGraph = (rawData: string, currentGraph: { nodes: any[], links: any[] }) => {
         try {
-            const data = JSON.parse(rawData);
+            const parsedRaw = JSON.parse(rawData);
+            // Handle aggregated tool results (Array of strings) vs legacy single result
+            const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [rawData];
             
-            // === SEMANTIC INTERSECTION HEURISTIC ===
-            // Scan the incoming JSON string payload for any overlapping topological footprint.
-            let intersectionFound = false;
-            if (currentGraph.nodes.length > 0) {
-                const rawStringContent = rawData.toLowerCase();
-                intersectionFound = currentGraph.nodes.some((existingNode: any) => {
-                    const nameMatch = existingNode.name && rawStringContent.includes(existingNode.name.toLowerCase());
-                    const idMatch = existingNode.id && rawStringContent.includes(existingNode.id.toLowerCase());
-                    return nameMatch || idMatch;
-                });
-            }
-            
-            // Append if connected (intersection > 0), Reset canvas if completely unrelated (intersection == 0)
-            const nodes = intersectionFound ? [...currentGraph.nodes] : [];
-            const links = intersectionFound ? [...currentGraph.links] : [];
+            // Start with CURRENT graph to allow for cumulative discovery
+            const nodes = [...currentGraph.nodes];
+            const links = [...currentGraph.links];
 
             const addNode = (node: any) => {
                 if (!node.id || node.type === 'PreparatoryNote') return null;
-                const existing = nodes.find(n => n.id === node.id);
-                if (!existing) {
+                const existingIndex = nodes.findIndex(n => n.id === node.id);
+                if (existingIndex === -1) {
                     nodes.push(node);
                     return true;
+                } else {
+                    // Update existing node with potentially newer/more complete data
+                    nodes[existingIndex] = { ...nodes[existingIndex], ...node };
+                    return false;
                 }
-                return false;
             };
 
             const addLink = (link: any) => {
@@ -112,18 +108,20 @@ export default function DashboardPage() {
                 const idKeys = ['episode_number', 'SeedEpisodeNumber', 'EpisodeNumber', 'id', 'e.episode_number', 'target_id'];
                 const dateKeys = ['date', 'air_date', 'startDate', 'published_at', 'year'];
                 
-                const name = extractValue(item, nameKeys);
+                const seedDetails = item.Details || item;
+                const name = extractValue(seedDetails, nameKeys);
                 if (!name) return;
 
                 const id = name; // Standardize on name for cross-layer parity
                 
                 // Identify normalized time marker
-                const timeValue = extractValue(item, dateKeys);
+                const timeValue = extractValue(seedDetails, dateKeys);
                 const year = timeValue ? (String(timeValue).match(/\d{4}/)?.[0] || null) : null;
                 const date = timeValue || null;
 
-                const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
-                const seedDetails = item.Details || item;
+                // Smart Type Inference: Only use 'Episode' if keywords match, otherwise default to 'Node' 
+                // for professional entities to prevent visual misidentification.
+                const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (seedDetails.type || 'Node');
                 addNode({ id, name, type, val: 10, year, date, ...seedDetails });
 
                 // 2. Handle GDS/Hybrid Search "Similar" nodes
@@ -166,7 +164,7 @@ export default function DashboardPage() {
                         const targetType = extractValue(rel, ['target_type', 'type', 'label']) || 'Node';
                         if (targetType === 'PreparatoryNote') return;
                         
-                        const type = (name.toLowerCase().includes('mcp') || name.toLowerCase().includes('baml')) ? 'Episode' : (item.type || 'Episode');
+                        const type = (targetName.toLowerCase().includes('mcp') || targetName.toLowerCase().includes('baml')) ? 'Episode' : (targetType || 'Node');
                         const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
                         const targetId = targetName; // Standardize on name
                         
@@ -181,11 +179,19 @@ export default function DashboardPage() {
                 }
             };
 
-            if (Array.isArray(data)) {
-                data.forEach((item, idx) => processItem(item, idx));
-            } else if (typeof data === 'object' && data !== null) {
-                processItem(data, 0);
-            }
+            // Process each individual tool result found in the aggregated raw results
+            rawResults.forEach(rawStr => {
+                try {
+                    const data = JSON.parse(rawStr);
+                    if (Array.isArray(data)) {
+                        data.forEach((item, idx) => processItem(item, idx));
+                    } else if (typeof data === 'object' && data !== null) {
+                        processItem(data, 0);
+                    }
+                } catch (e) {
+                    console.warn("Skipping non-JSON result in aggregator", rawStr);
+                }
+            });
 
             // Final Integrity Pass: Remove links pointing to non-existent nodes
             const finalLinks = links.filter(l => 
@@ -269,7 +275,7 @@ export default function DashboardPage() {
         setMessages([
             {
                 role: "assistant",
-                content: "Hello! I'm your Cortex Brain. Ask me anything about your podcast library, or start an analysis.",
+                content: "Cortex-Drive: Grounded Intelligence at Scale. Ask me anything across your enterprise context graph or explore your portfolio.",
             }
         ]);
         setGraphData({ nodes: [], links: [] });

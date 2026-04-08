@@ -26,32 +26,44 @@ export default function Home() {
       <main className="flex-1 flex flex-col items-center justify-center text-center px-6 pt-20 pb-32">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-8 animate-fade-in">
           <Sparkles className="w-3 h-3" />
-          <span>Intelligent Mental Models are here</span>
+          <span>From the Desk of Sangeetha Ramadurai</span>
         </div>
         
         <h1 className="max-w-4xl text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-[1.1]">
-          Connect Your Brain to the <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Knowledge Cloud</span>
+          The Intelligence Layer for <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">Institutional Memory.</span>
         </h1>
         
         <p className="max-w-2xl text-lg md:text-xl text-slate-400 mb-12 leading-relaxed">
-          CortexDrive is your personal mental model accelerator. We turn your podcast library, 
-          reading list, and thoughts into a structured knowledge graph you can chat with.
+          I am Sangeetha Ramadurai, an AI and Data Infrastructure specialist. I built Cortex-Drive to solve the "Context Gap" in enterprise intelligence—transforming scattered data into an explainable, living context graph.
         </p>
 
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col sm:flex-row gap-4 mb-20">
           <Link 
             href="/dashboard" 
             className="h-14 px-10 rounded-2xl bg-indigo-600 text-white font-bold text-lg flex items-center justify-center hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95"
           >
-            Enter Your Brain
+            Launch My Professional Memory
           </Link>
           <a 
-            href="http://localhost:3002" 
+            href="https://www.linkedin.com/in/sangeetharamadurai/" 
             target="_blank"
             className="h-14 px-10 rounded-2xl bg-white/5 border border-white/10 text-white font-bold text-lg flex items-center justify-center hover:bg-white/10 transition-all active:scale-95"
           >
-            View Graph Viz
+            Meet the Architect
           </a>
+        </div>
+
+        {/* Executive Impact Section */}
+        <div className="max-w-4xl p-8 rounded-3xl bg-indigo-600/5 border border-indigo-500/10 text-left mb-32">
+          <h2 className="text-2xl font-bold mb-4 text-white">Why I Built This for Your Enterprise:</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-slate-400 text-sm leading-relaxed">
+            <p>
+              In large institutions (JPMC, Goldman Sachs), critical reasoning is often lost in Slack threads and PDFs. Cortex-Drive recovers this **"Reasoning Trace"** ensuring that AI agents are grounded in truth, not hallucinations.
+            </p>
+            <p>
+              As a Data Engineering specialist, I designed this platform on the **Model Context Protocol (MCP)** and **Neo4j** to provide a standardized, secure, and multi-tenant memory layer that scales with your infrastructure.
+            </p>
+          </div>
         </div>
 
         {/* Feature Grid */}

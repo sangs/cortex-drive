@@ -253,13 +253,16 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             const echartsInstance = chartRef.current.getEchartsInstance();
             
             const currentOption = echartsInstance.getOption();
-            const currentIndex = currentOption.timeline?.[0]?.currentIndex;
-            
-            if (currentIndex !== index) {
-                echartsInstance.dispatchAction({
-                    type: 'timelineChange',
-                    currentIndex: index
-                });
+            // Safety check for timeline property to prevent TypeError
+            if (currentOption && currentOption.timeline && Array.isArray(currentOption.timeline) && currentOption.timeline[0]) {
+                const currentIndex = currentOption.timeline[0].currentIndex;
+                
+                if (currentIndex !== index) {
+                    echartsInstance.dispatchAction({
+                        type: 'timelineChange',
+                        currentIndex: index
+                    });
+                }
             }
         }
     }, [focusYear, timelineData]);

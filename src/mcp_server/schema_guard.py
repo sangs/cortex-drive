@@ -216,6 +216,7 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         'Publication': GenericProjectNode,
         'OpenSource': GenericProjectNode,
         'SocialLearning': GenericProjectNode,
+        'Category': GenericProjectNode,
         # System/Infrastructure
         '__MetaContext__': InfrastructureNode
     }

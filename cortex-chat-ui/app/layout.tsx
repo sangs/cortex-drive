@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CortexDrive | Your Mental Model",
-  description: "Connect your brain to the cloud with CortexDrive",
+  title: "Cortex-Drive | Living Context Graph",
+  description: "Cortex-Drive: The Living Memory for LLMs and the Definitive Source of Truth for Humans.",
 };
 
 export default function RootLayout({

@@ -38,6 +38,7 @@ const authMiddleware = async (req, res, next) => {
             
             // Prioritize: 1. Org from token, 2. Default Org from env, 3. User sub from token
             const tenantId = decoded.org_id || process.env.TENANT_ID || decoded.sub;
+            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (Primary: ${!!decoded.org_id}, Fallback: ${!decoded.org_id})`);
             
             req.headers['x-tenant-id'] = tenantId;
             // Forward the individual user ID so the MCP server can identify the owner
@@ -79,14 +80,18 @@ const authMiddleware = async (req, res, next) => {
 
 // --- LLM Orchestration Section ---
 
-async function callMcpTool(tenantId, toolName, toolArgs, userId = '') {
+async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
     
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
     
     const sseResponse = await fetch(`${mcpServerUrl}/sse`, {
-        headers: { "x-tenant-id": tenantId, "x-user-id": userId }
+        headers: { 
+            "x-tenant-id": tenantId, 
+            "x-user-id": userId,
+            "x-schema-readable": schemaReadable ? "true" : "false"
+        }
     });
 
     if (!sseResponse.ok) {
@@ -107,7 +112,12 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '') {
         const postJson = async (url, body) => {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, 'x-user-id': userId },
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'x-tenant-id': tenantId, 
+                    'x-user-id': userId,
+                    'x-schema-readable': schemaReadable ? "true" : "false"
+                },
                 body: JSON.stringify(body)
             });
             return res;
@@ -407,6 +417,40 @@ const mcpToolsDefinitions = [
                 required: ["node_name"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "explore_graph_schema",
+            description: "Introspect the Neo4j database to find exactly what Node Labels and Relationships exist. Call this tool whenever you don't know the exact schema needed to write a Cypher query.",
+            parameters: {
+                type: "object",
+                properties: {}
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_episodes_with_cast",
+            description: "List all available podcast episodes along with their hosts and guests. Use this for broad discovery of the podcast catalog and identifying participants.",
+            parameters: { type: "object", properties: {}, required: [] }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "query_relevant_chunks_hybrid_tool",
+            description: "High-Fidelity search for specific context or 'deep' knowledge within podcast transcripts. Use this when the user asks content questions (e.g. 'What did X say about Y?'). It combines keyword precision with conceptual depth.",
+            parameters: {
+                type: "object",
+                properties: {
+                    question: { type: "string", description: "The natural language question or topic to search for." },
+                    top_k: { type: "integer", default: 10, description: "Number of candidate chunks to retrieve for fusion." }
+                },
+                required: ["question"]
+            }
+        }
     }
 ];
 
@@ -439,6 +483,8 @@ const securityMiddleware = (req, res, next) => {
 app.post('/query', authMiddleware, securityMiddleware, async (req, res) => {
     const { question, history = [] } = req.body;
     const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'] || 'trial-user';
+    console.log(`[QUERY] Processing question from User ${userId} for Tenant: ${tenantId}`);
 
     if (!question) {
         return res.status(400).send({ error: "Missing 'question' in request body" });
@@ -452,10 +498,11 @@ ${req.securityPrompt || ''}
 TIERED REASONING STRATEGY:
 1. TIER 1 (ATOMIC PRECISION): 
    - FOR COUNTS: Use 'get_tool_statistics' for high-level numbers.
-   - FOR LISTS/ENUMERATION: Use 'run_cypher_query' to fetch lists of specific nodes (e.g., 'MATCH (e:Episode) RETURN e.name').
+   - FOR PODCAST LISTS: Use 'get_episodes_with_cast' to list all episodes, hosts, and guests.
+   - FOR OTHER LISTS: Use 'run_cypher_query' to fetch lists of specific nodes.
    - FOR FOLLOW-UPS: Use 'get_node_details("Entity Name")' once you have an entity name from a previous turn.
-2. TIER 2 (HYBRID DISCOVERY): When the question is content-based ("What was said...") and you are discovering new information. USE 'hybrid_discovery_tool'. 
-3. TIER 3 (SEMANTIC EXPLORATION): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
+2. TIER 2 (HIGH-FIDELITY HYBRID SEARCH): When the user asks for specific knowledge, quotes, or deep insights from the podcast transcripts (e.g., "What was said about...", "How is X described?"). ALWAYS USE 'query_relevant_chunks_hybrid_tool' for these queries as it uses both keywords and concepts.
+3. TIER 3 (GRAPH DISCOVERY): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
 4. TIER 4 (CAREER & RESUME): When the user asks about Sangeetha's professional background, resume, projects, startups, hackathons, certifications, companies, or publications. USE 'search_resume_graph'.
 5. DIRECTED AUTONOMY (PROACTIVE EXPANSION): 
    - When the user identifies a core entity (Project, Episode, Person, Technology), do NOT just provide the text answer. 
@@ -471,8 +518,16 @@ CYPHER RULES:
 - When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.
 - Enumeration: If the user asks "What are the available episodes?" or "List the guests," you MUST enumerate them, not just give a count.
 - Resolve all pronouns (this, they, that episode) by looking at conversation history.
-- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names.
-- Chronology: Always list professional and academic milestones in **descending chronological order** (Newest first). Do NOT re-sort tool results alphabetically or oldest-first. Respect the order returned by the discovery tools.`;
+- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names. 
+- REFERENCE LINKS: Every tool result (like 'search_resume_graph' or 'get_node_details') contains 'links', 'ReferenceLinks', or 'url' fields. You MUST explicitly include ALL of these as clickable Markdown links (e.g., [Link Text](https://...)) in your response for every entity mentioned. 
+- FORMAT: For each project or role, provide its resources as a clear, bulleted list. Do NOT pick a "primary" link; list the entire collection.
+- VISUAL TRIGGER: If the user asks for a "map", "graph", "overview", or "landscape" of a professional background or career, you MUST call 'get_cluster_context(node_name="Sangeetha Ramadurai")' in addition to the search tools. This ensures the Enterprise Graph visualizer is triggered for the user.
+- PROFESSIONAL IMPACT: The 'text' field provided by the tools contains high-fidelity narrative context. You MUST include this information as the "Professional Impact" or "Why" for each project, ensuring the user gets the full context of the work.
+- Chronology: Always list professional and academic milestones in **descending chronological order** (Newest first). Do NOT re-sort tool results alphabetically or oldest-first. Respect the order returned by the discovery tools.
+- PRIVACY: When summarizing professional narratives, do NOT use the term 'STAR' or 'Preparatory Note.' Present the content as seamless professional experience.
+- EXHAUSTIVENESS: When a discovery tool (like 'search_resume_graph') returns multiple professional entities (Hackathons, Projects, Roles), you MUST include and acknowledge ALL of them in your summary.
+- NO HALLUCINATION: If a tool result is empty or shows "Metadata pending", report that honestly. Do not fill gaps with pre-trained knowledge about similar company names.
+`;
 
         let currentMessages = [
             { role: "system", content: systemPrompt },
@@ -488,7 +543,7 @@ CYPHER RULES:
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
-        let lastToolResult = null;
+        let aggregatedResults = [];
         let toolUsed = null;
 
         while (loopCount < MAX_LOOPS) {
@@ -514,16 +569,50 @@ CYPHER RULES:
                     toolUsed = toolName; // Track last for UI simplicity
 
                     console.log(`  -> ${toolName} with args:`, toolArgs);
-
+                    
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, req.headers['x-user-id'] || '');
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true');
                         
                         // Extract text content
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
                             toolContent = mcpData.result.content[0].text;
                         }
-                        lastToolResult = toolContent;
+                        
+                        // PHASE 1: Reranking Consensus Layer for Hybrid Search
+                        if (toolName === 'query_relevant_chunks_hybrid_tool') {
+                            console.log(`[GATEWAY] Performing Reranking on Hybrid Search results...`);
+                            const rawChunks = JSON.parse(toolContent);
+                            
+                            if (Array.isArray(rawChunks) && rawChunks.length > 0) {
+                                const rerankPrompt = `You are a Search Reranker. Given the User Query and a list of Candidate Chunks, score each chunk from 0 to 10 based on how well it answers the query.
+                                
+Query: "${question}"
+
+Candidates:
+${rawChunks.map((c, i) => `[${i}] ${c.text.substring(0, 500)}`).join('\n\n')}
+
+Return ONLY a JSON array of indices sorted by relevance, e.g. [2, 0, 1]. Only include indices for chunks with a score > 7.`;
+
+                                const rerankResponse = await openai.chat.completions.create({
+                                    model: "gpt-4o-mini",
+                                    messages: [{ role: "system", content: rerankPrompt }],
+                                    response_format: { type: "json_object" }
+                                });
+                                
+                                const rerankData = JSON.parse(rerankResponse.choices[0].message.content);
+                                const sortedIndices = Object.values(rerankData)[0]; // Extract the array
+                                
+                                if (Array.isArray(sortedIndices)) {
+                                    const rerankedChunks = sortedIndices.map(idx => rawChunks[idx]).filter(Boolean);
+                                    console.log(`[GATEWAY] Reranking complete. Selected ${rerankedChunks.length} high-fidelity chunks.`);
+                                    toolContent = JSON.stringify(rerankedChunks);
+                                }
+                            }
+                        }
+                        
+                        // AGGREGATION: Collect results for UI high-resolution rendering
+                        aggregatedResults.push(toolContent);
 
                         currentMessages.push({
                             role: "tool",
@@ -531,13 +620,13 @@ CYPHER RULES:
                             name: toolName,
                             content: toolContent
                         });
-                    } catch (toolErr) {
-                        console.error(`Tool ${toolName} failed:`, toolErr.message);
+                    } catch (toolError) {
+                        console.error(`Tool ${toolName} failed:`, toolError.message);
                         currentMessages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: `Error calling tool: ${toolErr.message}`
+                            content: `Error calling tool: ${toolError.message}`
                         });
                     }
                 }
@@ -547,7 +636,7 @@ CYPHER RULES:
                 return res.send({ 
                     answer: assistantMessage.content, 
                     tool_used: toolUsed,
-                    raw_data: lastToolResult 
+                    raw_data: JSON.stringify(aggregatedResults) 
                 });
             }
         }
