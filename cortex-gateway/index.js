@@ -1,5 +1,13 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+
+// Load externalized prompts into memory on startup
+const promptsDir = path.join(__dirname, '..', 'prompts');
+const gatewaySystemPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_system_assistant.md'), 'utf-8');
+const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_security_guest.md'), 'utf-8');
+const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const cors = require('cors');
 const OpenAI = require('openai');
@@ -393,11 +401,12 @@ const mcpToolsDefinitions = [
         type: "function",
         function: {
             name: "search_resume_graph",
-            description: "Search for entities across Sangeetha's Interactive Resume Graph. Use this whenever the user asks about professional background, projects, publications, startups, hackathons, certifications, or companies.",
+            description: "Search for entities across Sangeetha's professional history, including enterprise data infrastructure, software architecture, startups, hackathons, certifications, companies, projects, or publications.",
             parameters: {
                 type: "object",
                 properties: {
-                    keyword: { type: "string", description: "The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon')." }
+                    keyword: { type: "string", description: "The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon')." },
+                    wants_visual_map: { type: "boolean", description: "Set to true if the user asks for a map, graph, overview, or visual landscape of their career." }
                 },
                 required: ["keyword"]
             }
@@ -471,11 +480,7 @@ const securityMiddleware = (req, res, next) => {
     const isGuest = userId === 'trial-user';
 
     if (isGuest) {
-        req.securityPrompt = `\n[SECURITY POLICY] You are in HR-GUEST MODE. 
-- Access is restricted to Public Professional Data only.
-- DO NOT attempt to use 'run_cypher_query' or 'explore_graph_schema'.
-- Use 'search_resume_graph' for all professional inquiries.
-- ALL private STAR/Preparatory data is firewalled and inaccessible to you in this mode.`;
+        req.securityPrompt = "\n" + gatewaySecurityPrompt;
     }
     next();
 };
@@ -492,42 +497,7 @@ app.post('/query', authMiddleware, securityMiddleware, async (req, res) => {
 
     try {
         // Prepare current context messages
-        const systemPrompt = `You are the Cortex Brain Assistant. You are a Graph Agent with four tiers of reasoning:
-${req.securityPrompt || ''}
-
-TIERED REASONING STRATEGY:
-1. TIER 1 (ATOMIC PRECISION): 
-   - FOR COUNTS: Use 'get_tool_statistics' for high-level numbers.
-   - FOR PODCAST LISTS: Use 'get_episodes_with_cast' to list all episodes, hosts, and guests.
-   - FOR OTHER LISTS: Use 'run_cypher_query' to fetch lists of specific nodes.
-   - FOR FOLLOW-UPS: Use 'get_node_details("Entity Name")' once you have an entity name from a previous turn.
-2. TIER 2 (HIGH-FIDELITY HYBRID SEARCH): When the user asks for specific knowledge, quotes, or deep insights from the podcast transcripts (e.g., "What was said about...", "How is X described?"). ALWAYS USE 'query_relevant_chunks_hybrid_tool' for these queries as it uses both keywords and concepts.
-3. TIER 3 (GRAPH DISCOVERY): When exploring broad conceptual neighbors or looking for recommendations. USE 'search_episodes_gds_by_question_tool'.
-4. TIER 4 (CAREER & RESUME): When the user asks about Sangeetha's professional background, resume, projects, startups, hackathons, certifications, companies, or publications. USE 'search_resume_graph'.
-5. DIRECTED AUTONOMY (PROACTIVE EXPANSION): 
-   - When the user identifies a core entity (Project, Episode, Person, Technology), do NOT just provide the text answer. 
-   - Proactively call 'get_cluster_context(node_name)' to discover and render its local "solar system" of neighbors in the graph visualizer. 
-   - Goal: The graph should grow autonomously based on the conversation context.
-
-GRAPH SCHEMA AND ONTOLOGY:
-You MUST dynamically discover the schema!
-- If you need to map out podcast histories, open source projects, books, or any domain you are unsure of, use the \`explore_graph_schema()\` tool FIRST to fetch the active Neo4j ontology.
-- Rely on that tool's output to construct perfect, hallucination-free Cypher queries.
-
-CYPHER RULES:
-- When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.
-- Enumeration: If the user asks "What are the available episodes?" or "List the guests," you MUST enumerate them, not just give a count.
-- Resolve all pronouns (this, they, that episode) by looking at conversation history.
-- Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names. 
-- REFERENCE LINKS: Every tool result (like 'search_resume_graph' or 'get_node_details') contains 'links', 'ReferenceLinks', or 'url' fields. You MUST explicitly include ALL of these as clickable Markdown links (e.g., [Link Text](https://...)) in your response for every entity mentioned. 
-- FORMAT: For each project or role, provide its resources as a clear, bulleted list. Do NOT pick a "primary" link; list the entire collection.
-- VISUAL TRIGGER: If the user asks for a "map", "graph", "overview", or "landscape" of a professional background or career, you MUST call 'get_cluster_context(node_name="Sangeetha Ramadurai")' in addition to the search tools. This ensures the Enterprise Graph visualizer is triggered for the user.
-- PROFESSIONAL IMPACT: The 'text' field provided by the tools contains high-fidelity narrative context. You MUST include this information as the "Professional Impact" or "Why" for each project, ensuring the user gets the full context of the work.
-- Chronology: Always list professional and academic milestones in **descending chronological order** (Newest first). Do NOT re-sort tool results alphabetically or oldest-first. Respect the order returned by the discovery tools.
-- PRIVACY: When summarizing professional narratives, do NOT use the term 'STAR' or 'Preparatory Note.' Present the content as seamless professional experience.
-- EXHAUSTIVENESS: When a discovery tool (like 'search_resume_graph') returns multiple professional entities (Hackathons, Projects, Roles), you MUST include and acknowledge ALL of them in your summary.
-- NO HALLUCINATION: If a tool result is empty or shows "Metadata pending", report that honestly. Do not fill gaps with pre-trained knowledge about similar company names.
-`;
+        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
 
         let currentMessages = [
             { role: "system", content: systemPrompt },
@@ -578,6 +548,20 @@ CYPHER RULES:
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
                             toolContent = mcpData.result.content[0].text;
                         }
+
+                        // PHASE 2: Deterministic Graph Routing Interception (Progressive Backbone First)
+                        if (toolName === 'search_resume_graph' && toolArgs.wants_visual_map) {
+                            console.log(`[GATEWAY] Deterministic trigger: wants_visual_map detected. Fetching graph backbone (LOD 0)...`);
+                            // DOMAIN SILO: Request Professional Domain Only to exclude media/podcasts
+                            const clusterData = await callMcpTool(tenantId, 'get_cluster_context', { node_name: 'Sangeetha Ramadurai', depth: 1, backbone_only: true, domain: 'professional' }, userId, req.headers['x-schema-readable'] === 'true');
+                            
+                            let clusterContent = JSON.stringify(clusterData);
+                            if (clusterData.result && clusterData.result.content && clusterData.result.content[0]) {
+                                clusterContent = clusterData.result.content[0].text;
+                            }
+                            aggregatedResults.push(clusterContent);
+                            toolUsed = 'get_cluster_context'; // Force UI to render the graph
+                        }
                         
                         // PHASE 1: Reranking Consensus Layer for Hybrid Search
                         if (toolName === 'query_relevant_chunks_hybrid_tool') {
@@ -585,14 +569,7 @@ CYPHER RULES:
                             const rawChunks = JSON.parse(toolContent);
                             
                             if (Array.isArray(rawChunks) && rawChunks.length > 0) {
-                                const rerankPrompt = `You are a Search Reranker. Given the User Query and a list of Candidate Chunks, score each chunk from 0 to 10 based on how well it answers the query.
-                                
-Query: "${question}"
-
-Candidates:
-${rawChunks.map((c, i) => `[${i}] ${c.text.substring(0, 500)}`).join('\n\n')}
-
-Return ONLY a JSON array of indices sorted by relevance, e.g. [2, 0, 1]. Only include indices for chunks with a score > 7.`;
+                                const rerankPrompt = gatewayRerankerPrompt.replace('{question}', question).replace('{candidates}', rawChunks.map((c, i) => `[${i}] ${c.text.substring(0, 500)}`).join('\n\n'));
 
                                 const rerankResponse = await openai.chat.completions.create({
                                     model: "gpt-4o-mini",
@@ -614,11 +591,29 @@ Return ONLY a JSON array of indices sorted by relevance, e.g. [2, 0, 1]. Only in
                         // AGGREGATION: Collect results for UI high-resolution rendering
                         aggregatedResults.push(toolContent);
 
+                        // COMPRESSION: Keep LLM context lean for TPM safety while UI gets full data
+                        let llmResponseContent = toolContent;
+                        if (toolName === 'get_cluster_context' || (toolName === 'search_resume_graph' && toolArgs.wants_visual_map)) {
+                            try {
+                                const parsed = JSON.parse(toolContent);
+                                if (parsed.nodes || (parsed.result && parsed.result.content)) {
+                                    const nodeCount = parsed.nodes ? parsed.nodes.length : "target";
+                                    llmResponseContent = JSON.stringify({
+                                        status: "success",
+                                        message: `Visual map context retrieved (${nodeCount} nodes). Data forwarded to Graph UI for rendering.`,
+                                        instruction: "Do not list all nodes. Summarize the top 3-5 landmarks that appear in the 'Backbone' view."
+                                    });
+                                }
+                            } catch (e) {
+                                // Fallback to raw if parsing fails (unlikely)
+                            }
+                        }
+
                         currentMessages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: toolContent
+                            content: llmResponseContent
                         });
                     } catch (toolError) {
                         console.error(`Tool ${toolName} failed:`, toolError.message);

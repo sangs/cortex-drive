@@ -111,3 +111,42 @@ def test_get_cluster_context_empty_paths(mock_expert):
     res_json = mock_expert.get_cluster_context("NotExist")
     res = json.loads(res_json)
     assert res["nodes"] == []
+
+# --- 4. Exhaustive Coverage: search_resume_graph (TDD Temporal Priority) ---
+
+def test_search_resume_graph_temporal_priority(mock_expert):
+    """RED (TDD): Verify that 'Current' work is prioritized via relationship metadata."""
+    # Mock two records: One historical (JPMC), One Current (Cortex-Drive)
+    mock_record_current = MagicMock()
+    # Using the structure expected by search_resume_graph's RETURN
+    mock_record_current.data.return_value = {
+        "node": {
+            "name": "Cortex-Drive",
+            "type": "Project",
+            "display_date": "08/2025-Present"
+        },
+        "temporal_boost": 100 # We anticipate adding this field
+    }
+
+    mock_record_past = MagicMock()
+    mock_record_past.data.return_value = {
+        "node": {
+            "name": "JPMorgan Chase",
+            "type": "Company",
+            "display_date": "2021-2025"
+        },
+        "temporal_boost": 0
+    }
+
+    # Mock execute_query to return them in 'un-ordered' way to test sorting
+    mock_result = MagicMock()
+    mock_result.records = [mock_record_past, mock_record_current]
+    mock_expert.driver.execute_query.return_value = mock_result
+
+    # Execute search
+    res_json = mock_expert.search_resume_graph("working on")
+    res = json.loads(res_json)
+
+    # ASSERT: The first result should be Cortex-Drive due to temporal boost
+    assert len(res) >= 2
+    assert res[0]["name"] == "Cortex-Drive"

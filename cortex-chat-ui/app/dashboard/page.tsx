@@ -29,7 +29,7 @@ const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), 
 import { getThemeForType } from "@/utils/GraphTheme";
 
 export default function DashboardPage() {
-    const { isConnected, query } = useMCP();
+    const { isConnected, query, callTool } = useMCP();
     const [messages, setMessages] = useState<any[]>([
         {
             role: "assistant",
@@ -45,18 +45,38 @@ export default function DashboardPage() {
     const [isGraphVisible, setIsGraphVisible] = useState(true);
     const [selectedNode, setSelectedNode] = useState<any | null>(null);
     const [focusYear, setFocusYear] = useState<string | null>(null);
+    const [autoClear, setAutoClear] = useState(true); // TDD: Focus Mode (Clear Map between queries)
     const isResizing = useRef(false);
 
     // Helper to parse tool data into graph format
     const parseDataToGraph = (rawData: string, currentGraph: { nodes: any[], links: any[] }) => {
         try {
             const parsedRaw = JSON.parse(rawData);
-            // Handle aggregated tool results (Array of strings) vs legacy single result
-            const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [rawData];
             
-            // Start with CURRENT graph to allow for cumulative discovery
             const nodes = [...currentGraph.nodes];
             const links = [...currentGraph.links];
+
+            // Direct Graph Fragment Handling (e.g. from expand_node_topology)
+            if (parsedRaw.nodes && Array.isArray(parsedRaw.nodes)) {
+                parsedRaw.nodes.forEach((n: any) => {
+                    if (!n.id) return;
+                    const existingIdx = nodes.findIndex(node => node.id === n.id);
+                    if (existingIdx === -1) nodes.push(n);
+                    else nodes[existingIdx] = { ...nodes[existingIdx], ...n };
+                });
+                if (parsedRaw.links && Array.isArray(parsedRaw.links)) {
+                    parsedRaw.links.forEach((l: any) => {
+                        const exists = links.some(link => 
+                            (link.source === l.source && link.target === l.target) ||
+                            (link.source === l.target && link.target === l.source)
+                        );
+                        if (!exists) links.push(l);
+                    });
+                }
+                return { nodes, links };
+            }
+
+            const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [rawData];
 
             const addNode = (node: any) => {
                 if (!node.id || node.type === 'PreparatoryNote') return null;
@@ -133,11 +153,10 @@ export default function DashboardPage() {
                     addLink({ source: id, target: simId, type: 'SIMILAR' });
                 }
 
-                // 3. Metadata Enrichment (Topics/People/Tech)
+                // 3. Metadata Enrichment (Topics/People) - Removed Tech to stop floating nodes
                 const metadata = [
                     { key: ['topics', 'Topics', 'topic'], type: 'Topic', linkType: 'HAS_TOPIC' },
-                    { key: ['person_name', 'Person', 'people'], type: 'Person', linkType: 'HAS_PARTICIPANT' },
-                    { key: ['technologies', 'Technology', 'tech'], type: 'Technology', linkType: 'COVERS_TECHNOLOGY' }
+                    { key: ['person_name', 'Person', 'people'], type: 'Person', linkType: 'HAS_PARTICIPANT' }
                 ];
 
                 metadata.forEach(m => {
@@ -182,8 +201,17 @@ export default function DashboardPage() {
             // Process each individual tool result found in the aggregated raw results
             rawResults.forEach(rawStr => {
                 try {
-                    const data = JSON.parse(rawStr);
-                    if (Array.isArray(data)) {
+                    const data = typeof rawStr === 'string' ? JSON.parse(rawStr) : rawStr;
+                    
+                    // 1. Check for Topology Payload (nodes/links)
+                    if (data && data.nodes && Array.isArray(data.nodes)) {
+                        data.nodes.forEach((n: any) => addNode(n));
+                        if (data.links && Array.isArray(data.links)) {
+                            data.links.forEach((l: any) => addLink(l));
+                        }
+                    } 
+                    // 2. Handle Legacy Node Envelopes
+                    else if (Array.isArray(data)) {
                         data.forEach((item, idx) => processItem(item, idx));
                     } else if (typeof data === 'object' && data !== null) {
                         processItem(data, 0);
@@ -231,7 +259,9 @@ export default function DashboardPage() {
             }]);
 
             if (result.raw_data) {
-                const newGraph = parseDataToGraph(result.raw_data, graphData);
+                // Focus Mode: Clear existing graph if autoClear is enabled
+                const contextGraph = autoClear ? { nodes: [], links: [] } : graphData;
+                const newGraph = parseDataToGraph(result.raw_data, contextGraph);
                 setGraphData(newGraph);
                 
                 // 3. Auto-Shift Timeline: Scan for the most relevant year in the results
@@ -279,6 +309,49 @@ export default function DashboardPage() {
             }
         ]);
         setGraphData({ nodes: [], links: [] });
+    };
+
+    const handleNodeClick = async (node: any) => {
+        // Optimistically open Bento instantly
+        setSelectedNode(node);
+        
+        try {
+            console.log("Hydrating node:", node.id || node.name);
+            const toolResponse = await callTool("get_node_details", { node_name: node.id || node.name });
+            if (toolResponse && toolResponse.content && toolResponse.content[0]) {
+                const payload = JSON.parse(toolResponse.content[0].text);
+                if (!payload.message) {
+                    setSelectedNode((prev: any) => {
+                        // Ensure we haven't clicked away during the await
+                        if (!prev || (prev.id !== node.id && prev.name !== node.name)) return prev;
+                        return {
+                            ...prev,
+                            technologies: payload.technologies || prev.technologies,
+                            description: (payload.narratives && payload.narratives.length > 0) ? payload.narratives.join('\n\n') : prev.description,
+                            links: Array.from(new Set([...(prev.links || []), ...(payload.ref_urls || [])]))
+                        };
+                    });
+                }
+            }
+        } catch (e) {
+            console.error("Progressive hydration failed:", e);
+        }
+    };
+
+    const handleNodeDoubleClick = async (node: any) => {
+        try {
+            console.log("Expanding topology for:", node.id || node.name);
+            setIsProcessing(true);
+            const toolResponse = await callTool("expand_node_topology", { node_name: node.id || node.name });
+            if (toolResponse && toolResponse.content && toolResponse.content[0]) {
+                const newGraph = parseDataToGraph(toolResponse.content[0].text, graphData);
+                setGraphData(newGraph);
+            }
+        } catch (e) {
+            console.error("Graph expansion failed:", e);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     // Resize Logic
@@ -350,6 +423,33 @@ export default function DashboardPage() {
                             <Network className="w-4 h-4" />
                             <span>MCP Server</span>
                         </div>
+                    </div>
+
+                    <div className="pt-6 pb-2 px-4 text-xs font-semibold text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                        <span>Graph Mode</span>
+                    </div>
+                    <div className="px-4 py-2">
+                        <button 
+                            onClick={() => setAutoClear(!autoClear)}
+                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                                autoClear 
+                                ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400' 
+                                : 'bg-white/5 border-white/5 text-slate-400'
+                            }`}
+                        >
+                            <div className="flex items-center gap-2 text-sm font-medium">
+                                <Trash2 className={`w-4 h-4 ${autoClear ? 'animate-pulse' : ''}`} />
+                                <span>Focus Mode</span>
+                            </div>
+                            <div className={`w-8 h-4 rounded-full relative transition-colors ${autoClear ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                                <div className={`absolute top-1 w-2 h-2 bg-white rounded-full transition-all ${autoClear ? 'left-5' : 'left-1'}`} />
+                            </div>
+                        </button>
+                        <p className="mt-2 text-[10px] text-slate-500 leading-tight">
+                            {autoClear 
+                                ? "Graph clears automatically between answers to ensure focus." 
+                                : "Accumulate nodes across multiple queries for discovery."}
+                        </p>
                     </div>
 
                     {!isGraphVisible && (
@@ -497,11 +597,12 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            <EnterpriseGraph 
+                        <EnterpriseGraph 
                                 data={graphData} 
                                 focusYear={focusYear}
                                 selectedNodeId={selectedNode?.id}
-                                onNodeClick={(node) => setSelectedNode(node)}
+                                onNodeClick={handleNodeClick}
+                                onNodeDoubleClick={handleNodeDoubleClick}
                                 onTimelineChange={(year) => setFocusYear(year)}
                             />
 

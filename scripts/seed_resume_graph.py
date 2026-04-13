@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """
 seed_resume_graph.py - Authoritative Navigable Resume Seeder
+
 This script implements the "Double-Click to Expand" architecture and the
 "Private STAR Node" strategy (PreparatoryNote) for Sangeetha's portfolio.
+
+Date handling:
+  All dates sourced from documents/navigable_graph_resume/categories_and_projects.md.
+  The date_utils module converts mm/yyyy strings to integer epoch properties
+  (startEpoch, endEpoch) for reliable numeric sorting in Cypher queries.
+  See documents/navigable_graph_resume/timeline-and-date-parsing.md for the
+  full design rationale.
 """
 
 import sys
 import os
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
+
+# Add scripts directory to path so date_utils can be imported
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from date_utils import parse_date_range, parse_single_date  # noqa: E402
 
 load_dotenv('.env', override=True)
 
@@ -47,14 +59,15 @@ RESUME_CYPHER_QUERIES = [
     MATCH (cat2:Category {name: "Open Source & Independent Ventures"})
     MATCH (p:Person {name: "Sangeetha Ramadurai"})
 
-    // Self, Cortex-Drive
-    MERGE (c1:Company {name: "Self, Cortex-Drive"})
-    MERGE (r1:Role {name: "Founder & Sr. Software Engineer"})
+    // Cortex-Drive (Independent Venture)
+    MERGE (c1:Company {name: "Independent Ventures"})
+    MERGE (r1:Project {name: "Cortex-Drive"})
     MERGE (p)-[:CURRENTLY_BUILDING {start: "08/2025", end: "Present"}]->(r1)
-    MERGE (p)-[:HELD_ROLE {start: "08/2025", end: "Present"}]->(r1)
+    MERGE (p)-[:HELD_ROLE {name: "Founder & Sr. Software Engineer", start: "08/2025", end: "Present"}]->(r1)
     MERGE (r1)-[:AT]->(c1)
     MERGE (cat1)-[:CONTAINS]->(r1)
     MERGE (cat2)-[:CONTAINS]->(r1)
+    SET r1.status = "Active", r1.type = "Independent Venture"
 
     MERGE (star_founder:PreparatoryNote {name: "STAR: Founder, Cortex-Drive"})
     SET star_founder.text = "Situation: Institutional memory is often lost across siloed tools and turnover. Task: Build a context-aware intelligent layer ('Cortex-Drive') to recover decision provenance. Action: Architected high-fidelity MCP server, Neo4j graphRAG, and Zero-Trust ABAC governance. Result: Enabled stable, traceable institutional memory across federated contexts."
@@ -105,7 +118,7 @@ RESUME_CYPHER_QUERIES = [
     """
     MERGE (pj:Startup:Project {name: "Cortex-Drive"})
     SET pj.status = "Active",
-        pj.description = "A personalized AI that links information across your knowledge landscape, organizing it by meaning and relationships rather than source. Features a personal knowledge graph and explainable AI reasoning.",
+        pj.description = "A personalized AI for organizing knowledge via a personal knowledge graph with explainable AI reasoning.",
         pj.links = ["https://github.com/sangs/cortex-drive"]
     
     WITH pj
@@ -128,41 +141,41 @@ RESUME_CYPHER_QUERIES = [
     MATCH (cat:Category {name: "Hackathons"})
     MATCH (p:Person {name: "Sangeetha Ramadurai"})
 
-    // Hackathon 1: Humanless Autocode
-    MERGE (h1:Hackathon:Project {name: "Humanless Autocode at Scale for SRE @ JPMorgan Chase", year: "2025"})
+    // Hackathon 1: Humanless Autocode (02/2025-03/2025)
+    MERGE (h1:Hackathon:Project {name: "Humanless Autocode at Scale for SRE @ JPMorgan Chase"})
     SET h1.type = "Hackathon",
         h1.description = "Innovation Leadership: Automated, context-aware AI code review process using Sourcegraph's Cody, tailored for enterprise guardrails."
-    MERGE (p)-[:PARTICIPATED_IN {role: "Project Lead", start: "2025", end: "2025"}]->(h1)
+    MERGE (p)-[:PARTICIPATED_IN {role: "Project Lead", start: "02/2025", end: "03/2025"}]->(h1)
     MERGE (cat)-[:CONTAINS]->(h1)
-    
+
     MERGE (star1:PreparatoryNote {name: "Core Detail: Humanless Autocode"})
     SET star1.text = "Situation: IaC reviews were time-consuming and inconsistent... Task: Showcase automated code review at scale using Sourcegraph Cody... Action: Led project, implemented dependency graph analysis and multi-PR generation... Result: Successfully demonstrated automated code review at scale for IaC, dramatically reducing review time while improving safety."
     MERGE (h1)-[:HAS_PRIVATE_NOTE]->(star1)
 
-    // Hackathon 2: Volarisation Engine
-    MERGE (h2:Hackathon:Project {name: "Volarisation Engine @ IBM Dev Day 2026", year: "2026"})
+    // Hackathon 2: Volarisation Engine (01/2026-01/2026)
+    MERGE (h2:Hackathon:Project {name: "Volarisation Engine @ IBM Dev Day 2026"})
     SET h2.type = "Hackathon",
         h2.description = "Innovation Leadership: Explainable, agentic AI decision-support system built with IBM Watsonx Orchestrate to accelerate life-sciences patent research.",
         h2.links = ["https://lnkd.in/dcSmQS4n", "https://sites.google.com/view/valorisationengine/valorisation", "https://drive.proton.me/urls/NYB1KQ7QNC#HueGJ6Nq7AAl"]
-    MERGE (p)-[:PARTICIPATED_IN {role: "Lead Developer", start: "2026", end: "2026"}]->(h2)
+    MERGE (p)-[:PARTICIPATED_IN {role: "Lead Developer", start: "01/2026", end: "01/2026"}]->(h2)
     MERGE (cat)-[:CONTAINS]->(h2)
-    
+
     MERGE (star2:PreparatoryNote {name: "Core Detail: Volarisation Engine"})
     SET star2.text = "Situation: Early-stage patent triage was opaque and slow... Task: Develop PoC for transparent, logic-first patent research... Action: Built agentic workflow with IBM Watsonx Orchestrate on IBM Cloud... Result: Formalized PoC for life-sciences commercialization with high explainability."
     MERGE (h2)-[:HAS_PRIVATE_NOTE]->(star2)
-    
+
     WITH h2, cat, p
     UNWIND h2.links AS link_url
     MERGE (l:ReferenceLink {url: link_url})
     MERGE (h2)-[:HAS_REFERENCE]->(l)
 
-    // Hackathon 3: Global Hackathons @ JPMC
-    MERGE (h3:Hackathon:Project {name: "Global Hackathons @ JPMorgan Chase", year: "2025"})
+    // Hackathon 3: Global Hackathons @ JPMC (07/2025-07/2025)
+    MERGE (h3:Hackathon:Project {name: "Global Hackathons @ JPMorgan Chase"})
     SET h3.type = "Hackathon",
         h3.description = "Innovation Leadership: Led Global Hackathon projects delivering MCP-based AI solutions, including MongoDB and Neo4j MCP clients."
-    MERGE (p)-[:PARTICIPATED_IN {role: "Innovation Lead", start: "2025", end: "2025"}]->(h3)
+    MERGE (p)-[:PARTICIPATED_IN {role: "Innovation Lead", start: "07/2025", end: "07/2025"}]->(h3)
     MERGE (cat)-[:CONTAINS]->(h3)
-    
+
     MERGE (star3:PreparatoryNote {name: "Core Detail: Global Hackathons"})
     SET star3.text = "Situation: Innovation required contributing to the technical community through open-source... Task: Advance organizational technical capabilities through hackathons... Action: Led projects delivering MCP-based AI solutions (MongoDB, Neo4j)... Result: Created ripple effects across the organization; AI Agent examples accelerated adoption of agent frameworks."
     MERGE (h3)-[:HAS_PRIVATE_NOTE]->(star3)
@@ -173,12 +186,12 @@ RESUME_CYPHER_QUERIES = [
     MATCH (cat:Category {name: "Thought Leadership & Community"})
     MATCH (p:Person {name: "Sangeetha Ramadurai"})
 
-    // InfoQ
+    // InfoQ (11/2025-01/2026)
     MERGE (t1:ThoughtLeadership:Publication {name: "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"})
     SET t1.type = "ThoughtLeadership",
         t1.description = "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering.",
         t1.links = ["https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"]
-    MERGE (p)-[:AUTHORED {date: "01/2026"}]->(t1)
+    MERGE (p)-[:AUTHORED {start: "11/2025", end: "01/2026"}]->(t1)
     MERGE (cat)-[:CONTAINS]->(t1)
     
     MERGE (star_t1:PreparatoryNote {name: "Core Detail: InfoQ Publication"})
@@ -207,11 +220,11 @@ RESUME_CYPHER_QUERIES = [
     MERGE (l2:ReferenceLink {url: link_url})
     MERGE (t2)-[:HAS_REFERENCE]->(l2)
 
-    // Open-Source AI Agents Contribution @ JPMC
+    // Open-Source AI Agents Contribution @ JPMC (05/2025-07/2025)
     MERGE (t3:ThoughtLeadership:Project {name: "Open-Source AI Agents Contribution @ JPMC"})
     SET t3.type = "ThoughtLeadership",
         t3.description = "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns."
-    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "07/2025"}]->(t3)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "05/2025", end: "07/2025"}]->(t3)
     MERGE (cat)-[:CONTAINS]->(t3)
 
     MERGE (star_t3:PreparatoryNote {name: "Core Detail: Open-Source AI Agents"})
@@ -338,45 +351,45 @@ RESUME_CYPHER_QUERIES = [
 
     # 8. LEGACY PROJECTS (MEZOCLIQ, GS, GE, MACMET)
     """
-    // Mezocliq
+    // Mezocliq (02/2013-02/2021)
     MATCH (r:Role {name: "Sr. Software Engineer (Mezocliq)"})
     MATCH (cat1:Category {name: "Professional Experience"})
-    
+
     MERGE (pm1:Project {name: "Cloud-Native Platform Orchestration & Workflow System"})
-    MERGE (r)-[:CONTRIBUTED_TO {start: "2013", end: "2021"}]->(pm1)
+    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm1)
     MERGE (cat1)-[:CONTAINS]->(pm1)
 
     MERGE (pm2:Project {name: "Enterprise Access Control, Search, and Distributed Infrastructure"})
-    MERGE (r)-[:CONTRIBUTED_TO {start: "2013", end: "2021"}]->(pm2)
+    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm2)
     MERGE (cat1)-[:CONTAINS]->(pm2)
 
     WITH cat1
-    // Goldman Sachs
+    // Goldman Sachs (06/2007-12/2009)
     MATCH (rg:Role {name: "Sr. Software Engineer, Consultant"})
     MERGE (pg1:Project {name: "Executive Workflow Management Platform (Ten Thousand Women)"})
-    MERGE (rg)-[:CONTRIBUTED_TO {start: "2007", end: "2009"}]->(pg1)
+    MERGE (rg)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg1)
     MERGE (cat1)-[:CONTAINS]->(pg1)
 
     MERGE (pg2:Project {name: "Capital Attribution & Market Risk Data Platform"})
-    MERGE (rg)-[:CONTRIBUTED_TO {start: "2007", end: "2009"}]->(pg2)
+    MERGE (rg)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg2)
     MERGE (cat1)-[:CONTAINS]->(pg2)
 
     WITH cat1
-    // GE
+    // GE Healthcare (05/1999-01/2006)
     MATCH (re:Role {name: "IT Systems Specialist"})
     MERGE (pge1:Project {name: "Radiology Imaging Platform Integration"})
-    MERGE (re)-[:CONTRIBUTED_TO {start: "1999", end: "2006"}]->(pge1)
+    MERGE (re)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge1)
     MERGE (cat1)-[:CONTAINS]->(pge1)
 
     MERGE (pge2:Project {name: "Image Management & Distributed Event Processing System"})
-    MERGE (re)-[:CONTRIBUTED_TO {start: "1999", end: "2006"}]->(pge2)
+    MERGE (re)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge2)
     MERGE (cat1)-[:CONTAINS]->(pge2)
 
     WITH cat1
-    // Macmet
+    // Macmet (08/1997-04/1999)
     MATCH (rm:Role {name: "Software Engineer"})
     MERGE (pma:Project {name: "Simulation systems development and evaluation (Macmet)"})
-    MERGE (rm)-[:CONTRIBUTED_TO {start: "1997", end: "1999"}]->(pma)
+    MERGE (rm)-[:CONTRIBUTED_TO {start: "08/1997", end: "04/1999"}]->(pma)
     MERGE (cat1)-[:CONTAINS]->(pma)
     """,
 
@@ -521,55 +534,200 @@ TOOL USAGE:
     UNWIND tech_map.macmet as tool
     MERGE (t:Technology {name: tool})
     MERGE (pj)-[:USES_TOOL]->(t)
+    """,
+
+    # 16. TECHNOLOGY MAPPING: INFOQ
+    """
+    WITH {
+        infoq: ["Software architecture", "AI", "C4 Model"]
+    } as tech_map
+    MATCH (tl:ThoughtLeadership) WHERE tl.name CONTAINS "InfoQ"
+    UNWIND tech_map.infoq as tool
+    MERGE (t:Technology {name: tool})
+    MERGE (tl)-[:USES_TOOL]->(t)
+    """,
+
+    # 17. TECHNOLOGY MAPPING: IGNITE COMMUNITY
+    """
+    WITH {
+        ignite: ["Public Cloud", "AWS", "GoLang", "ML"]
+    } as tech_map
+    MATCH (tl:ThoughtLeadership) WHERE tl.name CONTAINS "Ignite Social Learning Community"
+    UNWIND tech_map.ignite as tool
+    MERGE (t:Technology {name: tool})
+    MERGE (tl)-[:USES_TOOL]->(t)
+    """,
+
+    # 18. TECHNOLOGY MAPPING: OPEN-SOURCE AI AGENTS
+    """
+    WITH {
+        os_agents: ["AutoGen", "Python", "ML", "AI Agent (OpenAI)"]
+    } as tech_map
+    MATCH (os:Project) WHERE os.name CONTAINS "Open-Source AI Agents Contribution"
+    UNWIND tech_map.os_agents as tool
+    MERGE (t:Technology {name: tool})
+    MERGE (os)-[:USES_TOOL]->(t)
     """
 ]
 
+# ===========================================================================
+# EPOCH PROPAGATION QUERIES
+# These Cypher queries are executed after all MERGE queries to propagate
+# startEpoch, endEpoch, isPresent, displayDate, startYear, endYear from
+# relationship edges (source of truth) onto the connected nodes (cache).
+# This is a denormalization step for efficient querying — the relationship
+# is always the canonical source. See timeline-and-date-parsing.md.
+# ===========================================================================
+
+def _build_epoch_cypher(rel_type: str, node_label: str) -> str:
+    """Build a Cypher query that propagates epoch properties from a relationship to its target node."""
+    return f"""
+    MATCH ()-[rel:{rel_type}]->(n:{node_label})
+    WHERE rel.start IS NOT NULL OR rel.end IS NOT NULL
+    WITH n,
+         rel.start AS rel_start,
+         rel.end   AS rel_end,
+         CASE WHEN rel.end IS NOT NULL AND toLower(rel.end) = 'present' THEN true ELSE false END AS is_present
+    SET
+        n.displayDate    = CASE
+                             WHEN rel_start IS NOT NULL AND rel_end IS NOT NULL
+                             THEN rel_start + '-' + rel_end
+                             ELSE coalesce(rel_start, rel_end, '')
+                           END,
+        n.isPresent      = is_present,
+        n.startYear      = CASE
+                             WHEN rel_start =~ '\\d{{2}}/\\d{{4}}' THEN right(rel_start, 4)
+                             WHEN rel_start =~ '\\d{{4}}'          THEN rel_start
+                             ELSE null END,
+        n.endYear        = CASE
+                             WHEN is_present                        THEN 'Present'
+                             WHEN rel_end   =~ '\\d{{2}}/\\d{{4}}' THEN right(rel_end, 4)
+                             WHEN rel_end   =~ '\\d{{4}}'          THEN rel_end
+                             ELSE null END,
+        n.startEpoch     = CASE
+                             WHEN rel_start =~ '\\d{{2}}/\\d{{4}}'
+                             THEN toInteger(right(rel_start, 4)) * 100 + toInteger(left(rel_start, 2))
+                             WHEN rel_start =~ '\\d{{4}}'
+                             THEN toInteger(rel_start) * 100 + 1
+                             ELSE null END,
+        n.endEpoch       = CASE
+                             WHEN is_present                        THEN 999999
+                             WHEN rel_end   =~ '\\d{{2}}/\\d{{4}}'
+                             THEN toInteger(right(rel_end, 4)) * 100 + toInteger(left(rel_end, 2))
+                             WHEN rel_end   =~ '\\d{{4}}'
+                             THEN toInteger(rel_end) * 100 + 12
+                             ELSE null END
+    """
+
+
 def seed_resume_graph():
+    """Seed the full interactive resume graph into Neo4j, then propagate epoch properties."""
     if not NEO4J_PASSWORD:
         print("Error: NEO4J_PASSWORD environment variable is not set.")
         sys.exit(1)
 
     print(f"Connecting to Neo4j at {NEO4J_URI}...")
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
-    
+
     try:
         with driver.session() as session:
+            # Step 1: Run all MERGE queries
             print(f"Executing {len(RESUME_CYPHER_QUERIES)} definitive mapping queries...")
             for i, query in enumerate(RESUME_CYPHER_QUERIES, 1):
                 print(f"  -> Running Query {i}/{len(RESUME_CYPHER_QUERIES)}")
                 session.run(query)
-                
+
+            # Step 2: Stamp tenant ID on all resume-domain nodes
             tenant_id = os.getenv("TENANT_ID")
             if not tenant_id or not tenant_id.startswith("org_"):
                 raise EnvironmentError(
                     "CRITICAL: 'TENANT_ID' environment variable is missing or invalid. "
                     "Seeding aborted to prevent accidental data corruption with placeholder IDs."
                 )
-            
-            print(f"  -> Authoritative Identity confirmed: {tenant_id}")
-            print(f"  -> Stamping graph with tenant isolation header.")
-            # Stamp ALL resume-domain nodes explicitly by label.
-            # Using an inclusion list is safer than an exclusion list
-            # because new node types are NOT stamped by accident.
-            session.run("""
-            MATCH (n)
-            WHERE any(label IN labels(n) WHERE label IN [
-                'Person', 'Category', 'Role', 'Company', 'Project',
-                'Startup', 'Hackathon', 'ThoughtLeadership', 'Community',
-                'Publication', 'PreparatoryNote', 'Skill', 'Institution',
-                'Degree', 'Certification', 'ProfessionalEducation', 'OpenSource',
-                'SocialLearning', 'ReferenceLink', '__MetaContext__', 'Outcome',
-                'Achievement'
-            ])
-            SET n.tenant_id = $tenant_id
-            """, tenant_id=tenant_id)
 
-            print("\n✓ SUCCESS: Interactive Resume Graph successfully seeded and secured!")
+            print(f"  -> Authoritative Identity confirmed: {tenant_id}")
+            print("  -> Stamping graph with tenant isolation header.")
+            # Use an inclusion list (safer than exclusion — new types are NOT stamped by accident)
+            session.run(
+                """
+                MATCH (n)
+                WHERE any(label IN labels(n) WHERE label IN [
+                    'Person', 'Category', 'Role', 'Company', 'Project',
+                    'Startup', 'Hackathon', 'ThoughtLeadership', 'Community',
+                    'Publication', 'PreparatoryNote', 'Skill', 'Institution',
+                    'Degree', 'Certification', 'ProfessionalEducation', 'OpenSource',
+                    'SocialLearning', 'ReferenceLink', '__MetaContext__', 'Outcome',
+                    'Achievement'
+                ])
+                SET n.tenant_id = $tenant_id
+                """,
+                tenant_id=tenant_id,
+            )
+
+            # Step 3a: Remove stale year-only duplicate relationships.
+            # MERGE creates a NEW relationship when properties differ, so old year-only
+            # rels (e.g. start:"2013") and new mm/yyyy rels (e.g. start:"02/2013") can
+            # coexist. Delete the stale one where a more specific mm/yyyy rel exists.
+            print("  -> Cleaning up stale year-only relationships...")
+            session.run(
+                """
+                MATCH (a)-[old_rel]->(b)
+                WHERE type(old_rel) IN ['CONTRIBUTED_TO', 'PARTICIPATED_IN',
+                                        'FEATURE_GUEST', 'AUTHORED']
+                  AND (old_rel.start =~ '^\\d{4}$' OR old_rel.end =~ '^\\d{4}$'
+                       OR old_rel.date =~ '^\\d{2}/\\d{4}$')
+                WITH a, b, type(old_rel) AS rel_type, old_rel
+                MATCH (a)-[new_rel]->(b)
+                WHERE type(new_rel) = rel_type
+                  AND new_rel <> old_rel
+                  AND (new_rel.start =~ '^\\d{2}/\\d{4}$'
+                       OR new_rel.end =~ '^\\d{2}/\\d{4}$')
+                DELETE old_rel
+                """
+            )
+
+            # Guard: Remove the historically incorrect 06/2021-07/2025 relationship
+            # on "Open-Source AI Agents" that was inherited from Ignite's dates.
+            # This node was correctly re-dated to 05/2025-07/2025 per categories_and_projects.md.
+            session.run(
+                """
+                MATCH (a)-[rel:CONTRIBUTED_TO]->(n)
+                WHERE n.name CONTAINS 'Open-Source AI Agents'
+                  AND rel.start = '06/2021'
+                DELETE rel
+                """
+            )
+
+            # Step 3b: Propagate epoch properties from relationships to nodes
+            # These denormalized cache properties enable efficient numeric sorting
+            # and range-overlap timeline filtering without complex multi-hop traversal.
+            print("  -> Propagating epoch date properties to nodes (denormalization pass)...")
+            epoch_queries = [
+                # Project nodes via CONTRIBUTED_TO relationships
+                _build_epoch_cypher("CONTRIBUTED_TO", "Project"),
+                # Hackathon nodes via PARTICIPATED_IN relationships
+                _build_epoch_cypher("PARTICIPATED_IN", "Hackathon"),
+                # ThoughtLeadership nodes via FEATURE_GUEST relationships
+                _build_epoch_cypher("FEATURE_GUEST", "ThoughtLeadership"),
+                # ThoughtLeadership nodes via AUTHORED relationships (start+end)
+                _build_epoch_cypher("AUTHORED", "ThoughtLeadership"),
+                # ThoughtLeadership/Project via CONTRIBUTED_TO
+                _build_epoch_cypher("CONTRIBUTED_TO", "ThoughtLeadership"),
+                # Hackathon nodes branded as Project (dual label)
+                _build_epoch_cypher("PARTICIPATED_IN", "Project"),
+            ]
+            for i, eq in enumerate(epoch_queries, 1):
+                print(f"     -> Epoch pass {i}/{len(epoch_queries)}")
+                session.run(eq)
+
+            print("\n✓ SUCCESS: Interactive Resume Graph successfully seeded, secured, and epoch-indexed!")
+
     except Exception as e:
         print(f"\nError during seeding: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
         driver.close()
+
 
 if __name__ == "__main__":
     seed_resume_graph()

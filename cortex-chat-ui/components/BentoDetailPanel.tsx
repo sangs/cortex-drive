@@ -14,9 +14,14 @@ interface BentoDetailPanelProps {
 const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose }) => {
     if (!node) return null;
 
-    // Detect Persona: Podcast vs Professional
-    const isPodcast = node.type === 'Episode';
-    const persona = isPodcast ? 'podcast' : 'professional';
+    // Detect Persona: Podcast vs Professional vs Structural
+    const detectPersona = () => {
+        if (node.type === 'Episode') return 'podcast';
+        const structuralTypes = ['Category', 'Technology', 'Company', 'Institution', 'Skill', 'Concept', 'Degree', 'ProfessionalEducation'];
+        if (structuralTypes.includes(node.type)) return 'structural';
+        return 'professional';
+    };
+    const persona = detectPersona();
 
     // Label Mapping
     const labels = {
@@ -37,8 +42,17 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             trace: "Discovery Path",
             traceSub: "Knowledge Evolution",
             placeholder: "Extracting key technical insights from this episode transcript..."
+        },
+        structural: {
+            impact: "System Taxonomy",
+            tech: "Hierarchy Scope",
+            timeline: "Temporal Constraints",
+            narrative: "Descendant Layout",
+            trace: "Cluster Anchor",
+            traceSub: "Network Stability",
+            placeholder: "This is a structural aggregation node. Expand this anchor in the visual map to explore the underlying professional artifacts wired to it."
         }
-    }[persona];
+    }[persona as 'professional' | 'podcast' | 'structural'];
 
     // Consolidate links from both the node.links array and any specific neighbor ReferenceLinks
     const displayLinks = React.useMemo(() => {
@@ -94,8 +108,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 {/* Header */}
                 <header className="flex items-start justify-between mb-8">
                     <div className="flex flex-col gap-1">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-400">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-indigo-400 flex items-center gap-2">
                             {node.type} Context
+                            <span className="text-[8px] text-slate-500 lowercase font-normal tracking-normal">(Double-click map to expand)</span>
                         </span>
                         <h2 className="text-2xl font-bold text-white tracking-tight leading-tight">
                             {node.name}
@@ -119,7 +134,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                 <Target className="w-4 h-4" />
                                 <span className="text-xs font-semibold uppercase tracking-wider">{labels.impact}</span>
                             </div>
-                            <p className="text-slate-200 text-sm leading-relaxed font-medium">
+                            <p className="text-sm font-medium leading-relaxed text-slate-200">
                                 {node.description || labels.placeholder}
                             </p>
                         </div>
@@ -138,7 +153,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         </span>
                                     ))
                                 ) : (
-                                    <span className="text-slate-500 text-[10px] italic">Metadata pending...</span>
+                                    <span className="text-slate-500 text-[10px] italic">
+                                        {persona === 'structural' ? "N/A for structural anchor." : "Metadata pending..."}
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -150,8 +167,10 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                 <span className="text-[10px] font-bold uppercase tracking-wider">{labels.timeline}</span>
                             </div>
                             <div className="flex flex-col">
-                                <span className="text-xl font-bold text-amber-200">{node.year || node.date?.split('-')[0] || "Active"}</span>
-                                <span className="text-[10px] text-slate-500 uppercase tracking-tighter">{node.date || "Active Context"}</span>
+                                <span className="text-xl font-bold text-amber-200">{node.displayDate || node.year || "Active"}</span>
+                                <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
+                                    {node.isPresent ? "Currently Active" : (node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : "Active Context")}
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -194,7 +213,11 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                    <p key={i}>{para}</p>
                                ))
                            ) : (
-                               <p className="italic text-slate-500">Narrative context is available for deeper audit. Click below to explore source data.</p>
+                               <p className="italic text-slate-500">
+                                   {persona === 'structural' 
+                                       ? "Structure nodes organize relationships; they do not contain distinct narratives." 
+                                       : "Narrative context is available for deeper audit. Click below to explore source data."}
+                               </p>
                            )}
                         </div>
                     </div>
@@ -214,8 +237,8 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 </div>
 
                 {/* Footer Action */}
-                <footer className="mt-8 pt-6 border-t border-white/5">
-                    {displayLinks.length > 0 ? (
+                {displayLinks.length > 0 && (
+                    <footer className="mt-8 pt-6 border-t border-white/5">
                         <a 
                             href={displayLinks[0].url} 
                             target="_blank" 
@@ -225,15 +248,8 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                             {displayLinks.length === 1 ? 'Open Documentation' : 'View Primary Resource'}
                             <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                         </a>
-                    ) : (
-                        <button 
-                            disabled
-                            className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-white/5 border border-white/5 text-slate-500 font-bold opacity-50 cursor-not-allowed"
-                        >
-                            No External Link Available
-                        </button>
-                    )}
-                </footer>
+                    </footer>
+                )}
             </motion.aside>
         </AnimatePresence>
     );

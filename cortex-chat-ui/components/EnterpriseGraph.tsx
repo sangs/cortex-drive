@@ -28,6 +28,7 @@ interface EnterpriseGraphProps {
         links: Link[];
     };
     onNodeClick?: (node: Node) => void;
+    onNodeDoubleClick?: (node: Node) => void;
     onTimelineChange?: (year: string) => void;
     focusYear?: string | null;
     selectedNodeId?: string | null;
@@ -36,19 +37,24 @@ interface EnterpriseGraphProps {
 const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({ 
     data, 
     onNodeClick, 
+    onNodeDoubleClick,
     onTimelineChange,
     focusYear,
     selectedNodeId 
 }) => {
     const chartRef = useRef<any>(null);
 
-    // 1. Prepare Timeline Data (Unique years sorted)
+    // 1. Prepare Timeline Data (Professional career range 1997-2026)
     const timelineData = useMemo(() => {
         const years = new Set<string>();
+        // Add core range years for professional navigation (1997-2026)
+        for (let y = 1997; y <= 2026; y++) {
+            years.add(y.toString());
+        }
+        // Add any other years from nodes (e.g. earlier education or specific milestones)
         data.nodes.forEach(n => {
             if (n.year) years.add(n.year);
         });
-        if (years.size === 0) return [new Date().getFullYear().toString()];
         return Array.from(years).sort();
     }, [data.nodes]);
 
@@ -178,7 +184,15 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         };
 
         const options = timelineData.map(year => {
-            const filteredNodes = data.nodes.filter(n => !n.year || n.year === year);
+            const numericYear = parseInt(year);
+            const filteredNodes = data.nodes.filter(n => {
+                if (n.startYear && n.endYear) {
+                    const startY = parseInt(n.startYear);
+                    const endY = n.endYear.toLowerCase() === 'present' ? 2026 : parseInt(n.endYear);
+                    return numericYear >= startY && numericYear <= endY;
+                }
+                return !n.year || n.year === year;
+            });
             const nodeIds = new Set(filteredNodes.map(n => n.id));
             const filteredLinks = data.links.filter(l => 
                 nodeIds.has(l.source) && nodeIds.has(l.target)
@@ -208,11 +222,32 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         return { baseOption, options };
     };
 
-    // 4. Events handler
+    // 4. Events handler (Debounced to separate Bento single-click from Expansion double-click)
+    const clickTimer = useRef<NodeJS.Timeout | null>(null);
+
     const onEvents = {
         'click': (params: any) => {
             if (params.dataType === 'node' && onNodeClick) {
-                onNodeClick(params.data);
+                // Clear any existing timer (prevents multiple triggers)
+                if (clickTimer.current) clearTimeout(clickTimer.current);
+                
+                // Set a timer for single click (Bento activation)
+                clickTimer.current = setTimeout(() => {
+                    onNodeClick(params.data);
+                    clickTimer.current = null;
+                }, 250); // 250ms debounce window
+            }
+        },
+        'dblclick': (params: any) => {
+            if (params.dataType === 'node' && onNodeDoubleClick) {
+                // Immediately cancel the pending single-click (Bento)
+                if (clickTimer.current) {
+                    clearTimeout(clickTimer.current);
+                    clickTimer.current = null;
+                }
+                
+                // Trigger the high-fidelity expansion (Level 2 Bloom)
+                onNodeDoubleClick(params.data);
             }
         },
         'timelinechanged': (params: any) => {

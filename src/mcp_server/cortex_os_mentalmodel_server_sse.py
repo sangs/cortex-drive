@@ -43,12 +43,9 @@ async def search_episodes_gds_by_question_tool(
     limit: Optional[int]
         Total number of final results to return. Default 10.
     """
-    tenant_id = tenant_id_var.get()
-    if not tenant_id:
-        # Prioritize TENANT_ID (Clerk Org), then TEST_TENANT fallback, then default
-        tenant_id = os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-        
-    expert = ExpertTools(tenant_id=tenant_id)
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
     finally:
@@ -71,7 +68,8 @@ async def search_episodes_by_question_tool(
         Number of vector neighbors to find. Default 5.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.search_episodes_by_question(question, k=k)
     except Exception as e:
@@ -93,7 +91,8 @@ async def query_relevant_chunks_hybrid_tool(
     Returns JSON with episode metadata and transcript chunks.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
     except Exception as e:
@@ -106,7 +105,8 @@ async def query_relevant_chunks_hybrid_tool(
 async def get_context() -> str:
     """Gets the context for how to use & access podcast episode data. Always run this first and store in your memory."""
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.get_tool_context()
     finally:
@@ -119,7 +119,8 @@ async def get_tool_statistics() -> str:
     Returns counts of episodes, topics, reference links, and transcript chunks.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.get_episode_statistics()
     finally:
@@ -134,9 +135,24 @@ async def find_episodes_by_people(question: str) -> str:
     to the episode (e.g., HOSTS, GUEST_ON, LISTENS_TO_EPISODE, etc.).
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_people(question)
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def get_episodes_with_cast() -> str:
+    """
+    List all available podcast episodes along with their hosts and guests.
+    Use this for broad discovery of the podcast catalog.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    try:
+        return expert.get_episodes_with_cast()
     finally:
         expert.close()
 
@@ -148,7 +164,8 @@ async def find_episodes_by_concept(question: str) -> str:
     to find relevant episodes.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_concept(question)
     finally:
@@ -162,7 +179,8 @@ async def find_episodes_by_topic(question: str) -> str:
     and topic names to find episodes that match the given question.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_topic(question)
     finally:
@@ -176,7 +194,8 @@ async def find_episodes_by_technology(question: str) -> str:
     that discuss or mention the technology.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_technology(question)
     finally:
@@ -191,7 +210,8 @@ async def find_episodes_by_reference(reference_string: str) -> str:
     contains the provided string. It performs a case-insensitive search.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_reference(reference_string)
     finally:
@@ -205,7 +225,8 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
     Returns episodes with the matched reference link and which search term was matched.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_mentions(search_terms)
     finally:
@@ -220,7 +241,8 @@ async def get_people_by_episode_tool(
     Use this when you have an episode and need to know who the guest or host is.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.get_people_by_episode(episode_name)
     finally:
@@ -238,7 +260,7 @@ async def run_cypher_query(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id)
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
     finally:
@@ -253,7 +275,8 @@ async def get_node_details(
     Use this to 'enrich' your knowledge of an entity once you have its name from a search.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.get_node_details(node_name)
     finally:
@@ -261,7 +284,8 @@ async def get_node_details(
 
 @mcp.tool()
 async def search_resume_graph(
-    keyword: str = Field(description="The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon').")
+    keyword: str = Field(description="The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon')."),
+    wants_visual_map: bool = Field(False, description="Set to true if the user asks for a map, graph, overview, or visual landscape of their career.")
 ) -> str:
     """
     Search for entities across the Interactive Resume Graph.
@@ -271,9 +295,9 @@ async def search_resume_graph(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or "trial-user"
-    expert = ExpertTools(tenant_id=tenant_id)
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
-        return expert.search_resume_graph(keyword, requesting_user_id=user_id)
+        return expert.search_resume_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map)
     finally:
         expert.close()
 
@@ -284,8 +308,9 @@ async def explore_graph_schema() -> str:
     Call this tool whenever you don't know the exact schema needed to write a Cypher query.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id)
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.explore_graph_schema(schema_readable=schema_readable)
     finally:
@@ -304,7 +329,8 @@ async def hybrid_discovery_tool(
     Returns JSON with content, similarity, metadata, and participants.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.hybrid_discovery(question, k=k)
     finally:
@@ -313,16 +339,19 @@ async def hybrid_discovery_tool(
 @mcp.tool()
 async def get_cluster_context(
     node_name: str = Field(description="The 'name' property of the node to fetch neighbors for."),
-    depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1.")
+    depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1."),
+    backbone_only: bool = Field(False, description="If true, only returns high-level landmarks (Companies, Categories, Hubs)."),
+    domain: str = Field("all", description="The domain to filter results by: 'professional', 'podcast', or 'all'. Default 'all'.")
 ) -> str:
     """
     Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
     Use this for Directed Autonomy to proactively discover related nodes and hidden context.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
-        return expert.get_cluster_context(node_name, depth=depth)
+        return expert.get_cluster_context(node_name, depth=depth, backbone_only=backbone_only, domain=domain)
     finally:
         expert.close()
 
