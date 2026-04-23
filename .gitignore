@@ -46,6 +46,9 @@ Thumbs.db
 # Documentation
 /documents/
 
+# UI Source Code
+!cortex-chat-ui/lib/
+
 # Logs
 logs/
 *.log
