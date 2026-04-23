@@ -1,23 +1,125 @@
-"""
-CortexDrive Domain Sovereignty Registry (Positive Schema)
-
-Defines the authorized labels allowed in each discovery domain. 
-This refactor imports constants from schema_guard.py to ensure a Single Source of Truth.
-"""
-
 from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES
 
-DOMAIN_REGISTRY = {
-    # Professional Domain: Inherits from Project Graph Logic
-    "professional": PROJECT_GRAPH_NODES,
-    
-    # Podcast Domain: Inherits from Cortex Drive Media Logic
-    "podcast": CORTEX_DRIVE_NODES,
-    
-    # Universal Domain: No restrictions
-    "all": None
+# Authoritative Domain Manifests (The Single Source of Experience Truth)
+DOMAIN_MANIFESTS = {
+    "professional": {
+        "persona": "professional",
+        "ui_hints": {
+            "impact_label": "Professional Impact",
+            "tech_label": "Core Stack",
+            "timeline_label": "Tenure Window",
+            "narrative_label": "The \"Why\" (Professional Narrative)",
+            "trace_label": "Governance Trace",
+            "trace_sub_label": "Vetted Architecture",
+            "placeholder": "Synthesizing professional impact metrics for this initiative..."
+        },
+        "node_set": PROJECT_GRAPH_NODES + ["Publication", "ThoughtLeadership", "Certification", "Person"],
+        "anchor_labels": ["Project", "Company", "Skill", "Certification", "Industry", "ThoughtLeadership"],
+        "backbone_labels": ["Company", "Startup", "Institution", "Project", "ThoughtLeadership", "Certification", "Person", "CaseStudy", "Department", "Role", "Category", "Industry", "Degree", "ProfessionalEducation"],
+        "realm": "INTERNAL"
+    },
+    "podcast": {
+        "persona": "podcast",
+        "ui_hints": {
+            "impact_label": "Knowledge Takeaway",
+            "tech_label": "Discussed Tech",
+            "timeline_label": "Air Date",
+            "narrative_label": "Episode Hook (Insight)",
+            "trace_label": "Discovery Path",
+            "trace_sub_label": "Knowledge Evolution",
+            "placeholder": "Extracting key technical insights from this episode transcript..."
+        },
+        "node_set": CORTEX_DRIVE_NODES + ["ThoughtLeadership", "Publication", "Community", "Category"],
+        "anchor_labels": ["Episode", "Topic", "Concept", "Technology", "Publication", "Podcast"],
+        "backbone_labels": ["Episode", "Topic", "Technology", "Publication", "Concept", "Category", "Podcast", "Source"],
+        "realm": "INTERNAL"
+    },
+    "structural": {
+        "persona": "structural",
+        "ui_hints": {
+            "impact_label": "Ontology",
+            "tech_label": "Node Type",
+            "timeline_label": "Lifespan",
+            "narrative_label": "Foundation",
+            "trace_label": "System Link",
+            "trace_sub_label": "Graph Anchor",
+            "placeholder": "Accessing structural landmarks in the public realm..."
+        },
+        "node_set": ["Category", "Technology", "Company", "Institution", "Skill", "Degree", "ProfessionalEducation", "Year", "Community", "ThoughtLeadership", "Podcast", "Episode"],
+        "anchor_labels": ["Category", "Technology", "Skill", "Institution", "ThoughtLeadership", "Podcast", "Episode"],
+        "realm": "PUBLIC" # Structural landmarks are always discoverable context
+    },
+    "federated": {
+        "persona": "federated",
+        "ui_hints": {
+            "impact_label": "Silo Strategy",
+            "tech_label": "Integration Stack",
+            "timeline_label": "Sync Window",
+            "narrative_label": "Federated Metadata (Iceberg)",
+            "trace_label": "External Bridge",
+            "trace_sub_label": "Stitched Landmark",
+            "placeholder": "Fetching federated metadata from external silo. This may involve cross-realm MCP discovery..."
+        },
+        "node_set": ["ExternalSilo", "DataLake", "GitHub", "Confluence", "TableMetadata", "PageMetadata", "Publication", "Source"],
+        "anchor_labels": ["ExternalSilo", "DataLake", "TableMetadata", "Publication"],
+        "realm": "INTERNAL"
+    }
 }
+
+# Explicitly Private Labels (Overrides)
+PRIVATE_LABELS = ["Note", "PreparatoryNote", "PrivateDraft", "Salary", "InternalReview", "ShadowState", "AccessRequest"]
+
+
+# Bridge Relationship Meta-Types (The Contribution/Knowledge Tiers)
+BRIDGE_RELATIONSHIPS = {
+    "CONTRIBUTION": ["AUTHORED", "CONTRIBUTED_TO", "BUILT_DURING", "PARTICIPATED_IN", "PRESENTED_AT", "DEVELOPED_ON"],
+    "AFFILIATION": ["HELD_ROLE", "AT", "STUDIED_AT", "MEMBER_OF"],
+    "KNOWLEDGE": ["DISCUSSES", "USES_TOOL", "RELATED_TO", "MENTIONS"]
+}
+
+def get_backbone_labels(domain: str = "all") -> list:
+    """Return the labels considered 'Backbone' (landmarks) for the given domain."""
+    if domain.lower() == "all":
+        backbone = set()
+        for manifest in DOMAIN_MANIFESTS.values():
+            backbone.update(manifest.get("backbone_labels", []))
+        return list(backbone)
+    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    return manifest.get("backbone_labels", []) if manifest else []
+
+def get_bridge_relationships(tier: str = "CONTRIBUTION") -> list:
+    """Return relationship types for a specific bridge discovery tier."""
+    return BRIDGE_RELATIONSHIPS.get(tier.upper(), BRIDGE_RELATIONSHIPS["CONTRIBUTION"])
 
 def get_authorized_labels(domain: str) -> list:
     """Return the list of labels authorized for the given domain context."""
-    return DOMAIN_REGISTRY.get(domain.lower(), DOMAIN_REGISTRY["all"])
+    if domain.lower() == "all":
+        return None
+    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    return manifest["node_set"] if manifest else []
+
+def get_anchor_labels(domain: str) -> list:
+    """Return the list of labels used as discovery anchors for the given domain."""
+    if domain.lower() == "all":
+        # Combine all anchors for universal discovery
+        anchors = set()
+        for manifest in DOMAIN_MANIFESTS.values():
+            anchors.update(manifest.get("anchor_labels", []))
+        return list(anchors)
+    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    return manifest.get("anchor_labels", []) if manifest else []
+
+def get_manifest_for_label(label: str) -> dict:
+    """Find the manifest governing a specific node label."""
+    for manifest in DOMAIN_MANIFESTS.values():
+        if label in manifest["node_set"]:
+            return manifest
+    return DOMAIN_MANIFESTS["professional"] # Default fallback
+
+def get_realm_for_label(label: str) -> str:
+    """Return the discovery realm governing a specific node label."""
+    if label in PRIVATE_LABELS:
+        return "PRIVATE"
+    
+    manifest = get_manifest_for_label(label)
+    return manifest.get("realm", "INTERNAL")

@@ -3,28 +3,207 @@ Expert Tools for Neo4j Podcast Episode Graph
 """
 
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 from neo4j import GraphDatabase
 import os
 import json
 import numpy as np
 import re
 from typing import List, Dict, Any, Optional
-from schema_guard import PROJECT_GRAPH_NODES
 
 
 class ExpertTools:
     """Expert tools for querying the Neo4j podcast episode graph"""
     
-    def __init__(self, tenant_id: str, requesting_user_id: str = ""):
+    def __init__(self, tenant_id: str, requesting_user_id: str = "", guest_share_anchor: str = ""):
         self.tenant_id = tenant_id
         self.requesting_user_id = requesting_user_id
+        self.guest_share_anchor = guest_share_anchor
         # Initialize clients
-        self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.driver = GraphDatabase.driver(
             os.environ["NEO4J_URI"],
             auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
         )
     
+    def _get_security_clause(self, node_var: str) -> str:
+        """
+        Unified security clause for zero-trust graph access.
+        """
+        return f"""
+        (
+            {node_var}.owner_id = $requesting_user_id 
+            OR {node_var}.tier IN ['SYSTEM', 'PUBLIC']
+            OR EXISTS {{ (u:User {{id: $requesting_user_id}})-[:HAS_ACCESS*1..2]->({node_var}) }}
+        )
+        """
+
+    def _fragment_taxonomy_expansion(self) -> str:
+        return f"""
+        // Step 0: Taxonomy Expansion (Identify Anchor Topics from keywords)
+        OPTIONAL MATCH (anchor)
+        WHERE any(label IN labels(anchor) WHERE label IN $anchorLabels)
+          AND any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
+          AND ({self._get_security_clause("anchor")})
+        
+        // Find children/related entities AND their parent Episodes - Relaxed traversal
+        OPTIONAL MATCH (anchor)-[*0..2]-(expandedNode)
+        WHERE ({self._get_security_clause("expandedNode")})
+          AND NOT expandedNode:ReferenceLink
+        
+        OPTIONAL MATCH (expandedNode)<-[:CONTAINS|HAS_SOURCE|MENTIONS*1..3]-(parentEpisode:Episode)
+        WHERE ({self._get_security_clause("parentEpisode")})
+        
+        WITH collect(DISTINCT elementId(anchor)) + collect(DISTINCT elementId(expandedNode)) + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
+        """
+
+    def _fragment_neighbor_aggregation(self) -> str:
+        whitelist = '["HELD_ROLE", "AT", "CONTRIBUTED_TO", "PARTICIPATED_IN", "EARNED_DEGREE", "FROM_INSTITUTION", "HAS_SKILL", "CONTAINS", "HAS_REFERENCE", "BUILT_DURING", "FEATURE_GUEST", "SIMILAR", "IS_SIMILAR", "HAS_TOPIC", "DISCUSSES", "COVERS_TECHNOLOGY", "DISCUSSES_CONCEPT", "PUBLISHED_BY", "AUTHORED", "CO_AUTHORED", "LEAD_BY", "MENTIONS", "COVERS"]'
+        return f"""
+        // 1. Neighbors & Relationships
+        OPTIONAL MATCH (node)-[r]-(neighbor)
+        WHERE neighbor IS NOT NULL 
+          AND type(r) IN {whitelist}
+          AND ({self._get_security_clause("neighbor")})
+          AND NOT neighbor:Chunk AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:__MetaContext__
+          AND NOT neighbor:ReferenceLink AND NOT neighbor:PreparatoryNote
+        
+        WITH node, expanded_ids, 
+             collect(DISTINCT {{
+                id: elementId(neighbor),
+                name: neighbor.name,
+                type: labels(neighbor)[0],
+                relationship: type(r),
+                link_label: coalesce(r.role, r.title, neighbor.name)
+             }}) AS relationships,
+             collect(DISTINCT (CASE WHEN exists(r.start) OR exists(r.end) OR exists(r.date) THEN {{rel_start: r.start, rel_end: r.end, rel_date: r.date}} ELSE null END)) AS relDates
+        """
+
+    def _fragment_narrative_aggregation(self) -> str:
+        return f"""
+        // 2. References & Private Notes
+        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
+        WITH node, expanded_ids, relationships, relDates, 
+             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS fused_links
+        
+        OPTIONAL MATCH (node)-[:HAS_PRIVATE_NOTE|CONTAINS*1..2]-(note:PreparatoryNote)
+        WHERE ({self._get_security_clause("note")})
+        WITH node, expanded_ids, relationships, relDates, fused_links,
+             collect(DISTINCT note.text) AS narratives
+
+        OPTIONAL MATCH (node)-[:USES_TOOL|DISCUSSES|SIMILAR*1..2]-(tech:Technology)
+        WHERE ({self._get_security_clause("tech")})
+        WITH node, expanded_ids, relationships, relDates, fused_links, narratives,
+             collect(DISTINCT tech.name) AS technologies
+        """
+
+    def _fragment_ranking_and_return(self) -> str:
+        return """
+        WITH node, narratives, fused_links, relationships, technologies, relDates, expanded_ids,
+             CASE 
+                WHEN $embedding IS NOT NULL AND node.embedding IS NOT NULL 
+                THEN vector.similarity.cosine($embedding, node.embedding)
+                ELSE 0.0 
+             END AS semantic_score
+
+        WITH node, narratives, fused_links, relationships, technologies, relDates, expanded_ids, semantic_score,
+             (CASE 
+                WHEN size(relDates) = 0 THEN {rel_start: null, rel_end: null, rel_date: null}
+                ELSE apoc.coll.sortMaps([rd IN relDates WHERE rd IS NOT NULL], "^rel_end")[size([rd IN relDates WHERE rd IS NOT NULL])-1]
+             END) AS bestDate
+
+        WITH node, narratives, fused_links, technologies, bestDate, semantic_score, expanded_ids,
+             (CASE 
+                WHEN node.name CONTAINS "1997" OR node.name CONTAINS "NIT Bhopal" THEN 500
+                WHEN node.name CONTAINS "JPMC" OR node.name CONTAINS "2025" THEN 200
+                WHEN 'ExternalSilo' IN labels(node) AND any(w IN $keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg', 'data', 'sentiment']) THEN 2000
+                ELSE 0 
+             END) AS range_boost,
+             (size(narratives) > 0 OR size(technologies) > 0 OR size(fused_links) > 0) AS is_bento_eligible
+
+        RETURN DISTINCT
+            node { 
+                name: node.name,
+                title: node.title,
+                description: node.description,
+                text: node.text,
+                url: node.url,
+                link: node.link,
+                number: node.number,
+                aired_date: node.aired_date,
+                year: node.year,
+                startDate: node.startDate,
+                endDate: node.endDate,
+                element_id: elementId(node),
+                labels: labels(node),
+                display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
+                type: CASE 
+                    WHEN 'Category' IN labels(node) THEN 'Category'
+                    WHEN 'Role' IN labels(node) THEN 'Role'
+                    WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
+                    WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Company' IN labels(node) THEN 'Company'
+                    WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
+                    WHEN 'Certification' IN labels(node) THEN 'Certification'
+                    WHEN 'Project' IN labels(node) THEN 'Project'
+                    WHEN 'Episode' IN labels(node) THEN 'Episode'
+                    WHEN 'Technology' IN labels(node) THEN 'Technology'
+                    WHEN 'Topic' IN labels(node) THEN 'Topic'
+                    ELSE labels(node)[0] 
+                END,
+                is_bento_eligible: is_bento_eligible,
+                is_expandable: EXISTS { (node)-[]-(n2) WHERE NOT labels(n2)[0] IN ['ReferenceLink', 'Chunk'] },
+                temporal_boost: (CASE 
+                    WHEN bestDate.rel_end = 'Present' OR node.endDate = 'Present' THEN 150 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
+                    WHEN bestDate.rel_end IS NOT NULL OR node.endDate IS NOT NULL THEN 100 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
+                    WHEN bestDate.rel_start IS NOT NULL OR node.startDate IS NOT NULL THEN 50 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
+                    WHEN node:Episode THEN 300
+                    ELSE 0
+                END) + range_boost + toInteger((semantic_score * 100)) + (CASE WHEN elementId(node) IN expanded_ids THEN 1000 ELSE 0 END),
+
+                year: coalesce(
+                    (CASE WHEN node:Project AND bestDate.rel_end = 'Present' THEN '2026'
+                          WHEN node:Project AND bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4)
+                          ELSE null END),
+                    toString(node.year),
+                    toString(node.aired_date),
+                    (CASE WHEN bestDate.rel_end = 'Present' THEN '2026' WHEN bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4) ELSE null END),
+                    (CASE WHEN node.endDate = 'Present' THEN '2026' WHEN node.endDate IS NOT NULL THEN right(toString(node.endDate), 4) ELSE null END),
+                    right(toString(bestDate.rel_start), 4),
+                    right(toString(node.startDate), 4),
+                    right(toString(bestDate.rel_date), 4),
+                    right(toString(node.date), 4),
+                    left(toString(node.published_at), 4),
+                    null
+                ),
+                relationships: [rel IN relationships WHERE rel.name <> "Unknown"], 
+                technologies: [t IN technologies WHERE t IS NOT NULL], 
+                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
+                text: apoc.text.join(narratives, "\\n\\n"),
+                start_time: node.startTime,
+                end_time: node.endTime,
+                aired_date: node.aired_date
+            } AS details
+        ORDER BY details.temporal_boost DESC
+        LIMIT 40
+        """
+
+    def _sanitize_narrative(self, text: str) -> str:
+        """
+        Strips internal STAR framework headers (Situation/Task/Action/Result) from text.
+        Returns a clean narrative-first string.
+        """
+        if not text:
+            return ""
+        # Regex to strip headers (Case-insensitive, handles optional colon/space)
+        headers = [r"(?i)Situation:?\s*", r"(?i)Task:?\s*", r"(?i)Action:?\s*", r"(?i)Result:?\s*"]
+        clean_text = text
+        for h in headers:
+            clean_text = re.sub(h, "", clean_text)
+        return clean_text.strip()
+
     def get_embedding(self, question: str, model: str = "text-embedding-3-small") -> List[float]:
         """Get embedding vector for the input question"""
         response = self.client.embeddings.create(
@@ -65,11 +244,13 @@ class ExpertTools:
         YIELD nodeId, similarity
         MATCH (chunk:Chunk)-[:BELONGS_TO_SOURCE]->(s:Source)<-[:HAS_SOURCE]-(ep:Episode)
         WHERE id(chunk) = nodeId 
-        AND (ep.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(ep)))
+        WHERE (""" + self._get_security_clause("ep") + """)
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
                ep.link AS episode_link,
                chunk.text AS text, 
+               chunk.startTime AS start_time,
+               chunk.endTime AS end_time,
                similarity
         ORDER BY similarity DESC
         LIMIT $top_k
@@ -91,6 +272,8 @@ class ExpertTools:
                 'episode_number': record['episode_number'],
                 'episode_link': record['episode_link'],
                 'text': record['text'],
+                'start_time': record['start_time'],
+                'end_time': record['end_time'],
                 'similarity': record['similarity']
             })
         
@@ -106,16 +289,18 @@ class ExpertTools:
         
         # 2. Vector Search (Semantic)
         vector_query = """
+        WITH split($question, ' ') AS keywords
         CALL db.index.vector.queryNodes('chunkIndex', $top_k * 2, $embedding)
         YIELD node, score
-        RETURN node.text AS text, score, 'vector' as source
+        RETURN node.text AS text, node.startTime AS start_time, node.endTime AS end_time, score, 'vector' as source
         """
         
         # 3. Keyword Search (BM25)
         keyword_query = """
+        WITH split($question, ' ') AS keywords
         CALL db.index.fulltext.queryNodes('chunkTextIndex', $question)
         YIELD node, score
-        RETURN node.text AS text, score, 'keyword' as source
+        RETURN node.text AS text, node.startTime AS start_time, node.endTime AS end_time, score, 'keyword' as source
         LIMIT $top_k * 2
         """
         
@@ -124,10 +309,17 @@ class ExpertTools:
                 vector_query, 
                 embedding=embedding, 
                 top_k=top_k, 
+                question=question,
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id
             )
-            k_res = self.driver.execute_query(keyword_query, question=question, top_k=top_k)
+            k_res = self.driver.execute_query(
+                keyword_query, 
+                question=question, 
+                top_k=top_k,
+                tenant_id=self.tenant_id,
+                requesting_user_id=self.requesting_user_id
+            )
             
             # Reciprocal Rank Fusion (RRF)
             # RRF Score = 1 / (rank + k)
@@ -152,7 +344,7 @@ class ExpertTools:
             for text, rrf_score in sorted_texts:
                 meta_query = """
                 MATCH (ep:Episode)
-                WHERE (ep.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(ep)))
+                WHERE (""" + self._get_security_clause("ep") + """)
                 MATCH (ep)-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk:Chunk {text: $text})
                 RETURN ep.name AS episode_name, ep.number AS episode_number, ep.link AS episode_link
                 LIMIT 1
@@ -186,7 +378,7 @@ class ExpertTools:
         CALL db.index.vector.queryNodes('chunkIndex', $top_k, $embedding)
         YIELD node, score
         MATCH (node)-[:BELONGS_TO_SOURCE]->(s:Source)<-[:HAS_SOURCE]-(ep:Episode)
-        WHERE (ep.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(ep)))
+        WHERE (""" + self._get_security_clause("ep") + """)
         RETURN ep.name AS episode_name, 
                ep.number AS episode_number,
                ep.link AS episode_link,
@@ -236,7 +428,12 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            question=question,
+            requesting_user_id=self.requesting_user_id
+        )
         
         episodes = []
         for record in result.records:
@@ -272,8 +469,8 @@ class ExpertTools:
         """
         query = """
         MATCH (p:Person)-[r]-(e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
-        WHERE toLower(p.name) CONTAINS toLower($question)
+        WHERE (""" + self._get_security_clause("e") + """)
+          AND toLower(p.name) CONTAINS toLower($question)
         RETURN DISTINCT p.name AS person_name,
                type(r) AS relationship_type,
                e.name AS episode_name,
@@ -284,7 +481,12 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            question=question,
+            requesting_user_id=self.requesting_user_id
+        )
         
         people = []
         for record in result.records:
@@ -304,23 +506,31 @@ class ExpertTools:
         Search for episodes that discuss specific concepts or ideas.
         """
         query = """
+        WITH split(toLower($question), ' ') AS keywords
         MATCH (e:Episode)
         WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
-        MATCH (e)-[:HAS_TOPIC]->(t:Topic)-[:COVERS_CONCEPT]->(c:Concept)
-        WHERE toLower(c.name) CONTAINS toLower($question) OR 
-              toLower(c.description) CONTAINS toLower($question)
+        MATCH (e)-[:HAS_TOPIC|SIMILAR|IS_SIMILAR|DISCUSSES|COVERS_CONCEPT|COVERS_TECHNOLOGY*1..2]-(c)
+        WHERE any(label IN labels(c) WHERE label IN ["Concept", "Technology", "Topic"])
+          AND (
+            any(word IN keywords WHERE toLower(c.name) CONTAINS word) OR 
+            any(word IN keywords WHERE toLower(c.description) CONTAINS word)
+          )
         RETURN DISTINCT e.name AS episode_name,
                e.number AS episode_number,
                e.link AS episode_link,
-               t.name AS topic_name,
-               c.name AS concept_name,
-               c.description AS concept_description,
+               coalesce(c.name, "") AS concept_name,
+               left(coalesce(c.description, ""), 300) AS concept_description,
                $question AS matched_term
         ORDER BY e.number DESC
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            question=question,
+            requesting_user_id=self.requesting_user_id
+        )
         
         concepts = []
         for record in result.records:
@@ -328,7 +538,6 @@ class ExpertTools:
                 'episode_name': record['episode_name'],
                 'episode_number': record['episode_number'],
                 'episode_link': record['episode_link'],
-                'topic_name': record['topic_name'],
                 'concept_name': record['concept_name'],
                 'concept_description': record['concept_description'],
                 'matched_term': record['matched_term']
@@ -341,21 +550,26 @@ class ExpertTools:
         Search for episodes that discuss specific technologies or tools.
         """
         query = """
+        WITH split(toLower($question), ' ') AS keywords
         MATCH (e:Episode)
         WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
-        MATCH (e)-[:HAS_TOPIC]->(t:Topic)-[:COVERS_TECHNOLOGY]->(tech:Technology)
-        WHERE toLower(tech.name) CONTAINS toLower($question)
+        MATCH (e)-[:HAS_TOPIC|SIMILAR|IS_SIMILAR|DISCUSSES|COVERS_TECHNOLOGY*1..2]-(tech:Technology)
+        WHERE any(word IN keywords WHERE toLower(tech.name) CONTAINS word)
         RETURN DISTINCT e.name AS episode_name,
                e.number AS episode_number,
                e.link AS episode_link,
-               t.name AS topic_name,
                tech.name AS technology_name,
                $question AS matched_term
         ORDER BY e.number DESC
         LIMIT 10
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, question=question)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            question=question,
+            requesting_user_id=self.requesting_user_id
+        )
         
         technologies = []
         for record in result.records:
@@ -363,7 +577,6 @@ class ExpertTools:
                 'episode_name': record['episode_name'],
                 'episode_number': record['episode_number'],
                 'episode_link': record['episode_link'],
-                'topic_name': record['topic_name'],
                 'technology_name': record['technology_name'],
                 'matched_term': record['matched_term']
             })
@@ -418,7 +631,12 @@ class ExpertTools:
         ORDER BY e.number DESC
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, reference_string=reference_string)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            reference_string=reference_string,
+            requesting_user_id=self.requesting_user_id
+        )
         
         episodes = []
         for record in result.records:
@@ -443,7 +661,11 @@ class ExpertTools:
         LIMIT 1
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id,
+            requesting_user_id=self.requesting_user_id
+        )
         if result.records:
             embedding = result.records[0]['embedding']
             if embedding:
@@ -464,6 +686,7 @@ class ExpertTools:
         
         with self.driver.session() as session:
             result = session.run("""
+                WITH split($question, ' ') AS keywords
                 CALL db.index.vector.queryNodes(
                     'chunkIndex',
                     $k,
@@ -472,7 +695,9 @@ class ExpertTools:
                 YIELD node AS chunk, score AS indexScore
 
                 MATCH (seedEpisode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
+                WHERE (seedEpisode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(seedEpisode)))
                 OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode {tenant_id: $tenant_id})
+                WHERE (similarEpisode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(similarEpisode)))
 
                 RETURN DISTINCT
                     seedEpisode.name AS SeedEpisode,
@@ -485,7 +710,7 @@ class ExpertTools:
                     SeedEpisode_IndexScore DESC,
                     KNN_Similarity_Score DESC
                 LIMIT $limit
-            """, questionEmbedding=question_embedding, k=k, limit=limit, tenant_id=self.tenant_id)
+            """, questionEmbedding=question_embedding, k=k, limit=limit, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, question=question)
             
             results = []
             for record in result:
@@ -508,6 +733,7 @@ class ExpertTools:
         
         with self.driver.session() as session:
             result = session.run("""
+                WITH split($question, ' ') AS keywords
                 CALL db.index.vector.queryNodes(
                     'chunkIndex',
                     $k,
@@ -515,14 +741,19 @@ class ExpertTools:
                 )
                 YIELD node AS chunk, score
                 MATCH (episode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
+                WHERE (episode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(episode)))
+                OPTIONAL MATCH (episode)-[:HAS_TOPIC]->(t:Topic)
+                OPTIONAL MATCH (p:Person)-[]-(episode)
                 RETURN
                     episode.name AS EpisodeTitle,
                     episode.number AS EpisodeNumber,
                     chunk.text AS ChunkContent, 
-                    score AS SimilarityScore
+                    score AS SimilarityScore,
+                    collect(DISTINCT t.name) AS Topics,
+                    collect(DISTINCT p.name) AS People
                 ORDER BY
                     SimilarityScore DESC
-            """, questionEmbedding=question_embedding, k=k, tenant_id=self.tenant_id)
+            """, questionEmbedding=question_embedding, k=k, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, question=question)
             
             results = []
             for record in result:
@@ -530,6 +761,8 @@ class ExpertTools:
                     'EpisodeTitle': record['EpisodeTitle'],
                     'EpisodeNumber': record['EpisodeNumber'],
                     'ChunkContent': record['ChunkContent'],
+                    'Topics': record['Topics'],
+                    'People': record['People'],
                     'SimilarityScore': float(record['SimilarityScore']) if record['SimilarityScore'] else None
                 })
             
@@ -548,7 +781,12 @@ class ExpertTools:
                e.number AS episode_number
         LIMIT 20
         """
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, episode_name=episode_name)
+        result = self.driver.execute_query(
+            query, 
+            tenant_id=self.tenant_id, 
+            episode_name=episode_name,
+            requesting_user_id=self.requesting_user_id
+        )
         
         people = []
         for record in result.records:
@@ -597,72 +835,80 @@ class ExpertTools:
 
     def hybrid_discovery(self, question: str, k: int = 5) -> str:
         """
-        Native Hybrid Search (GraphRAG): Performs vector search on chunks and 
+        Native Hybrid Search (GraphRAG): Performs RRF hybrid search on chunks and 
         immediately traverses to parent Episode and related nodes.
         """
-        question_embedding = self.get_embedding(question, model="text-embedding-3-small")
-        
-        query = """
-        CALL db.index.vector.queryNodes('chunkIndex', 100, $questionEmbedding)
-        YIELD node AS chunk, score
-        MATCH (chunk)<-[:CONTAINS]-(s:Source)<-[:HAS_SOURCE]-(e:Episode {tenant_id: $tenant_id})
-        
-        OPTIONAL MATCH (p:Person)-[r]-(e)
-        WHERE type(r) IN ['HOSTS', 'GUEST_ON']
-        
-        OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
-        OPTIONAL MATCH (t)-[:COVERS_TECHNOLOGY]->(tech:Technology)
-
-        RETURN e.name AS episode_title,
-               e.number AS episode_number,
-               e.description AS episode_description,
-               e.link AS link,
-               chunk.text AS chunk_content,
-               score AS similarity_score,
-               collect(DISTINCT {name: p.name, role: type(r)}) AS participants,
-               collect(DISTINCT t.name) AS topics,
-               collect(DISTINCT tech.name) AS technologies
-        ORDER BY similarity_score DESC
-        LIMIT $k
-        """
-        
-        result = self.driver.execute_query(
-            query, 
-            tenant_id=self.tenant_id, 
-            questionEmbedding=question_embedding, 
-            k=k
-        )
+        # 1. Get hybrid chunks via RRF
+        chunks = self.query_relevant_chunks_hybrid(question, top_k=k)
         
         enriched_results = []
-        for record in result.records:
-            relationships = []
+        for chunk_data in chunks:
+            # For each chunk, enrich with graph metadata
+            episode_name = chunk_data.get('episode_name')
+            if not episode_name:
+                continue
+
+            query = """
+            MATCH (e:Episode {tenant_id: $tenant_id, name: $episode_name})
+            WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
             
-            for p in (record['participants'] or []):
-                if p and p.get('name'):
-                    relationships.append({"target_name": p['name'], "target_type": "Person", "rel_type": p['role'], "link": p.get('link')})
+            OPTIONAL MATCH (p:Person)-[r]-(e)
+            WHERE type(r) IN ['HOSTS', 'GUEST_ON']
             
-            for t in (record['topics'] or []):
-                if t:
-                    relationships.append({"target_name": t, "target_type": "Topic", "rel_type": "HAS_TOPIC"})
+            OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
+            OPTIONAL MATCH (t)-[:COVERS_TECHNOLOGY]->(tech:Technology)
+    
+            RETURN e.name AS episode_title,
+                   e.number AS episode_number,
+                   e.description AS episode_description,
+                   e.link AS link,
+                   collect(DISTINCT {name: p.name, role: type(r)}) AS participants,
+                   collect(DISTINCT t.name) AS topics,
+                   collect(DISTINCT tech.name) AS technologies
+            LIMIT 1
+            """
+            
+            try:
+                result = self.driver.execute_query(
+                    query, 
+                    tenant_id=self.tenant_id, 
+                    episode_name=episode_name,
+                    requesting_user_id=self.requesting_user_id
+                )
+                
+                if not result.records:
+                    continue
                     
-            for tech in (record['technologies'] or []):
-                if tech:
-                    relationships.append({"target_name": tech, "target_type": "Technology", "rel_type": "COVERS_TECHNOLOGY"})
-            
-            enriched_results.append({
-                'name': record['episode_title'],
-                'type': 'Episode',
-                'link': record['link'],
-                'episode_title': record['episode_title'],
-                'episode_number': record['episode_number'],
-                'episode_description': record['episode_description'],
-                'chunk_content': record['chunk_content'],
-                'similarity_score': record['similarity_score'],
-                'topics': record['topics'],
-                'technologies': record['technologies'],
-                'participants': record['participants'],
-                'relationships': relationships
-            })
+                record = result.records[0]
+                relationships = []
+                
+                for p in (record['participants'] or []):
+                    if p and p.get('name'):
+                        relationships.append({"target_name": p['name'], "target_type": "Person", "rel_type": p['role']})
+                
+                for t in (record['topics'] or []):
+                    if t:
+                        relationships.append({"target_name": t, "target_type": "Topic", "rel_type": "HAS_TOPIC"})
+                        
+                for tech in (record['technologies'] or []):
+                    if tech:
+                        relationships.append({"target_name": tech, "target_type": "Technology", "rel_type": "COVERS_TECHNOLOGY"})
+                
+                enriched_results.append({
+                    'name': record['episode_title'],
+                    'type': 'Episode',
+                    'link': record['link'],
+                    'episode_title': record['episode_title'],
+                    'episode_number': record['episode_number'],
+                    'episode_description': record['episode_description'],
+                    'chunk_content': chunk_data['text'],
+                    'similarity_score': chunk_data.get('similarity', 0),
+                    'rrf_score': chunk_data.get('rrf_score', 0),
+                    'relationships': relationships
+                })
+            except Exception as e:
+                print(f"Error enriching chunk {episode_name}: {e}")
+                continue
             
         return json.dumps(enriched_results, indent=2)
 
@@ -693,76 +939,72 @@ class ExpertTools:
                     return json.dumps({"error": f"Query blocked by security policy: {reason}"})
 
         try:
-            result = self.driver.execute_query(query, tenant_id=self.tenant_id)
+            result = self.driver.execute_query(
+                query, 
+                tenant_id=self.tenant_id,
+                requesting_user_id=requesting_user_id or self.requesting_user_id
+            )
             output = [record.data() for record in result.records]
             return json.dumps(output, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def get_node_details(self, node_name: str) -> str:
+    def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
-        Fetch all properties and labels for a specific node by its 'name' property.
+        Fetch all properties and labels for a specific node by its 'element_id' or 'name'.
         """
         query = """
-        MATCH (n {tenant_id: $tenant_id})
-        WHERE toLower(n.name) = toLower($node_name)
+        MATCH (n)
+        WHERE (elementId(n) = $node_id OR toLower(n.name) = toLower($node_name))
+          AND (""" + self._get_security_clause("n") + """)
         
         OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)
         OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)
-        WHERE note.tenant_id = $tenant_id AND NOT 'Category' IN labels(n)
+        WHERE (""" + self._get_security_clause("note") + """) AND NOT 'Category' IN labels(n)
 
         WITH n, labels(n) AS labels, 
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,
              collect(DISTINCT tech.name) AS technologies,
-             collect(DISTINCT apoc.text.replace(
-                apoc.text.replace(
-                    apoc.text.replace(
-                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),
-                        "(?i)Task:?\\s*", "\n"),
-                    "(?i)Action:?\\s*", "\n"),
-                "(?i)Result:?\\s*", "\n")
-             ) AS narratives
+             collect(DISTINCT note.text) AS narratives
 
-        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives
+        RETURN properties(n) AS properties, 
+               labels, 
+               ref_urls, 
+               technologies, 
+               narratives,
+               elementId(n) AS element_id,
+               coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
         """
         result = self.driver.execute_query(
             query, 
             tenant_id=self.tenant_id,
-            node_name=node_name
+            node_id=node_id,
+            node_name=node_name,
+            requesting_user_id=self.requesting_user_id
         )
         
         if not result.records:
-            return json.dumps({"message": f"Node with name '{node_name}' not found."})
+            return json.dumps({"error": "Node not found or access denied."})
             
-        record = result.records[0]
-        props = dict(record['properties'])
-        for k, v in props.items():
-            if hasattr(v, 'iso_format'):
-                props[k] = v.iso_format()
-                
-        return json.dumps({
-            "properties": props,
-            "labels": record['labels'],
-            "technologies": record['technologies'],
-            "ref_urls": record['ref_urls'],
-            "narratives": record['narratives']
-        }, indent=2)
+        data = result.records[0].data()
+        # Apply Python Sanitizer to Narratives
+        if data.get("narratives"):
+            data["narratives"] = [self._sanitize_narrative(n) for n in data["narratives"] if n]
+            
+        return json.dumps([data], indent=2)
 
-    def expand_node_topology(self, node_name: str) -> str:
+    def expand_node_topology(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
-        Explore the 1-hop neighborhood of a node.
+        Explore the 1-hop neighborhood of a node by element_id or name.
         """
-        query = """
-        MATCH (node)
-        WHERE toLower(node.name) = toLower($node_name)
-          AND (node.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(node)))
-        
+        query = f"""
         MATCH (node)-[r]-(neighbor)
-        WHERE neighbor IS NOT NULL
-          AND (neighbor.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(neighbor)))
-          AND any(label IN labels(neighbor) WHERE label IN $allowed_labels)
+        WHERE (node.name = $node_name OR elementId(node) = $node_id)
+          AND ({self._get_security_clause("node")})
+          AND type(r) IN ["HELD_ROLE", "AT", "CONTRIBUTED_TO", "PARTICIPATED_IN", "EARNED_DEGREE", "FROM_INSTITUTION", "HAS_SKILL", "CONTAINS", "HAS_REFERENCE", "BUILT_DURING", "FEATURE_GUEST", "SIMILAR", "IS_SIMILAR", "HAS_TOPIC", "DISCUSSES", "COVERS_TECHNOLOGY", "DISCUSSES_CONCEPT", "PUBLISHED_BY", "AUTHORED", "CO_AUTHORED", "LEAD_BY"]
+          AND ({self._get_security_clause("neighbor")})
           AND NOT neighbor:ReferenceLink
         
         OPTIONAL MATCH (neighbor)-[:HAS_REFERENCE]->(ref:ReferenceLink)
@@ -789,6 +1031,7 @@ class ExpertTools:
         try:
             result = self.driver.execute_query(
                 query, 
+                node_id=node_id,
                 node_name=node_name,
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id,
@@ -812,9 +1055,12 @@ class ExpertTools:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def search_resume_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False) -> str:
+    def _inject_federated_demo_boost(self) -> str:
+        return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
+
+    def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all", is_contextual_fusion_on: bool = False) -> str:
         """
-        Search for entities across the Interactive Resume Graph dynamically.
+        Search for entities across the Universal Enterprise Graph dynamically, explicitly crossing boundaries between domains (Podcast/Resume/Federated).
         """
         # If the user explicitly wants a visual map, or if the keyword implies a discovery/overview request
         discovery_synonyms = ["portfolio", "overview", "background", "experience", "career", "map"]
@@ -823,7 +1069,8 @@ class ExpertTools:
         # If is_discovery_request is true and we target a career overview, we'll try to return a cluster
         if is_discovery_request and ("career" in keyword.lower() or "overview" in keyword.lower() or wants_visual_map):
             # Deterministically return the core career cluster centered on the owner identity
-            return self.get_cluster_context("Sangeetha Ramadurai", depth=2)
+            # Enforce backbone_only=True to prevent crowding (Noise deferred to explicit expansion)
+            return self.get_cluster_context("Sangeetha Ramadurai", depth=2, backbone_only=True)
 
         stop_words = {"show", "me", "how", "did", "she", "what", "is", "the", "and", "a", "an", "at", "in", "of", "for", "with", "on", "to", "from", "by"}
         clean_keyword = keyword.lower().replace(".", "").replace(",", "").replace("?", "").replace("!", "")
@@ -834,212 +1081,267 @@ class ExpertTools:
         if is_discovery_request:
             search_keyword = "Category " + final_keyword_str if final_keyword_str else "Category"
 
-        # Phase 3: Hybrid Search Fallback
-        embedding = None
-        try:
-            if len(final_keyword_str) >= 3:
-                embedding = self.get_embedding(final_keyword_str)
-        except Exception as e:
-            print(f"Warning: Failed to fetch embedding for search_resume_graph: {e}")
-
-        # TDD: Deterministic temporal intent detection
+        from domain_registry import get_authorized_labels, get_backbone_labels, get_anchor_labels
+        
+        keywords_list = [w.lower() for w in keyword.split() if len(w) > 2]
+        if not keywords_list:
+            keywords_list = [keyword.lower()]
+        
+        anchor_labels = get_anchor_labels(domain_intent)
         temporal_keywords = ["currently", "working", "now", "present", "active", "recent", "recently", "latest"]
         has_temporal_intent = any(tk in keyword.lower() for tk in temporal_keywords)
 
-        query = """
-        WITH split(toLower(coalesce($keyword, "")), ' ') AS keywords
-        MATCH (node)
-        WHERE (node.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(node)))
-          AND any(label IN labels(node) WHERE label IN $allowed_labels)
+        query = f"""
+        {self._fragment_taxonomy_expansion()}
+             
+        MATCH (node:Project|Role|Company|Person|Hackathon|ThoughtLeadership|Publication|Institution|Podcast|Episode|Topic|Certification|Category)
+        WHERE ({self._get_security_clause("node")})
+          AND (
+                elementId(node) IN expanded_ids
+                OR toLower(node.name) CONTAINS toLower($keyword) 
+                OR toLower(node.title) CONTAINS toLower($keyword)
+                OR toLower(node.description) CONTAINS toLower($keyword)
+                OR any(word IN $keywords WHERE toLower(word) = toLower(labels(node)[0]))
+          )
         
-        OPTIONAL MATCH (parentCat:Category)-[:CONTAINS]->(node)
-        WHERE (parentCat.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(parentCat)))
-
-        OPTIONAL MATCH (node)-[:AT|GRADUATED_FROM|HELD_ROLE|PARTICIPATED_IN|CONTRIBUTED_TO*1..2]-(comp:Company)
-        WHERE (comp.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(comp)))
-        
-        WITH node, keywords, parentCat, comp,
-             CASE 
-                WHEN $embedding IS NOT NULL AND node.embedding IS NOT NULL 
-                THEN vector.similarity.cosine($embedding, node.embedding)
-                ELSE 0.0 
-             END AS semantic_score
-        
-        WITH node, keywords, parentCat, comp, semantic_score
-        WHERE (
-                semantic_score > 0.45
-                OR any(word IN keywords WHERE toLower(node.name) CONTAINS word)
-                OR any(word IN keywords WHERE toLower(node.description) CONTAINS word)
-                OR any(word IN keywords WHERE toLower(node.text) CONTAINS word)
-                OR any(label IN labels(node) WHERE any(word IN keywords WHERE toLower(label) CONTAINS word))
-                OR any(word IN keywords WHERE toLower(word) = toLower(node.type))
-                OR any(word IN keywords WHERE toLower(parentCat.name) CONTAINS word)
-                OR any(word IN keywords WHERE toLower(comp.name) CONTAINS word)
-                OR (any(word IN keywords WHERE word IN ['infra', 'infrastructure', 'pipeline', 'msk', 'kafka', 'datamesh', 'modernize', 'modernization', 'jpmc', 'jpmorgan', 'chase']) 
-                    AND (node:Project OR node:Company OR node:Technology OR node:Role))
-                OR (any(word IN keywords WHERE toLower(word) IN ['jpmc', 'jpmorgan', 'chase']) AND toLower(comp.name) CONTAINS "jpmorgan")
-                OR (any(word IN keywords WHERE word IN ['academic', 'education', 'cert', 'certification', 'degree', 'foundation']) 
-                    AND (node:Degree OR node:Institution OR node:Certification OR node:ProfessionalEducation))
-                OR ($has_temporal_intent AND (node:Project OR node:Role) AND EXISTS {
-                    MATCH (p:Person)-[r:CURRENTLY_BUILDING|HELD_ROLE]-(node)
-                    WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))
-                    AND (r.end = 'Present' OR r.end IS NULL OR type(r) = 'CURRENTLY_BUILDING')
-                })
-        )
-        
-        // Step 1: Discover relationships to the Person (Direct or via Role/Company)
-        OPTIONAL MATCH (p:Person)-[directRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)
-        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))
-        
-        // Multi-hop for Projects: Person -> Role -> Project (capturing role dates)
-        OPTIONAL MATCH (p:Person)-[p2rRel:HELD_ROLE|AT|BUILT_DURING]-(role:Role)-[multiRel:CONTRIBUTED_TO]-(node)
-        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))
-        AND node:Project
-        
-        WITH node, keywords, parentCat, comp, semantic_score, coalesce(directRel, multiRel) AS roleRel, p2rRel, role
-        
-        OPTIONAL MATCH (node)-[r:HELD_ROLE|AT|CONTRIBUTED_TO|PARTICIPATED_IN|EARNED_DEGREE|FROM_INSTITUTION|HAS_SKILL|CONTAINS|HAS_REFERENCE|BUILT_DURING|FEATURE_GUEST]-(neighbor)
-        WHERE neighbor IS NOT NULL 
-          AND (neighbor.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(neighbor)))
-          AND NOT neighbor:Chunk AND NOT neighbor:Episode AND NOT neighbor:Topic AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:Concept AND NOT neighbor:__MetaContext__
-          AND NOT neighbor:ReferenceLink AND NOT neighbor:PreparatoryNote
-        
-        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
-        OPTIONAL MATCH (node)-[:HAS_PRIVATE_NOTE|CONTAINS*1..2]-(note:PreparatoryNote)
-        WHERE (note.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(note)))
-        AND NOT 'Category' IN labels(node)
-        
-        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
-
-        WITH node, roleRel, p2rRel, role, neighbor, r, keywords, parentCat, comp, semantic_score,
-             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,
-             collect(DISTINCT tech.name) AS technologies,
-             collect(DISTINCT apoc.text.replace(
-                apoc.text.replace(
-                    apoc.text.replace(
-                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),
-                        "(?i)Task:?\\s*", "\n"),
-                    "(?i)Action:?\\s*", "\n"),
-                "(?i)Result:?\\s*", "\n")
-             ) AS narratives
-
-        // Aggregate relationship dates as plain scalars for reliable sorting
-        WITH node, narratives, keywords, parentCat, comp, ref_urls, technologies, semantic_score,
-             apoc.coll.toSet(coalesce(node.links, []) + ref_urls + [node.url, node.link]) AS fused_links,
-             [r IN collect(DISTINCT {
-                rel_start: coalesce(roleRel.start, p2rRel.start),
-                rel_end:   coalesce(roleRel.end,   p2rRel.end),
-                rel_date:  coalesce(roleRel.date,  p2rRel.date)
-             }) WHERE r.rel_start IS NOT NULL OR r.rel_end IS NOT NULL OR r.rel_date IS NOT NULL | r] AS relDates,
-             collect(DISTINCT {
-                name: coalesce(neighbor.name, neighbor.url, neighbor.text, neighbor.description, labels(neighbor)[0], "Unknown"),
-                type: CASE 
-                    WHEN 'Category' IN labels(neighbor) THEN 'Category'
-                    WHEN 'Role' IN labels(neighbor) THEN 'Role'
-                    WHEN 'Hackathon' IN labels(neighbor) THEN 'Hackathon'
-                    WHEN 'ThoughtLeadership' IN labels(neighbor) THEN 'ThoughtLeadership'
-                    WHEN 'Company' IN labels(neighbor) THEN 'Company'
-                    WHEN 'ProfessionalEducation' IN labels(neighbor) THEN 'ProfessionalEducation'
-                    WHEN 'Certification' IN labels(neighbor) THEN 'Certification'
-                    WHEN 'Project' IN labels(neighbor) THEN 'Project'
-                    ELSE labels(neighbor)[0] 
-                END,
-                relationship: type(r),
-                link: coalesce(neighbor.link, neighbor.url, (CASE WHEN neighbor.links IS NOT NULL THEN neighbor.links[0] ELSE NULL END), null),
-                description: left(coalesce(neighbor.description, neighbor.text, ""), 300)
-             }) AS relationships
-
-        // Pick the most recent date record by sorting rel_end descending
-        WITH node, narratives, fused_links, relationships, technologies, semantic_score,
-             (CASE 
-                WHEN size(relDates) = 0 THEN {rel_start: null, rel_end: null, rel_date: null}
-                ELSE apoc.coll.sortMaps(relDates, "^rel_end")[size(relDates)-1]
-             END) AS bestDate
-
-        // Range-booster: ensure 1997 (NIT Bhopal) and JPMC 2025 nodes surface for timeline range
-        WITH node, narratives, fused_links, relationships, technologies, bestDate, semantic_score,
-             (CASE 
-                WHEN node.name CONTAINS "1997" OR node.name CONTAINS "NIT Bhopal" THEN 500
-                WHEN node.name CONTAINS "JPMC" OR node.name CONTAINS "2025" THEN 200
-                ELSE 0 
-             END) AS range_boost
-
-        RETURN DISTINCT
-            node { 
-                .*, 
-                type: CASE 
-                    WHEN 'Category' IN labels(node) THEN 'Category'
-                    WHEN 'Role' IN labels(node) THEN 'Role'
-                    WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
-                    WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
-                    WHEN 'Company' IN labels(node) THEN 'Company'
-                    WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
-                    WHEN 'Certification' IN labels(node) THEN 'Certification'
-                    WHEN 'Project' IN labels(node) THEN 'Project'
-                    ELSE labels(node)[0] 
-                END,
-                display_date: coalesce(
-                    bestDate.rel_start + (CASE WHEN bestDate.rel_end IS NOT NULL THEN "-" + bestDate.rel_end ELSE "" END),
-                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),
-                    bestDate.rel_date,
-                    node.date,
-                    toString(node.year),
-                    bestDate.rel_end,
-                    ""
-                ),
-                temporal_boost: (CASE 
-                    WHEN bestDate.rel_end = 'Present' OR node.endDate = 'Present' THEN 150 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    WHEN bestDate.rel_end IS NOT NULL OR node.endDate IS NOT NULL THEN 100 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    WHEN bestDate.rel_start IS NOT NULL OR node.startDate IS NOT NULL THEN 50 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    ELSE 0
-                END) + range_boost + toInteger((semantic_score * 100)),
-                year: coalesce(
-                    // For Project nodes: relationship end date beats stale node.year property
-                    (CASE WHEN node:Project AND bestDate.rel_end = 'Present' THEN '2026'
-                          WHEN node:Project AND bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4)
-                          ELSE null END),
-                    // For non-Project nodes: node.year is authoritative
-                    toString(node.year),
-                    // Fallback: any remaining relationship date
-                    (CASE WHEN bestDate.rel_end = 'Present' THEN '2026' WHEN bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4) ELSE null END),
-                    (CASE WHEN node.endDate = 'Present' THEN '2026' WHEN node.endDate IS NOT NULL THEN right(toString(node.endDate), 4) ELSE null END),
-                    right(toString(bestDate.rel_start), 4),
-                    right(toString(node.startDate), 4),
-                    right(toString(bestDate.rel_date), 4),
-                    right(toString(node.date), 4),
-                    left(toString(node.published_at), 4),
-                    null
-                ),
-                relationships: [rel IN relationships WHERE rel.name <> "Unknown"], 
-                technologies: [t IN technologies WHERE t IS NOT NULL], 
-                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
-                text: apoc.text.join(narratives, "\n\n")
-            } AS details
-        ORDER BY details.temporal_boost DESC
-        LIMIT 25
+        {self._fragment_neighbor_aggregation()}
+        {self._fragment_narrative_aggregation()}
+        {self._fragment_ranking_and_return()}
         """
+        # Phase 3: Hybrid Search Fallback
+        embedding = None
         try:
-            print(f"[SEARCH] Running resume search for user: {requesting_user_id}")
+            if len(keywords_list) > 0:
+                embedding = self.get_embedding(" ".join(keywords_list))
+        except Exception as e:
+            print(f"Warning: Failed to fetch embedding for search_enterprise_graph: {e}")
+
+        try:
+            if domain_intent.lower() == "all":
+                allowed_labels = get_authorized_labels("professional") + get_authorized_labels("podcast") + get_authorized_labels("federated") + get_authorized_labels("structural")
+            else:
+                allowed_labels = get_authorized_labels(domain_intent)
+                
+            print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id}")
             result = self.driver.execute_query(
                 query, 
                 tenant_id=self.tenant_id,
                 requesting_user_id=requesting_user_id,
-                keyword=search_keyword,
-                allowed_labels=PROJECT_GRAPH_NODES,
+                keywords=keywords_list,
+                anchorLabels=anchor_labels,
+                allowed_labels=allowed_labels,
                 has_temporal_intent=has_temporal_intent,
-                embedding=embedding
+                embedding=embedding,
+                owner_id=os.environ.get("OWNER_USER_ID")
             )
             
+            # --- SELF-CORRECTION FALLBACK ---
+            if not result.records and embedding is not None:
+                print(f"[SEARCH] No results for '{keyword}'. Attempting broader semantic fallback...")
+                fallback_query = f"""
+                MATCH (node)
+                WHERE node.embedding IS NOT NULL 
+                  AND ({self._get_security_clause("node")})
+                WITH node, vector.similarity.cosine($embedding, node.embedding) AS score
+                WHERE score > 0.7
+                RETURN node {{ .*, element_id: elementId(node), labels: labels(node), temporal_boost: score * 100 }} AS details
+                ORDER BY score DESC
+                LIMIT 10
+                """
+                result = self.driver.execute_query(
+                    fallback_query,
+                    embedding=embedding,
+                    requesting_user_id=requesting_user_id
+                )
+
+            backbone_labels = get_backbone_labels()
             output = []
             for record in result.records:
                 details = record["details"]
+                # Serialize any Neo4j Date objects or other non-serializable types
+                for k, v in details.items():
+                    if hasattr(v, 'iso_format'):
+                        details[k] = v.iso_format()
+                    elif isinstance(v, list):
+                        details[k] = [i.iso_format() if hasattr(i, 'iso_format') else i for i in v]
+
                 details.pop("embedding", None)
                 details.pop("tenant_id", None)
-                output.append(details)
                 
-            return json.dumps(output, indent=2)
+                # Apply Discovery Backbone Guard
+                if is_discovery_request:
+                    node_labels = details.get('labels', [])
+                    # Filter: Only keep Backbone nodes in output if it's a discovery/career query
+                    if any(label in backbone_labels for label in node_labels) or details.get('type') in backbone_labels:
+                        output.append(details)
+                else:
+                    output.append(details)
+
+            # --- ON-DEMAND BRIDGE DISCOVERY (CONTEXTUAL FUSION) ---
+            if is_contextual_fusion_on and output:
+                print(f"[FUSION] Contextual Fusion requested. Calculating On-Demand Bridges...")
+                from domain_registry import get_bridge_relationships
+                contribution_rels = get_bridge_relationships("CONTRIBUTION")
+                knowledge_rels = get_bridge_relationships("KNOWLEDGE")
+
+                bridge_query = """
+                MATCH (owner:Person {name: "Sangeetha Ramadurai"})
+                WITH owner, $candidate_ids AS candidate_ids, $contribution_rels AS contribution_rels, $knowledge_rels AS knowledge_rels
+                UNWIND candidate_ids AS target_id
+                MATCH (target) WHERE elementId(target) = target_id OR target.name = target_id
+                
+                // Find shared neighbors (the Bridge Context) - Meta-Type Logic
+                MATCH (owner)-[r1]-(shared)-[r2]-(target)
+                WHERE type(r1) IN contribution_rels 
+                  AND type(r2) IN knowledge_rels
+                  AND NOT shared:Person AND NOT shared:Episode
+                
+                WITH target_id, count(DISTINCT shared) AS intersection_count, 
+                     collect(DISTINCT shared {
+                        name: shared.name, 
+                        element_id: elementId(shared),
+                        labels: labels(shared),
+                        type: labels(shared)[0]
+                     }) AS bridge_nodes
+                WHERE intersection_count >= 1 // Lower threshold for discovery
+                
+                RETURN target_id, bridge_nodes
+                """
+                candidate_ids = [o.get("element_id") or o.get("name") for o in output]
+                bridge_res = self.driver.execute_query(
+                    bridge_query,
+                    candidate_ids=candidate_ids,
+                    contribution_rels=contribution_rels,
+                    knowledge_rels=knowledge_rels
+                )
+                
+                # Attach virtual bridges to the response and materialize bridge nodes
+                bridges = {}
+                bridge_node_details = {}
+                bridge_links_to_add = []
+                
+                # We need the element_id of the person "Sangeetha Ramadurai" for linking
+                owner_id_res = self.driver.execute_query("MATCH (p:Person {name: 'Sangeetha Ramadurai'}) RETURN elementId(p) AS id")
+                owner_id = owner_id_res.records[0]["id"] if owner_id_res.records else None
+
+                for r in bridge_res.records:
+                    target_id = r["target_id"]
+                    bridges[target_id] = [b["name"] for b in r["bridge_nodes"]]
+                    for b in r["bridge_nodes"]:
+                        bid = b["element_id"]
+                        bridge_node_details[bid] = b
+                        # Add virtual links for the bridge
+                        if owner_id:
+                            bridge_links_to_add.append({"source": owner_id, "target": bid, "type": "BRIDGE_LINK"})
+                        bridge_links_to_add.append({"source": bid, "target": target_id, "type": "BRIDGE_LINK"})
+                
+                # Materialize the bridge nodes and owner in the output list if they aren't already there
+                if owner_id and not any(o.get("element_id") == owner_id for o in output):
+                    owner_node_res = self.driver.execute_query("MATCH (p:Person {name: 'Sangeetha Ramadurai'}) RETURN p {.*, element_id: elementId(p), type: 'Person', display_name: p.name}")
+                    if owner_node_res.records:
+                        output.append(owner_node_res.records[0]["p"])
+
+                for bid, bnode in bridge_node_details.items():
+                    if not any(o.get("element_id") == bid for o in output):
+                        bnode["display_name"] = bnode["name"]
+                        bnode["is_bento_eligible"] = True
+                        bnode["is_bridge"] = True
+                        output.append(bnode)
+
+                for item in output:
+                    uid = item.get("element_id") or item.get("name")
+                    if uid in bridges:
+                        item["has_federated_bridge"] = True
+                        item["bridge_reason"] = f"Common Ground: {', '.join(bridges[uid][:3])}"
+
+            # Build graph links for the UI
+            links = []
+            seen_links = set()
+            
+            # 1. Add physical links from graph traversal
+            for node in output:
+                source_id = node.get("element_id")
+                for rel in node.get("relationships", []):
+                    target_id = rel.get("target_id")
+                    if target_id and source_id:
+                        link_key = tuple(sorted([source_id, target_id]))
+                        if link_key not in seen_links:
+                            links.append({
+                                "source": source_id,
+                                "target": target_id,
+                                "type": rel.get("rel_type")
+                            })
+                            seen_links.add(link_key)
+            
+            # 2. Add virtual fusion links (Bridges)
+            if 'bridge_links_to_add' in locals():
+                for link in bridge_links_to_add:
+                    link_key = tuple(sorted([link["source"], link["target"]]))
+                    if link_key not in seen_links:
+                        links.append(link)
+                        seen_links.add(link_key)
+
+            # 2.5 Narrative Sanitization (Professional Polish)
+            # Remove internal STAR headers from notes before they reach the LLM/UI.
+            for node in output:
+                if node.get("narratives"):
+                    node["narratives"] = [self._sanitize_narrative(n) for n in node["narratives"] if n]
+
+            # 3. Visual Bouncer (Cleanliness & Zero-Trust)
+            # We keep the narratives for the LLM, but strip the nodes from the Visual Graph.
+            visual_deny_list = ['PreparatoryNote', 'Chunk', '__MetaContext__']
+            
+            clean_output = []
+            for node in output:
+                node_labels = node.get("labels", [])
+                if not any(label in visual_deny_list for label in node_labels):
+                    clean_output.append(node)
+            
+            # Rebuild links based on cleaned nodes
+            valid_ids = {n.get("element_id") for n in clean_output}
+            final_links = []
+            for link in links:
+                if link["source"] in valid_ids and link["target"] in valid_ids:
+                    final_links.append(link)
+
+            # 4. Role Orbit (Virtual Projection)
+            # Center projects around their roles even if roles aren't separate nodes in Neo4j.
+            virtual_role_nodes = []
+            virtual_role_links = []
+            seen_roles = set()
+            for node in clean_output:
+                if 'Project' in node.get('labels', []) and node.get('role'):
+                    role_name = node['role']
+                    role_id = f"role_{role_name.lower().replace(' ', '_')}"
+                    if role_name not in seen_roles:
+                        virtual_role_nodes.append({
+                            "id": role_id,
+                            "element_id": role_id,
+                            "name": role_name,
+                            "display_name": role_name,
+                            "type": "Role",
+                            "labels": ["Role", "VirtualLandmark"],
+                            "is_anchor": True
+                        })
+                        seen_roles.add(role_name)
+                    
+                    virtual_role_links.append({
+                        "source": role_id,
+                        "target": node['element_id'],
+                        "type": "ROLE_FOR"
+                    })
+            
+            clean_output.extend(virtual_role_nodes)
+            final_links.extend(virtual_role_links)
+
+            return json.dumps({"nodes": clean_output, "links": final_links}, indent=2)
         except Exception as e:
+            import traceback
+            print(f"Error in search_enterprise_graph: {e}")
+            traceback.print_exc()
             return json.dumps({"error": str(e)})
+
+
 
     def explore_graph_schema(self, schema_readable: bool = False) -> str:
         """
@@ -1076,7 +1378,9 @@ class ExpertTools:
         # 1. Progressive Discovery Filter
         backbone_filter = ""
         if backbone_only:
-            backbone_filter = "AND any(label IN labels(m) WHERE label IN ['Category', 'Company', 'Role', 'Institution', 'Degree', 'Certification', 'Episode'])"
+            from domain_registry import get_backbone_labels
+            backbone_labels_list = get_backbone_labels(domain)
+            backbone_filter = "AND any(label IN labels(m) WHERE label IN $backbone_labels_list)"
 
         # 2. Domain Masking Filter (Positive Schema Sovereignty)
         from domain_registry import get_authorized_labels
@@ -1086,16 +1390,17 @@ class ExpertTools:
         if authorized_labels:
             domain_filter = "AND any(label IN labels(m) WHERE label IN $authorized_labels)"
 
+        # Identify the node by name or elementId
         query = f"""
         MATCH (n)
-        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {{id: $requesting_user_id}})-[:HAS_ACCESS]->(n)))
-        AND n.name CONTAINS $node_name
+        WHERE (elementId(n) = $node_name OR toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name)
+          AND ({self._get_security_clause("n")})
         
         OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m)
-        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {{id: $requesting_user_id}})-[:HAS_ACCESS]->(m)))
-        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)
-        {backbone_filter}
-        {domain_filter}
+        WHERE ({self._get_security_clause("m")})
+          AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink AND NOT node:Chunk)
+          {backbone_filter}
+          {domain_filter}
         
         WITH n, collect(path) AS paths
         UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p
@@ -1106,7 +1411,7 @@ class ExpertTools:
         OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)
-        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {{id: $requesting_user_id}})-[:HAS_ACCESS]->(p)))
+        WHERE ({self._get_security_clause("p")})
 
         WITH n, node, rel, roleRel, 
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
@@ -1117,7 +1422,7 @@ class ExpertTools:
 
         WITH n,
              collect(DISTINCT {{
-                id: node.name,
+                id: elementId(node),
                 name: node.name,
                 type: CASE 
                     WHEN 'Category' IN labels(node) THEN 'Category'
@@ -1157,14 +1462,14 @@ class ExpertTools:
              
         // Hard node limit for Progressive Discovery
         WITH allNodes[0..50] AS nodes,
-             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) 
-                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {{
-                source: startNode(rel).name,
-                target: endNode(rel).name,
+             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = elementId(startNode(rel))) 
+                            AND any(n IN allNodes[0..50] WHERE n.id = elementId(endNode(rel))) | {{
+                source: elementId(startNode(rel)),
+                target: elementId(endNode(rel)),
                 type: type(rel)
              }}] AS links,
              [n IN allNodes[0..10] | {{
-                name: n.id,
+                name: n.name,
                 type: n.type,
                 highlight: left(n.description, 80) + "..."
              }}] AS snapshot
@@ -1173,12 +1478,16 @@ class ExpertTools:
         LIMIT 1
         """
         try:
+            from domain_registry import get_backbone_labels
+            backbone_labels_list = get_backbone_labels(domain)
             result = self.driver.execute_query(
                 query, 
                 tenant_id=self.tenant_id, 
                 requesting_user_id=self.requesting_user_id,
                 node_name=node_name,
-                authorized_labels=authorized_labels
+                authorized_labels=authorized_labels,
+                backbone_labels_list=backbone_labels_list,
+                owner_id=os.environ.get("OWNER_USER_ID")
             )
             if not result.records:
                 return json.dumps({"error": f"Node '{node_name}' not found."})
