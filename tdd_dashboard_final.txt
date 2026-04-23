@@ -1,0 +1,1413 @@
+====================================================
+🛡️  CORTEXDRIVE TDD HEALTH CHECK ORCHESTRATOR
+📅 2026-04-21 14:22:48
+====================================================
+
+🚀 Running: verify_career_completeness.py...
+✅ PASSED: verify_career_completeness.py
+   └─ ✅ Volarisation Found: 01/2026-01/2026 (Year: 2026)
+
+🚀 Running: verify_deterministic_graph_trigger.py...
+✅ PASSED: verify_deterministic_graph_trigger.py
+   └─ 🎊 TDD SUCCESS: Deterministic Map Routing is active!
+
+🚀 Running: verify_deterministic_search.py...
+❌ FAILED: verify_deterministic_search.py
+--- ERROR OUTPUT ---
+Traceback (most recent call last):
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_deterministic_search.py", line 43, in <module>
+    test_current_work()
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_deterministic_search.py", line 22, in test_current_work
+    res_json = expert.search_resume_graph(query)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+--- 🔍 TDD: Deterministic Search Priority ---
+Testing Query: What is sangeetha currently working on?
+
+--------------------
+
+🚀 Running: verify_domain_manifest_contract.py...
+✅ PASSED: verify_domain_manifest_contract.py
+   └─ 🎊 TDD GREEN: Domain Manifest contract is verified.
+
+🚀 Running: verify_domain_silo.py...
+❌ FAILED: verify_domain_silo.py
+--- ERROR OUTPUT ---
+
+--- Test 1: Professional Domain Silo ---
+
+[RED] UNEXPECTED ERROR: No module named 'domain_registry'
+
+--------------------
+
+🚀 Running: verify_external_prompts.py...
+✅ PASSED: verify_external_prompts.py
+   └─ 🎊 TDD SUCCESS: All prompts are successfully externalized!
+
+🚀 Running: verify_fusion.py...
+✅ PASSED: verify_fusion.py
+   └─ ❌ FAILURE: Narrative is empty or too short.
+
+🚀 Running: verify_g_acl_enforcement.py...
+✅ PASSED: verify_g_acl_enforcement.py
+   └─ [SUCCESS] Security Verification: Unauthorized user was correctly blocked.
+
+🚀 Running: verify_g_acl_path_masking.py...
+❌ FAILED: verify_g_acl_path_masking.py
+--- ERROR OUTPUT ---
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=24, column=63, offset=1302>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 1302, 'line': 24, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=90, offset=2874>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2874, 'line': 51, 'column': 90}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=54, offset=2838>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2838, 'line': 51, 'column': 54}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=61, column=32, offset=3238>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3238, 'line': 61, 'column': 32}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=26, offset=2810>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2810, 'line': 51, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=55, column=26, offset=3027>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3027, 'line': 55, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=64, column=31, offset=3368>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3368, 'line': 64, 'column': 31}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=24, column=63, offset=1302>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 1302, 'line': 24, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=90, offset=2874>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2874, 'line': 51, 'column': 90}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=54, offset=2838>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2838, 'line': 51, 'column': 54}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=61, column=32, offset=3238>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3238, 'line': 61, 'column': 32}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=26, offset=2810>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2810, 'line': 51, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=55, column=26, offset=3027>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3027, 'line': 55, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=64, column=31, offset=3368>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3368, 'line': 64, 'column': 31}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+
+
+🛡️  STARTING G-ACL SECURITY VALIDATION...
+
+[TEST 1] Testing OWNER discovery (user_3AadvqIme5F12afWwde9nv92T5R)...
+✅ PASS: Owner successfully discovered their own hub. Nodes: 50
+
+[TEST 2] Testing SHADOW DECEPTION (404 Masking) for attacker (user_malicious_attacker_999)...
+❌ FAIL: Attacker discovered owner content or received 'Access Denied'.
+{
+  "nodes": [
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Sangeetha Ramadurai",
+      "description": "",
+      "links": [],
+      "id": "Sangeetha Ramadurai",
+      "type": "Person",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Self, Cortex-Drive",
+      "description": "",
+      "links": [],
+      "id": "Self, Cortex-Drive",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "02/2024-07/2025",
+      "year": "2024",
+      "name": "JPMorgan Chase",
+      "description": "",
+      "links": [],
+      "id": "JPMorgan Chase",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "06/2021-01/2024",
+      "year": "2021",
+      "name": "JPMorgan Chase",
+      "description": "",
+      "links": [],
+      "id": "JPMorgan Chase",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "02/2013-02/2021",
+      "year": "2013",
+      "name": "Mezocliq LLC",
+      "description": "",
+      "links": [],
+      "id": "Mezocliq LLC",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "06/2007-12/2009",
+      "year": "2007",
+      "name": "GOLDMAN SACHS & CO.",
+      "description": "",
+      "links": [],
+      "id": "GOLDMAN SACHS & CO.",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "05/1999-01/2006",
+      "year": "1999",
+      "name": "GE Healthcare",
+      "description": "",
+      "links": [],
+      "id": "GE Healthcare",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "08/1997-04/1999",
+      "year": "1997",
+      "name": "Macmet India Pvt. Ltd.",
+      "description": "",
+      "links": [],
+      "id": "Macmet India Pvt. Ltd.",
+      "type": "Company",
+      "url": null
+    },
+    {
+      "technologies": [
+        "AutoGen",
+        "AI Agent (OpenAI)",
+        "Python",
+        "ML"
+      ],
+      "display_date": "05/2025-07/2025",
+      "year": "2025",
+      "name": "Open-Source AI Agents Contribution @ JPMC",
+      "description": "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns.",
+      "links": [],
+      "id": "Open-Source AI Agents Contribution @ JPMC",
+      "type": "ThoughtLeadership",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Snowflake",
+        "Python",
+        "Starburst",
+        "LangGraph",
+        "AWS Lambda",
+        "Step Function",
+        "Glue",
+        "Lake Formation",
+        "DataMesh",
+        "ML",
+        "Al Agent",
+        "Terraform"
+      ],
+      "display_date": "02/2024-07/2025",
+      "year": "2025",
+      "name": "Metadata Agent Architecture",
+      "description": "Metadata Discovery & RAG Agent: Architected AWS-based AI solution using Lambda, Bedrock, and PG Vector to reduce data discovery time from hours to sec",
+      "links": [],
+      "id": "Metadata Agent Architecture",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Kafka",
+        "AWS",
+        "Java",
+        "Spring",
+        "EKS",
+        "MSK",
+        "RDS",
+        "Datadog",
+        "CloudWatch"
+      ],
+      "display_date": "06/2021-01/2024",
+      "year": "2021",
+      "name": "Gain/Loss Cloud Native Microservice",
+      "description": "Cost Modernization: Designed and implemented a greenfield, cloud-native Gain/Loss microservice on AWS EKS, delivering $338k in annual cost savings and",
+      "links": [],
+      "id": "Gain/Loss Cloud Native Microservice",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Microservices",
+        "Cloud Computing",
+        "Elasticsearch",
+        "Quarkus",
+        "Docker",
+        "Jenkins",
+        "Kubernetes",
+        "AWS",
+        "React",
+        "Java",
+        "GWT",
+        "Thrift API",
+        "Protocol Buffer",
+        "Kafka Streams",
+        "Cassandra"
+      ],
+      "display_date": "02/2013-02/2021",
+      "year": "2013",
+      "name": "Cloud-Native Platform Orchestration & Workflow System",
+      "description": "",
+      "links": [],
+      "id": "Cloud-Native Platform Orchestration & Workflow System",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Microservices",
+        "Cloud Computing",
+        "Elasticsearch",
+        "Quarkus",
+        "Docker",
+        "Jenkins",
+        "Kubernetes",
+        "AWS",
+        "React",
+        "Java",
+        "GWT",
+        "Thrift API",
+        "Protocol Buffer",
+        "Kafka Streams",
+        "Cassandra"
+      ],
+      "display_date": "02/2013-02/2021",
+      "year": "2013",
+      "name": "Enterprise Access Control, Search, and Distributed Infrastructure",
+      "description": "",
+      "links": [],
+      "id": "Enterprise Access Control, Search, and Distributed Infrastructure",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Java",
+        "Struts",
+        "Hibernate",
+        "Tomcat",
+        "DB2",
+        "Slang",
+        "SecDB"
+      ],
+      "display_date": "06/2007-12/2009",
+      "year": "2007",
+      "name": "Executive Workflow Management Platform (Ten Thousand Women)",
+      "description": "",
+      "links": [],
+      "id": "Executive Workflow Management Platform (Ten Thousand Women)",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Java",
+        "Struts",
+        "Hibernate",
+        "Tomcat",
+        "DB2",
+        "Slang",
+        "SecDB"
+      ],
+      "display_date": "06/2007-12/2009",
+      "year": "2007",
+      "name": "Capital Attribution & Market Risk Data Platform",
+      "description": "",
+      "links": [],
+      "id": "Capital Attribution & Market Risk Data Platform",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "ACE",
+        "Java",
+        "C",
+        "C++",
+        "Sybase",
+        "CORBA"
+      ],
+      "display_date": "05/1999-01/2006",
+      "year": "1999",
+      "name": "Radiology Imaging Platform Integration",
+      "description": "",
+      "links": [],
+      "id": "Radiology Imaging Platform Integration",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "ACE",
+        "Java",
+        "C",
+        "C++",
+        "Sybase",
+        "CORBA"
+      ],
+      "display_date": "05/1999-01/2006",
+      "year": "1999",
+      "name": "Image Management & Distributed Event Processing System",
+      "description": "",
+      "links": [],
+      "id": "Image Management & Distributed Event Processing System",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [
+        "VC++",
+        "Lead Tools API"
+      ],
+      "display_date": "08/1997-04/1999",
+      "year": "1997",
+      "name": "Simulation systems development and evaluation (Macmet)",
+      "description": "",
+      "links": [],
+      "id": "Simulation systems development and evaluation (Macmet)",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": null,
+      "description": "",
+      "links": [],
+      "id": null,
+      "type": "Podcast",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Delayed View Semantics In Incremental Data Processing",
+      "description": "In this episode of the Data Engineering Podcast Dan Sotolongo from Snowflake talks about the complexities of incremental data processing in warehouse ",
+      "links": [
+        "https://www.dataengineeringpodcast.com/episodepage/delayed-view-semantics-incremental-data-processing-episode-473"
+      ],
+      "id": "Delayed View Semantics In Incremental Data Processing",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Anthropic And Model Context Protocol (MCP) With David Soria Parra",
+      "description": "The Model Context Protocol, or MCP, is a new open standard that connects AI assistants to arbitrary data sources and tools, such as codebases, APIs, a",
+      "links": [
+        "https://softwareengineeringdaily.com/2025/05/13/anthropic-and-the-model-context-protocol-with-david-soria-parra/"
+      ],
+      "id": "Anthropic And Model Context Protocol (MCP) With David Soria Parra",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Simplifying Lakehouse Ecosystem With DuckLake",
+      "description": "In this episode of the Data Engineering Podcast Hannes M\u00fchleisen and Mark Raasveldt, the creators of DuckDB, share their work on Duck Lake, a new entr",
+      "links": [
+        "https://www.dataengineeringpodcast.com/ducklake-easy-data-lakehouse-format-episode-480"
+      ],
+      "id": "Simplifying Lakehouse Ecosystem With DuckLake",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "High Performance And Low Overhead Graphs With KuzuDB",
+      "description": "In this episode of the Data Engineering Podcast Prashanth Rao, an AI engineer at KuzuDB, talks about their embeddable graph database. Prashanth explai",
+      "links": [
+        "https://www.dataengineeringpodcast.com/episodepage/kuzudb-embedded-graph-database-episode-477"
+      ],
+      "id": "High Performance And Low Overhead Graphs With KuzuDB",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Prompts as Functions: The BAML Revolution in AI Engineering",
+      "description": "David Hughes, Principal Data & AI Solution Architect at Enterprise Knowledge. Our discussion centers on BAML, a domain-specific language that transfor",
+      "links": [
+        "https://thedataexchange.media/baml-revolution-in-ai-engineering/"
+      ],
+      "id": "Prompts as Functions: The BAML Revolution in AI Engineering",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Iceberg at Netflix and Beyond with Ryan Blue",
+      "description": "Apache Iceberg is an open source high-performance format for huge data tables. Iceberg enables the use of SQL tables for big data, while making it pos",
+      "links": [
+        "https://softwareengineeringdaily.com/2024/03/07/iceberg-at-netflix-and-beyond-with-ryan-blue/"
+      ],
+      "id": "Iceberg at Netflix and Beyond with Ryan Blue",
+      "type": "Episode",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Software architecture",
+        "AI",
+        "C4 Model"
+      ],
+      "display_date": "2024",
+      "year": "2024",
+      "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+      "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platfo",
+      "links": [
+        "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+      ],
+      "id": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+      "type": "ThoughtLeadership",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Software architecture",
+        "AI",
+        "C4 Model"
+      ],
+      "display_date": "11/2025-01/2026",
+      "year": "2025",
+      "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+      "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platfo",
+      "links": [
+        "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+      ],
+      "id": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+      "type": "ThoughtLeadership",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Ignite takes New York City by storm",
+      "description": "",
+      "links": [
+        "https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"
+      ],
+      "id": "Ignite takes New York City by storm",
+      "type": "Publication",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Neo4j",
+        "Claude Code",
+        "Google Antigravity",
+        "BAML",
+        "Python",
+        "LangGraph",
+        "Langflow",
+        "AI Agent",
+        "Supabase",
+        "Railway"
+      ],
+      "display_date": "08/2025-Present",
+      "year": "2025",
+      "name": "Cortex-Drive",
+      "description": "A personalized AI for organizing knowledge via a personal knowledge graph with explainable AI reasoning.",
+      "links": [
+        "https://github.com/sangs/cortex-drive"
+      ],
+      "id": "Cortex-Drive",
+      "type": "Project",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Quarkus",
+      "description": "",
+      "links": [],
+      "id": "Quarkus",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Kafka",
+      "description": "",
+      "links": [],
+      "id": "Kafka",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Smallrye Mutiny",
+      "description": "",
+      "links": [],
+      "id": "Smallrye Mutiny",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "gRPC",
+      "description": "",
+      "links": [],
+      "id": "gRPC",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Protocol Buffers",
+      "description": "",
+      "links": [],
+      "id": "Protocol Buffers",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "JSON",
+      "description": "",
+      "links": [],
+      "id": "JSON",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Thrift",
+      "description": "",
+      "links": [],
+      "id": "Thrift",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Cassandra",
+      "description": "",
+      "links": [],
+      "id": "Cassandra",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Elastic Search",
+      "description": "",
+      "links": [],
+      "id": "Elastic Search",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Java",
+      "description": "",
+      "links": [],
+      "id": "Java",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Python",
+      "description": "",
+      "links": [],
+      "id": "Python",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "AWS",
+      "description": "",
+      "links": [],
+      "id": "AWS",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Docker/Kubernetes",
+      "description": "",
+      "links": [],
+      "id": "Docker/Kubernetes",
+      "type": "Skill",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Neo4j",
+        "MongoDB",
+        "MCP",
+        "Python",
+        "AI Agent",
+        "ML"
+      ],
+      "display_date": "07/2025-07/2025",
+      "year": "2025",
+      "name": "Global Hackathons @ JPMorgan Chase",
+      "description": "Innovation Leadership: Led Global Hackathon projects delivering MCP-based AI solutions, including MongoDB and Neo4j MCP clients.",
+      "links": [],
+      "id": "Global Hackathons @ JPMorgan Chase",
+      "type": "Hackathon",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Cody AI Agent",
+        "Infrastructure as Code",
+        "Python",
+        "AI Agent",
+        "Terraform"
+      ],
+      "display_date": "02/2025-03/2025",
+      "year": "2025",
+      "name": "Humanless Autocode at Scale for SRE",
+      "description": "Automated, context-aware IaC code review using Cody AI Agent, tailored for enterprise guardrails and multi-repo dependency analysis.",
+      "links": [],
+      "id": "Humanless Autocode at Scale for SRE",
+      "type": "Hackathon",
+      "url": null
+    },
+    {
+      "technologies": [
+        "IBM Watson",
+        "Decision Support",
+        "Python",
+        "Langflow",
+        "AI Agent"
+      ],
+      "display_date": "01/2026-01/2026",
+      "year": "2026",
+      "name": "Valorisation Engine",
+      "description": "Explainable, agentic AI for patent research and life-sciences commercialization support, built on IBM Watsonx.",
+      "links": [],
+      "id": "Valorisation Engine",
+      "type": "Hackathon",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Ignite Community Leadership",
+      "description": "Core team member of Ignite community in New York Metro, working with 9 active communities and 18 community leads.",
+      "links": [],
+      "id": "Ignite Community Leadership",
+      "type": "SocialLearning",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "02/2025-03/2025",
+      "year": "2025",
+      "name": "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
+      "description": "Innovation Leadership: Automated, context-aware AI code review process using Sourcegraph's Cody, tailored for enterprise guardrails.",
+      "links": [],
+      "id": "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
+      "type": "Hackathon",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "01/2026-01/2026",
+      "year": "2026",
+      "name": "Volarisation Engine @ IBM Dev Day 2026",
+      "description": "Innovation Leadership: Explainable, agentic AI decision-support system built with IBM Watsonx Orchestrate to accelerate life-sciences patent research.",
+      "links": [
+        "https://lnkd.in/dcSmQS4n",
+        "https://sites.google.com/view/valorisationengine/valorisation",
+        "https://drive.proton.me/urls/NYB1KQ7QNC#HueGJ6Nq7AAl"
+      ],
+      "id": "Volarisation Engine @ IBM Dev Day 2026",
+      "type": "Hackathon",
+      "url": null
+    },
+    {
+      "technologies": [
+        "Public Cloud",
+        "GoLang",
+        "ML",
+        "AWS"
+      ],
+      "display_date": "06/2021-07/2025",
+      "year": "2021",
+      "name": "Ignite Social Learning Community @ JPMC",
+      "description": "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impa",
+      "links": [
+        "https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"
+      ],
+      "id": "Ignite Social Learning Community @ JPMC",
+      "type": "ThoughtLeadership",
+      "url": null
+    },
+    {
+      "technologies": [],
+      "display_date": "Active",
+      "year": "2026",
+      "name": "Architectural Shifts for Platform Engineers in the Age of AI",
+      "description": "",
+      "links": [
+        "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+      ],
+      "id": "Architectural Shifts for Platform Engineers in the Age of AI",
+      "type": "Publication",
+      "url": null
+    }
+  ],
+  "links": [
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "Self, Cortex-Drive"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "JPMorgan Chase"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "Mezocliq LLC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "GOLDMAN SACHS & CO."
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "GE Healthcare"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "WORKED_AT",
+      "target": "Macmet India Pvt. Ltd."
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Open-Source AI Agents Contribution @ JPMC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Metadata Agent Architecture"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Gain/Loss Cloud Native Microservice"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Cloud-Native Platform Orchestration & Workflow System"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Enterprise Access Control, Search, and Distributed Infrastructure"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Executive Workflow Management Platform (Ten Thousand Women)"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Capital Attribution & Market Risk Data Platform"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Radiology Imaging Platform Integration"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Image Management & Distributed Event Processing System"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CONTRIBUTED_TO",
+      "target": "Simulation systems development and evaluation (Macmet)"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "Delayed View Semantics In Incremental Data Processing"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "Anthropic And Model Context Protocol (MCP) With David Soria Parra"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "Simplifying Lakehouse Ecosystem With DuckLake"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "High Performance And Low Overhead Graphs With KuzuDB"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "Prompts as Functions: The BAML Revolution in AI Engineering"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LISTENS_TO_EPISODE",
+      "target": "Iceberg at Netflix and Beyond with Ryan Blue"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "Delayed View Semantics In Incremental Data Processing"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "Anthropic And Model Context Protocol (MCP) With David Soria Parra"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "Simplifying Lakehouse Ecosystem With DuckLake"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "High Performance And Low Overhead Graphs With KuzuDB"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "Prompts as Functions: The BAML Revolution in AI Engineering"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LEARNING_FROM",
+      "target": "Iceberg at Netflix and Beyond with Ryan Blue"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "AUTHORED",
+      "target": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "AUTHORED",
+      "target": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "AUTHORED",
+      "target": "Ignite takes New York City by storm"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "JPMorgan Chase"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "JPMorgan Chase"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "Mezocliq LLC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "GOLDMAN SACHS & CO."
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "GE Healthcare"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "Macmet India Pvt. Ltd."
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HELD_ROLE",
+      "target": "Cortex-Drive"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Quarkus"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Kafka"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Smallrye Mutiny"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "gRPC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Protocol Buffers"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "JSON"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Thrift"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Cassandra"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Elastic Search"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Java"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Python"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "AWS"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "HAS_SKILL",
+      "target": "Docker/Kubernetes"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Global Hackathons @ JPMorgan Chase"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Humanless Autocode at Scale for SRE"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Valorisation Engine"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Ignite Community Leadership"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Humanless Autocode at Scale for SRE @ JPMorgan Chase"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "PARTICIPATED_IN",
+      "target": "Volarisation Engine @ IBM Dev Day 2026"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LED",
+      "target": "Ignite Social Learning Community @ JPMC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "LED",
+      "target": "Ignite Social Learning Community @ JPMC"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CO_AUTHORED",
+      "target": "Architectural Shifts for Platform Engineers in the Age of AI"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CURRENTLY_BUILDING",
+      "target": "Cortex-Drive"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "CURRENTLY_BUILDING",
+      "target": "Cortex-Drive"
+    },
+    {
+      "source": "Sangeetha Ramadurai",
+      "type": "FEATURE_GUEST",
+      "target": "Ignite Social Learning Community @ JPMC"
+    }
+  ],
+  "snapshot": [
+    {
+      "highlight": "...",
+      "name": "Sangeetha Ramadurai",
+      "type": "Person"
+    },
+    {
+      "highlight": "...",
+      "name": "Self, Cortex-Drive",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "JPMorgan Chase",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "JPMorgan Chase",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "Mezocliq LLC",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "GOLDMAN SACHS & CO.",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "GE Healthcare",
+      "type": "Company"
+    },
+    {
+      "highlight": "...",
+      "name": "Macmet India Pvt. Ltd.",
+      "type": "Company"
+    },
+    {
+      "highlight": "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks a...",
+      "name": "Open-Source AI Agents Contribution @ JPMC",
+      "type": "ThoughtLeadership"
+    },
+    {
+      "highlight": "Metadata Discovery & RAG Agent: Architected AWS-based AI solution using Lambda, ...",
+      "name": "Metadata Agent Architecture",
+      "type": "Project"
+    }
+  ]
+}
+
+--------------------
+
+🚀 Running: verify_hybrid_semantic_routing.py...
+❌ FAILED: verify_hybrid_semantic_routing.py
+--- ERROR OUTPUT ---
+
+
+🔍 Verifying Hybrid Semantic Routing (RRF + Vector Fallback)...
+  -> Executing search_resume_graph('enterprise data systems')...
+❌ FAILED: Crash during semantic routing verification: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+--------------------
+
+🚀 Running: verify_hydration_polymorphism.py...
+❌ FAILED: verify_hydration_polymorphism.py
+--- ERROR OUTPUT ---
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=11, column=63, offset=502>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 502, 'line': 11, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n {tenant_id: $tenant_id})\n        WHERE toLower(n.name) = toLower($node_name)\n        \n        OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)\n        WHERE note.tenant_id = $tenant_id AND NOT \'Category\' IN labels(n)\n\n        WITH n, labels(n) AS labels, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,\n             collect(DISTINCT tech.name) AS technologies,\n             collect(DISTINCT apoc.text.replace(\n                apoc.text.replace(\n                    apoc.text.replace(\n                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),\n                        "(?i)Task:?\\s*", "\n"),\n                    "(?i)Action:?\\s*", "\n"),\n                "(?i)Result:?\\s*", "\n")\n             ) AS narratives\n\n        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=11, column=63, offset=502>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 502, 'line': 11, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n {tenant_id: $tenant_id})\n        WHERE toLower(n.name) = toLower($node_name)\n        \n        OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)\n        WHERE note.tenant_id = $tenant_id AND NOT \'Category\' IN labels(n)\n\n        WITH n, labels(n) AS labels, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,\n             collect(DISTINCT tech.name) AS technologies,\n             collect(DISTINCT apoc.text.replace(\n                apoc.text.replace(\n                    apoc.text.replace(\n                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),\n                        "(?i)Task:?\\s*", "\n"),\n                    "(?i)Action:?\\s*", "\n"),\n                "(?i)Result:?\\s*", "\n")\n             ) AS narratives\n\n        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=11, column=63, offset=502>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 502, 'line': 11, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n {tenant_id: $tenant_id})\n        WHERE toLower(n.name) = toLower($node_name)\n        \n        OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)\n        WHERE note.tenant_id = $tenant_id AND NOT \'Category\' IN labels(n)\n\n        WITH n, labels(n) AS labels, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,\n             collect(DISTINCT tech.name) AS technologies,\n             collect(DISTINCT apoc.text.replace(\n                apoc.text.replace(\n                    apoc.text.replace(\n                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),\n                        "(?i)Task:?\\s*", "\n"),\n                    "(?i)Action:?\\s*", "\n"),\n                "(?i)Result:?\\s*", "\n")\n             ) AS narratives\n\n        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=11, column=63, offset=502>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 502, 'line': 11, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n {tenant_id: $tenant_id})\n        WHERE toLower(n.name) = toLower($node_name)\n        \n        OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)\n        WHERE note.tenant_id = $tenant_id AND NOT \'Category\' IN labels(n)\n\n        WITH n, labels(n) AS labels, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,\n             collect(DISTINCT tech.name) AS technologies,\n             collect(DISTINCT apoc.text.replace(\n                apoc.text.replace(\n                    apoc.text.replace(\n                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),\n                        "(?i)Task:?\\s*", "\n"),\n                    "(?i)Action:?\\s*", "\n"),\n                "(?i)Result:?\\s*", "\n")\n             ) AS narratives\n\n        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives\n        LIMIT 1\n        '
+
+🚀 Running TDD: Hydration Polymorphism (Progressive Unspooling)
+\n➤ Testing: Heavy Hydration (Hackathon/Project)
+  Target: Humanless Autocode at Scale for SRE @ JPMorgan Chase
+  ↳ Tech Extracted: 0
+  ↳ URLs Extracted: 0
+  ↳ Narratives Extracted: 2
+  ✅ PASS: Payload matches UI polymorphism expectations.
+\n➤ Testing: Medium Hydration (Thought Leadership)
+  Target: InfoQ: Architectural Shifts for Platform Engineers in the Age of AI
+  ↳ Tech Extracted: 3
+  ↳ URLs Extracted: 1
+  ↳ Narratives Extracted: 1
+  ✅ PASS: Payload matches UI polymorphism expectations.
+\n➤ Testing: Light Hydration (Role)
+  Target: Lead Software Engineer, VP
+  ❌ FAILURE: Node not found in database or returned error: {'message': "Node with name 'Lead Software Engineer, VP' not found."}
+\n➤ Testing: Podcast Hydration (Episode)
+  Target: Simplifying Lakehouse Ecosystem With DuckLake
+  ↳ Tech Extracted: 0
+  ↳ URLs Extracted: 0
+  ↳ Narratives Extracted: 0
+\n===
+🛑 TDD FAILED. Detected 1 structural hydration violations.
+
+--------------------
+
+🚀 Running: verify_jpmc_dates.py...
+❌ FAILED: verify_jpmc_dates.py
+--- ERROR OUTPUT ---
+
+--- 🔍 TDD RED: JPMC 2025 Date Verification ---
+Querying: What are the most recent projects sangeetha worked on at JPMC?
+🛑 CRITICAL ERROR: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+--------------------
+
+🚀 Running: verify_label_priority.py...
+❌ FAILED: verify_label_priority.py
+--- ERROR OUTPUT ---
+
+
+🔍 Verifying Cypher Node Category Resolution Priority (Hackathon vs Project)...
+  -> Executing search_resume_graph('Humanless Autocode')...
+❌ FAILED: Crash during label priority verification: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+--------------------
+
+🚀 Running: verify_mcp_contract.py...
+✅ PASSED: verify_mcp_contract.py
+   └─ [GREEN] All Gateway parameters are present in SSE Server signatures.
+
+🚀 Running: verify_mcp_label_priority_dynamic.py...
+❌ FAILED: verify_mcp_label_priority_dynamic.py
+--- ERROR OUTPUT ---
+
+
+🔍 TDD: Verifying MCP Standardized Type Priority...
+  -> Logic Check: Cross-referencing mock labels ['Person', 'Role']...
+  -> Resolved Type: Person
+  -> ❌ FAILED: Priority resolved to 'Person' instead of 'Role'.
+
+--------------------
+
+🚀 Running: verify_mcp_propagation.py...
+❌ FAILED: verify_mcp_propagation.py
+--- ERROR OUTPUT ---
+Traceback (most recent call last):
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_mcp_propagation.py", line 9, in <module>
+    from mcp_server.cortex_os_mentalmodel_server_sse import tenant_id_var, user_id_var, mcp
+ModuleNotFoundError: No module named 'mcp_server'
+
+
+--------------------
+
+🚀 Running: verify_narrative_fidelity_and_isolation.py...
+❌ FAILED: verify_narrative_fidelity_and_isolation.py
+--- ERROR OUTPUT ---
+E/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/src/mcp_server/schema_guard.py:80: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+  @validator('tenant_id')
+/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/src/mcp_server/schema_guard.py:112: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+  @validator('embedding')
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=54, offset=3026>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3026, 'line': 51, 'column': 54}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=24, column=63, offset=1490>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 1490, 'line': 24, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=64, column=31, offset=3556>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3556, 'line': 64, 'column': 31}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=61, column=32, offset=3426>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3426, 'line': 61, 'column': 32}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=55, column=26, offset=3215>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3215, 'line': 55, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=90, offset=3062>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3062, 'line': 51, 'column': 90}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=26, offset=2998>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2998, 'line': 51, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..1]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        AND any(label IN labels(m) WHERE label IN [\'Category\', \'Company\', \'Role\', \'Institution\', \'Degree\', \'Certification\', \'Episode\'])\n        AND any(label IN labels(m) WHERE label IN $authorized_labels)\n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+.EReceived notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=24, column=63, offset=1302>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 1302, 'line': 24, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=90, offset=2874>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2874, 'line': 51, 'column': 90}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `endDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=54, offset=2838>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2838, 'line': 51, 'column': 54}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=61, column=32, offset=3238>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3238, 'line': 61, 'column': 32}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `startDate` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=51, column=26, offset=2810>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 2810, 'line': 51, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=55, column=26, offset=3027>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3027, 'line': 55, 'column': 26}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `published_at` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=64, column=31, offset=3368>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 3368, 'line': 64, 'column': 31}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n)\n        WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n)))\n        AND n.name CONTAINS $node_name\n        \n        OPTIONAL MATCH path = (n)-[*1..2]-(m)\n        WHERE (m.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(m)))\n        AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink)\n        \n        \n        \n        WITH n, collect(path) AS paths\n        UNWIND (CASE WHEN size(paths) = 0 THEN [null] ELSE paths END) AS p\n        WITH n, nodes(p) AS pathNodes, relationships(p) AS pathRels\n        UNWIND (CASE WHEN pathNodes IS NULL THEN [n] ELSE pathNodes END) AS node\n        UNWIND (CASE WHEN pathRels IS NULL THEN [null] ELSE pathRels END) AS rel\n        \n        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)\n        WHERE (p.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(p)))\n\n        WITH n, node, rel, roleRel, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,\n             collect(DISTINCT tech.name) AS cluster_tech_urls\n\n        WITH n, node, rel, roleRel, cluster_tech_urls,\n             apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links\n\n        WITH n,\n             collect(DISTINCT {\n                id: node.name,\n                name: node.name,\n                type: CASE \n                    WHEN \'Category\' IN labels(node) THEN \'Category\'\n                    WHEN \'Role\' IN labels(node) THEN \'Role\'\n                    WHEN \'Hackathon\' IN labels(node) THEN \'Hackathon\'\n                    WHEN \'ThoughtLeadership\' IN labels(node) THEN \'ThoughtLeadership\'\n                    WHEN \'Company\' IN labels(node) THEN \'Company\'\n                    WHEN \'ProfessionalEducation\' IN labels(node) THEN \'ProfessionalEducation\'\n                    WHEN \'Certification\' IN labels(node) THEN \'Certification\'\n                    WHEN \'Project\' IN labels(node) THEN \'Project\'\n                    ELSE labels(node)[0] \n                END,\n                description: left(coalesce(node.description, node.text, ""), 150),\n                url: node.url,\n                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],\n                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],\n                display_date: coalesce(\n                    roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),\n                    node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),\n                    roleRel.date,\n                    node.date,\n                    toString(node.year),\n                    node.published_at,\n                    "Active"\n                ),\n                year: coalesce(\n                    toString(node.year),\n                    right(roleRel.start, 4),\n                    right(node.startDate, 4),\n                    right(roleRel.date, 4),\n                    right(node.date, 4),\n                    left(node.published_at, 4),\n                    "2026"\n                )\n             }) AS allNodes, \n             collect(DISTINCT rel) AS allRels\n             \n        // Hard node limit for Progressive Discovery\n        WITH allNodes[0..50] AS nodes,\n             [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = startNode(rel).name) \n                            AND any(n IN allNodes[0..50] WHERE n.id = endNode(rel).name) | {\n                source: startNode(rel).name,\n                target: endNode(rel).name,\n                type: type(rel)\n             }] AS links,\n             [n IN allNodes[0..10] | {\n                name: n.id,\n                type: n.type,\n                highlight: left(n.description, 80) + "..."\n             }] AS snapshot\n             \n        RETURN nodes, links, snapshot\n        LIMIT 1\n        '
+.
+======================================================================
+ERROR: test_01_resume_search_isolation (__main__.TestNarrativeFidelity.test_01_resume_search_isolation)
+ASSERT: Resume search MUST NOT leak podcast domain nodes.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_narrative_fidelity_and_isolation.py", line 27, in test_01_resume_search_isolation
+    result_json = self.expert.search_resume_graph("professional career overview", requesting_user_id=self.user_id, wants_visual_map=True)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+======================================================================
+ERROR: test_02_narrative_fidelity_unjailing (__main__.TestNarrativeFidelity.test_02_narrative_fidelity_unjailing)
+ASSERT: Narrative text MUST NOT be truncated (Full STAR support).
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_narrative_fidelity_and_isolation.py", line 68, in test_02_narrative_fidelity_unjailing
+    result_json = self.expert.search_resume_graph("Cortex-Drive", requesting_user_id=self.user_id)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ExpertTools' object has no attribute 'search_resume_graph'
+
+----------------------------------------------------------------------
+Ran 4 tests in 1.613s
+
+FAILED (errors=2)
+
+
+[TDD] Testing Domain Isolation (Resume vs Podcast)...
+
+[TDD] Testing Broad Identity Isolation (Seed Node Filter)...
+✓ Broad Identity Isolation Asserted.
+
+[TDD] Testing Narrative Fidelity (Unjailing)...
+
+[TDD] Testing Backbone Presence (Categories)...
+✓ Backbone Asserted. Found: ['Professional Experience', 'Thought Leadership & Community']
+
+--------------------
+
+🚀 Running: verify_progressive_hydration.py...
+❌ FAILED: verify_progressive_hydration.py
+--- ERROR OUTPUT ---
+Received notification from DBMS server: <GqlStatusObject gql_status='01N52', status_description='warn: property key does not exist. The property `neighborUrl` does not exist in database `neo4j`. Verify that the spelling is correct.', position=<SummaryInputPosition line=11, column=63, offset=502>, raw_classification='UNRECOGNIZED', classification=<NotificationClassification.UNRECOGNIZED: 'UNRECOGNIZED'>, raw_severity='WARNING', severity=<NotificationSeverity.WARNING: 'WARNING'>, diagnostic_record={'_classification': 'UNRECOGNIZED', '_severity': 'WARNING', '_position': {'offset': 502, 'line': 11, 'column': 63}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: '\n        MATCH (n {tenant_id: $tenant_id})\n        WHERE toLower(n.name) = toLower($node_name)\n        \n        OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)\n        OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)\n        OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)\n        WHERE note.tenant_id = $tenant_id AND NOT \'Category\' IN labels(n)\n\n        WITH n, labels(n) AS labels, \n             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,\n             collect(DISTINCT tech.name) AS technologies,\n             collect(DISTINCT apoc.text.replace(\n                apoc.text.replace(\n                    apoc.text.replace(\n                        apoc.text.replace(note.text, "(?i)Situation:?\\s*", ""),\n                        "(?i)Task:?\\s*", "\n"),\n                    "(?i)Action:?\\s*", "\n"),\n                "(?i)Result:?\\s*", "\n")\n             ) AS narratives\n\n        RETURN properties(n) AS properties, labels, ref_urls, technologies, narratives\n        LIMIT 1\n        '
+
+Running verify_progressive_hydration_TDD...
+❌ TDD Failed: No technologies extracted for DataMesh by get_node_details.
+
+--------------------
+
+🚀 Running: verify_project_date_consistency.py...
+✅ PASSED: verify_project_date_consistency.py
+   └─ 🎊 TDD SUCCESS: All 22 nodes pass date consistency check!
+
+🚀 Running: verify_search_resume_gacl.py...
+❌ FAILED: verify_search_resume_gacl.py
+--- ERROR OUTPUT ---
+Traceback (most recent call last):
+  File "/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/tdd/verify_search_resume_gacl.py", line 3, in <module>
+    from expert_tools import ExpertTools
+ModuleNotFoundError: No module named 'expert_tools'
+
+
+--------------------
+
+🚀 Running: verify_seed_logic.py...
+❌ FAILED: verify_seed_logic.py
+--- ERROR OUTPUT ---
+
+🚀 Running TDD: Seed-Time Flattening Integrity
+  ❌ FAILURE: Corporate Action Report Automation is missing a flattened description pitch.
+  ❌ FAILURE: Settlement Setup Instruction Verification System is missing a flattened description pitch.
+  ❌ FAILURE: Cloud-Native Platform Orchestration & Workflow System is missing a flattened description pitch.
+  ❌ FAILURE: Enterprise Access Control, Search, and Distributed Infrastructure is missing a flattened description pitch.
+  ❌ FAILURE: Executive Workflow Management Platform (Ten Thousand Women) is missing a flattened description pitch.
+  ❌ FAILURE: Capital Attribution & Market Risk Data Platform is missing a flattened description pitch.
+  ❌ FAILURE: Radiology Imaging Platform Integration is missing a flattened description pitch.
+  ❌ FAILURE: Image Management & Distributed Event Processing System is missing a flattened description pitch.
+  ❌ FAILURE: Simulation systems development and evaluation (Macmet) is missing a flattened description pitch.
+\n🛑 TDD FAILED. Detected 9 missing flattening attributes from seed_resume_graph.py.
+
+--------------------
+
+🚀 Running: verify_timeline_range.py...
+✅ PASSED: verify_timeline_range.py
+   └─ 🎊 TDD SUCCESS: Full timeline range is supported!
+
+🚀 Running: verify_ui_domain_grouping.py...
+✅ PASSED: verify_ui_domain_grouping.py
+   └─ 🎊 TDD GREEN: UI Persona Logic is locked to Backend Domains.
+
+🚀 Running: verify_ui_hardening.py...
+❌ FAILED: verify_ui_hardening.py
+--- ERROR OUTPUT ---
+
+FAILURE: Import error - cannot import name 'DOMAIN_REGISTRY' from 'domain_registry' (/Users/sangeethar/workspace/AI-Workspace/cortex-model-project/cortex-model/src/mcp_server/domain_registry.py)
+
+--------------------
+
+====================================================
+🏁 FINAL SUMMARY
+====================================================
+✅ PASS   | verify_career_completeness.py
+✅ PASS   | verify_deterministic_graph_trigger.py
+❌ FAIL   | verify_deterministic_search.py
+✅ PASS   | verify_domain_manifest_contract.py
+❌ FAIL   | verify_domain_silo.py
+✅ PASS   | verify_external_prompts.py
+✅ PASS   | verify_fusion.py
+✅ PASS   | verify_g_acl_enforcement.py
+❌ FAIL   | verify_g_acl_path_masking.py
+❌ FAIL   | verify_hybrid_semantic_routing.py
+❌ FAIL   | verify_hydration_polymorphism.py
+❌ FAIL   | verify_jpmc_dates.py
+❌ FAIL   | verify_label_priority.py
+✅ PASS   | verify_mcp_contract.py
+❌ FAIL   | verify_mcp_label_priority_dynamic.py
+❌ FAIL   | verify_mcp_propagation.py
+❌ FAIL   | verify_narrative_fidelity_and_isolation.py
+❌ FAIL   | verify_progressive_hydration.py
+✅ PASS   | verify_project_date_consistency.py
+❌ FAIL   | verify_search_resume_gacl.py
+❌ FAIL   | verify_seed_logic.py
+✅ PASS   | verify_timeline_range.py
+✅ PASS   | verify_ui_domain_grouping.py
+❌ FAIL   | verify_ui_hardening.py
+----------------------------------------------------
+TOTAL: 10/24 passed
+====================================================

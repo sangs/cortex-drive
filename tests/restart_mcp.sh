@@ -8,6 +8,12 @@ SERVER_SCRIPT="src/mcp_server/cortex_os_mentalmodel_server_sse.py"
 # Ensure logs directory exists
 mkdir -p ./logs
 
+# Load environment variables
+if [ -f .env ]; then
+  echo "Loading environment variables from .env..."
+  set -a; source .env; set +a
+fi
+
 echo "--- 🛠️  RESTARTING MCP BACKEND (SSE) ---"
 
 # 1. Identify and Kill existing process on port

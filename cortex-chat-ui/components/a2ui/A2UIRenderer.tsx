@@ -20,7 +20,7 @@ export default function A2UIRenderer({ message }: { message: A2UIMessage | strin
     // If message is just a string, render as formatted markdown
     if (typeof message === "string") {
         return (
-            <div className="text-slate-300 leading-relaxed text-sm prose prose-invert prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+            <div className="text-indigo-950 leading-relaxed text-base prose prose-slate prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {message}
                 </ReactMarkdown>

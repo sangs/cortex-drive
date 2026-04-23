@@ -4,315 +4,296 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { getThemeForType } from '@/utils/GraphTheme';
 
-interface Node {
-    id: string;
-    name: string;
-    type: string;
-    val?: number;
-    year?: string | null;
-    date?: string | null;
-    description?: string;
-    [key: string]: any;
-}
-
-interface Link {
-    source: string;
-    target: string;
-    type?: string;
-    [key: string]: any;
-}
+const BACKBONE_LANDMARKS = [
+    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership', 
+    'Institution', 'Degree', 'ProfessionalExperience', 'Certification', 'Podcast', 'Publication', 'Project', 'Role', 'Year', 'Person'
+];
 
 interface EnterpriseGraphProps {
-    data: {
-        nodes: Node[];
-        links: Link[];
-    };
-    onNodeClick?: (node: Node) => void;
-    onNodeDoubleClick?: (node: Node) => void;
+    data: { nodes: any[], links: any[] };
+    onNodeClick?: (node: any) => void;
+    onNodeDoubleClick?: (node: any) => void;
     onTimelineChange?: (year: string) => void;
+    viewMode?: 'brain' | 'spine';
     focusYear?: string | null;
     selectedNodeId?: string | null;
 }
 
 const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({ 
-    data, 
-    onNodeClick, 
-    onNodeDoubleClick,
-    onTimelineChange,
-    focusYear,
-    selectedNodeId 
+    data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId 
 }) => {
     const chartRef = useRef<any>(null);
+    const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map()); 
+    const pinnedRef = useRef<Map<string, {x: number, y: number}>>(new Map());
 
-    // 1. Prepare Timeline Data (Professional career range 1997-2026)
-    const timelineData = useMemo(() => {
-        const years = new Set<string>();
-        // Add core range years for professional navigation (1997-2026)
-        for (let y = 1997; y <= 2026; y++) {
-            years.add(y.toString());
+    // 1. Initial Processing: Inject Temporal Spine & Year Anchors
+    const processed = useMemo(() => {
+        const nodes = [...data.nodes];
+        const links = [...data.links];
+
+        if (viewMode === 'spine') {
+            // Generate limited spine backbone based on focusYear (3-year sliding window)
+            const centerYear = focusYear ? parseInt(focusYear) : 2026;
+            for (let y = centerYear - 3; y <= centerYear + 3; y++) {
+                if (y < 1997 || y > 2026) continue;
+                const yStr = y.toString();
+                if (!nodes.some(n => n.type === 'Year' && n.name === yStr)) {
+                    nodes.push({ id: `year-${yStr}`, name: yStr, type: 'Year', isBackbone: true });
+                }
+            }
+            const years = nodes.filter(n => n.type === 'Year').sort((a,b) => parseInt(a.name) - parseInt(b.name));
+            for (let i = 0; i < years.length - 1; i++) {
+                links.push({ source: years[i].id, target: years[i+1].id, type: 'TEMPORAL_SPINE' });
+            }
+            // Add Year Anchors based on node properties
+            // 1. Direct Anchors based on node properties
+            nodes.forEach(n => {
+                const nodeYear = n.year || (n.display_date ? String(n.display_date).match(/\d{4}/)?.[0] : null);
+                if (nodeYear && n.type !== 'Year') {
+                    const yNodeId = `year-${nodeYear}`;
+                    if (!links.some(l => (l.source === yNodeId && l.target === n.id) || (l.source === n.id && l.target === yNodeId))) {
+                        links.push({ source: yNodeId, target: n.id, type: 'YEAR_ANCHOR' });
+                    }
+                }
+            });
+
+            // 2. Transitive Anchors: Startups/Companies linked to Roles that are linked to Years
+            const newAnchors: any[] = [];
+            links.forEach(l => {
+                const source = nodes.find(n => n.id === l.source);
+                const target = nodes.find(n => n.id === l.target);
+                if (!source || !target) return;
+
+                // Transitive Anchor Resolution: 
+                // If a Year is linked to a Role, find what that Role is attached to.
+                const findRel = (p: any, c: any) => {
+                    if (p.type === 'Year' && c.type === 'Role') {
+                        links.forEach(l2 => {
+                            if (l2.source === c.id || l2.target === c.id) {
+                                const peerId = l2.source === c.id ? l2.target : l2.source;
+                                const peer = nodes.find(n => n.id === peerId);
+                                if (peer && ['Startup', 'Company', 'Institution', 'Category', 'Hackathon'].includes(peer.type)) {
+                                    if (!links.some(lx => (lx.source === p.id && lx.target === peer.id) || (lx.source === peer.id && lx.target === p.id))) {
+                                        newAnchors.push({ source: p.id, target: peer.id, type: 'YEAR_ANCHOR' });
+                                    }
+                                }
+                            }
+                        });
+                    }
+                };
+                findRel(source, target);
+                findRel(target, source);
+            });
+            links.push(...newAnchors);
         }
-        // Add any other years from nodes (e.g. earlier education or specific milestones)
-        data.nodes.forEach(n => {
-            if (n.year) years.add(n.year);
-        });
-        return Array.from(years).sort();
-    }, [data.nodes]);
+        return { nodes, links };
+    }, [data, viewMode]);
 
-    // 2. Discover neighbors for persistent highlighting
-    const highlightIds = useMemo(() => {
-        if (!selectedNodeId) return null;
-        const ids = new Set<string>([selectedNodeId]);
-        data.links.forEach(l => {
-            if (l.source === selectedNodeId) ids.add(l.target);
-            if (l.target === selectedNodeId) ids.add(l.source);
+    // 2. Relational Discovery: Build set of IDs linked to focusYear
+    const relevantIds = useMemo(() => {
+        if (viewMode !== 'spine' || !focusYear) return new Set<string>();
+        const yearId = `year-${focusYear}`;
+        const ids = new Set<string>();
+        processed.links.forEach(l => {
+            if (l.source === yearId) ids.add(l.target);
+            if (l.target === yearId) ids.add(l.source);
         });
         return ids;
-    }, [selectedNodeId, data.links]);
+    }, [processed.links, focusYear, viewMode]);
 
-    // 3. Build ECharts Options
-    const getOption = () => {
-        const baseOption = {
-            backgroundColor: 'transparent',
-            timeline: {
-                axisType: 'category',
-                data: timelineData,
-                autoPlay: false,
-                playInterval: 3000,
-                bottom: 20,
-                left: 'center',
-                width: '60%',
-                label: {
-                    color: '#94a3b8',
-                    fontSize: 10,
-                    formatter: (value: string) => value
-                },
-                lineStyle: { color: '#334155' },
-                checkpointStyle: {
-                    color: '#6366f1',
-                    borderColor: '#818cf8',
-                    borderWidth: 2
-                },
-                controlStyle: {
-                    showNextBtn: true,
-                    showPrevBtn: true,
-                    itemColor: '#94a3b8',
-                    itemHoverColor: '#6366f1'
-                }
+    // 3. Filter nodes based on viewMode context + Relational relevance
+    const visibleNodes = useMemo(() => processed.nodes.filter(n => {
+        // Sticky Selection: The currently selected node must ALWAYS remain visible
+        if (selectedNodeId && n.id === selectedNodeId) return true;
+        
+        if (viewMode === 'spine') {
+            // Show all years, person, and anything linked to the FOCUS year
+            return n.isBackbone || n.type === 'Year' || n.type === 'Person' || relevantIds.has(n.id);
+        }
+        return true;
+    }), [processed.nodes, viewMode, relevantIds, selectedNodeId]);
+
+    const getOption = () => ({
+        backgroundColor: 'transparent',
+        grid: { top: '10%', bottom: '15%', left: '10%', right: '10%', containLabel: true },
+        xAxis: { show: false, min: -2000, max: 2000, type: 'value' },
+        yAxis: { show: false, min: -500, max: 500, type: 'value' },
+        series: [{
+            type: 'graph',
+            coordinateSystem: viewMode === 'spine' ? 'cartesian2d' : undefined,
+            layout: viewMode === 'spine' ? 'none' : 'force',
+            force: {
+                repulsion: 1500,
+                gravity: 0.1,
+                edgeLength: 150,
+                layoutAnimation: true,
+                friction: 0.8
             },
-            tooltip: {
-                show: true,
-                trigger: 'item',
-                backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                borderColor: 'rgba(255, 255, 255, 0.2)',
-                borderWidth: 1,
-                padding: [12, 16],
-                textStyle: { 
-                    color: '#f1f5f9',
-                    fontFamily: 'Inter, system-ui, sans-serif'
-                },
-                formatter: (params: any) => {
-                    const node = params.data || {};
-                    const name = node.name || params.name || "Unknown Entity";
-                    const type = node.type || "Context Node";
-                    const yearLabel = node.year ? `(${node.year})` : (node.date ? `(${node.date})` : '');
-                    
-                    return `
-                        <div style="display: flex; flex-direction: column; gap: 4px; min-width: 140px;">
-                            <div style="font-size: 13px; font-weight: 800; color: #fff;">${name}</div>
-                            <div style="font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700;">
-                                ${type} ${yearLabel}
-                            </div>
-                        </div>
-                    `;
+            symbol: (val: any, params: any) => params.data.type === 'Year' ? 'diamond' : 'circle',
+            symbolSize: (val: any, params: any) => {
+                if (viewMode === 'spine') {
+                    if (params.data.name === focusYear) return 100;
+                    return params.data.type === 'Year' ? 40 : 30;
                 }
+                return params.data.isBackbone ? 50 : 30;
             },
-            series: [
-                {
-                    type: 'graph',
-                    layout: 'force',
-                    z: 2,
-                    animation: true,
-                    roam: true,
-                    draggable: true,
-                    selectedMode: 'single', // Native selection
-                    select: {
-                        itemStyle: {
-                            borderWidth: 3,
-                            borderColor: '#818cf8',
-                            shadowBlur: 25,
-                            shadowColor: '#6366f1'
-                        },
-                        label: { show: true }
+            roam: true,
+            draggable: viewMode === 'brain',
+            selectedMode: 'single', 
+            focusNodeAdjacency: true, 
+            label: { show: true, position: 'right', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.7)', borderRadius: 4, padding: [2,4] },
+            edgeSymbol: ['none', 'none'],
+            data: visibleNodes.map(node => {
+                const theme = getThemeForType(node.type);
+                let pos: any = {};
+                // Apply pinned positions in Brain mode
+                if (viewMode === 'brain' && pinnedRef.current.has(node.id)) {
+                    const pinned = pinnedRef.current.get(node.id)!;
+                    pos = { x: pinned.x, y: pinned.y, fixed: true };
+                }
+
+                if (viewMode === 'spine') {
+                    if (node.type === 'Person') pos = { value: [-800, 0] };
+                    else if (node.type === 'Year') {
+                        const diff = parseInt(node.name) - (focusYear ? parseInt(focusYear) : 2024);
+                        pos = { value: [diff * 350, (node.name === focusYear) ? 0 : -250] };
+                    } else if (relevantIds.has(node.id)) {
+                        const count = Array.from(relevantIds).indexOf(node.id);
+                        const angle = (count / relevantIds.size) * 2 * Math.PI;
+                        pos = { value: [(relevantIds.size > 5 ? 300 : 150) * Math.cos(angle), (relevantIds.size > 5 ? 300 : 150) * Math.sin(angle) + 150] };
+                    }
+                }
+
+                // Global Boundary Guard (Pitch Stability - ensuring nodes don't drift off-screen)
+                if (pos.value) {
+                    pos.value[0] = Math.max(-1800, Math.min(1800, pos.value[0]));
+                    pos.value[1] = Math.max(-500, Math.min(500, pos.value[1]));
+                }
+                if (pos.x !== undefined) {
+                    pos.x = Math.max(-1800, Math.min(1800, pos.x));
+                    pos.y = Math.max(-500, Math.min(500, pos.y));
+                }
+                return { 
+                    ...node, ...pos, 
+                    itemStyle: { 
+                        color: theme.hsl, 
+                        shadowBlur: (node.isBentoEligible || node.hasFederatedBridge || node.name === focusYear) ? 30 : 5, 
+                        shadowColor: (node.isBentoEligible || node.hasFederatedBridge) ? '#FFD700' : theme.hsl, // System Gold Pulse for Federated Bridges
+                        borderWidth: 2, borderColor: '#fff'
                     },
-                    blur: {
-                        itemStyle: { opacity: 0.1 },
-                        lineStyle: { opacity: 0.05 }
-                    },
-                    force: {
-                        repulsion: 200,
-                        edgeLength: 120,
-                        gravity: 0.1,
-                        edgeWeight: 1
-                    },
-                    symbolSize: (value: number, params: any) => {
-                        const theme = getThemeForType(params.data.type);
-                        return theme.radius * 2 || 12;
-                    },
+                    // Expandable Badge: Render a "+" sign for nodes with hidden topology
                     label: {
-                        show: false,
+                        show: true,
+                        formatter: (params: any) => {
+                            const baseLabel = params.data.name || params.data.title || params.data.topic || params.data.role || String(params.data.id || '');
+                            return params.data.isExpandable ? `+ ${baseLabel}` : baseLabel;
+                        },
                         position: 'right',
-                        formatter: '{b}',
-                        color: '#cbd5e1'
-                    },
-                    emphasis: {
-                        focus: 'adjacency',
-                        label: { show: true },
-                        itemStyle: {
-                            shadowBlur: 20,
-                            shadowColor: '#6366f1'
-                        }
-                    },
-                    lineStyle: {
-                        color: 'rgba(255, 255, 255, 0.2)',
-                        width: 1,
-                        curveness: 0.1
-                    },
-                    data: [],
-                    links: []
+                        fontWeight: 'bold',
+                        backgroundColor: 'rgba(255,255,255,0.7)',
+                        borderRadius: 4,
+                        padding: [2, 4]
+                    }
+                };
+            }),
+            links: processed.links.filter(l => visibleNodes.some(n => n.id === l.source) && visibleNodes.some(n => n.id === l.target)).map(l => ({
+                ...l,
+                label: {
+                    show: false, // Default to hidden for Executive Clarity
+                    formatter: (p: any) => p.data.link_label || p.data.discovery_reason || p.data.title || p.data.role || '',
+                    fontSize: 10,
+                    fontWeight: 'bold',
+                    color: '#6366f1'
+                },
+                emphasis: {
+                    label: { show: true }, // Reveal on hover/click
+                    lineStyle: { width: 6, opacity: 1 }
+                },
+                lineStyle: { 
+                    color: (l.isVirtual || l.hasFederatedBridge) ? '#FFD700' : (l.type === 'TEMPORAL_SPINE' ? '#6366f1' : '#edeff2'), 
+                    width: l.type === 'TEMPORAL_SPINE' ? 4 : ((l.isVirtual || l.hasFederatedBridge) ? 3 : 2),
+                    type: (l.isVirtual || l.hasFederatedBridge) ? 'dashed' : 'solid',
+                    opacity: 0.8,
+                    curveness: (viewMode === 'spine' && l.type !== 'TEMPORAL_SPINE') ? 0.3 : 0 
                 }
-            ]
+            }))
+        }]
+    });
+
+    useEffect(() => {
+        if (!chartRef.current) return;
+        const e = chartRef.current.getEchartsInstance();
+        
+        // Handle Mouseup for Pinning: High-Fidelity Capture from Model
+        const handleMouseUp = (params: any) => {
+            if (params.dataType === 'node' && viewMode === 'brain') {
+                // ECharts force layout updates the model internally.
+                // We use getItemLayout to get the actual projected coordinates.
+                const seriesModel = e.getModel().getSeriesByIndex(0);
+                const data = seriesModel.getData();
+                const layout = data.getItemLayout(params.dataIndex);
+                
+                if (layout && !isNaN(layout[0]) && !isNaN(layout[1])) {
+                    const newPositions = new Map(pinnedRef.current);
+                    // Standardize to ECharts coordinate format [x, y]
+                    newPositions.set(params.data.id, { x: layout[0], y: layout[1] });
+                    pinnedRef.current = newPositions;
+                    
+                    // Trigger re-render to apply the 'fixed' state in the next getOption mapping
+                    setPinnedPositions(new Map(newPositions) as any);
+                }
+            }
         };
 
-        const options = timelineData.map(year => {
-            const numericYear = parseInt(year);
-            const filteredNodes = data.nodes.filter(n => {
-                if (n.startYear && n.endYear) {
-                    const startY = parseInt(n.startYear);
-                    const endY = n.endYear.toLowerCase() === 'present' ? 2026 : parseInt(n.endYear);
-                    return numericYear >= startY && numericYear <= endY;
-                }
-                return !n.year || n.year === year;
-            });
-            const nodeIds = new Set(filteredNodes.map(n => n.id));
-            const filteredLinks = data.links.filter(l => 
-                nodeIds.has(l.source) && nodeIds.has(l.target)
-            );
+        e.on('mouseup', handleMouseUp);
 
-            return {
-                series: [{
-                    data: filteredNodes.map(n => {
-                        const theme = getThemeForType(n.type);
-                        return {
-                            ...n,
-                            itemStyle: {
-                                color: theme.hsl,
-                                shadowBlur: 10,
-                                shadowColor: theme.hsl.replace('hsl', 'hsla').replace(')', ', 0.3)')
-                            }
-                        };
-                    }),
-                    links: filteredLinks.map(l => ({
-                        source: l.source,
-                        target: l.target
-                    }))
-                }]
-            };
-        });
-
-        return { baseOption, options };
-    };
-
-    // 4. Events handler (Debounced to separate Bento single-click from Expansion double-click)
-    const clickTimer = useRef<NodeJS.Timeout | null>(null);
-
-    const onEvents = {
-        'click': (params: any) => {
-            if (params.dataType === 'node' && onNodeClick) {
-                // Clear any existing timer (prevents multiple triggers)
-                if (clickTimer.current) clearTimeout(clickTimer.current);
-                
-                // Set a timer for single click (Bento activation)
-                clickTimer.current = setTimeout(() => {
-                    onNodeClick(params.data);
-                    clickTimer.current = null;
-                }, 250); // 250ms debounce window
-            }
-        },
-        'dblclick': (params: any) => {
-            if (params.dataType === 'node' && onNodeDoubleClick) {
-                // Immediately cancel the pending single-click (Bento)
-                if (clickTimer.current) {
-                    clearTimeout(clickTimer.current);
-                    clickTimer.current = null;
-                }
-                
-                // Trigger the high-fidelity expansion (Level 2 Bloom)
-                onNodeDoubleClick(params.data);
-            }
-        },
-        'timelinechanged': (params: any) => {
-            if (onTimelineChange) {
-                const year = timelineData[params.currentIndex];
-                onTimelineChange(year);
-            }
-        }
-    };
-
-    // 5. Native Selection Management
-    useEffect(() => {
-        if (!chartRef.current || !data?.nodes?.length) return;
-        const echartsInstance = chartRef.current.getEchartsInstance();
-
+        // Handle Selection Persistence
         try {
-            if (selectedNodeId) {
-                // Native dispatch for persistent focus
-                echartsInstance.dispatchAction({
-                    type: 'select',
-                    name: selectedNodeId
-                });
+            if (selectedNodeId && visibleNodes.some(n => n.id === selectedNodeId)) {
+                e.dispatchAction({ type: 'select', name: selectedNodeId });
             } else {
-                echartsInstance.dispatchAction({
-                    type: 'unselect',
-                    seriesIndex: 0
-                });
+                e.dispatchAction({ type: 'unselect', seriesIndex: 0 });
             }
-        } catch (e) {
-            console.warn("ECharts selection dispatch skipped (graph initializing):", e);
-        }
-    }, [selectedNodeId, data.nodes]);
+        } catch (err) {}
 
-    // 6. Handle External Timeline Sync (Auto-Shift)
-    useEffect(() => {
-        if (focusYear && timelineData.includes(focusYear) && chartRef.current) {
-            const index = timelineData.indexOf(focusYear);
-            const echartsInstance = chartRef.current.getEchartsInstance();
-            
-            const currentOption = echartsInstance.getOption();
-            // Safety check for timeline property to prevent TypeError
-            if (currentOption && currentOption.timeline && Array.isArray(currentOption.timeline) && currentOption.timeline[0]) {
-                const currentIndex = currentOption.timeline[0].currentIndex;
-                
-                if (currentIndex !== index) {
-                    echartsInstance.dispatchAction({
-                        type: 'timelineChange',
-                        currentIndex: index
-                    });
-                }
+        return () => {
+            if (e && !e.isDisposed()) {
+                e.off('mouseup', handleMouseUp);
             }
-        }
-    }, [focusYear, timelineData]);
+        };
+    }, [selectedNodeId, visibleNodes, viewMode]);
 
     return (
         <div className="w-full h-full relative">
-            <ReactECharts
-                ref={chartRef}
-                option={getOption()}
-                onEvents={onEvents}
+            <ReactECharts 
+                ref={chartRef} 
+                option={getOption()} 
                 style={{ height: '100%', width: '100%' }}
-                className="echarts-graph"
-                notMerge={false} // Preserve instance to avoid re-renders killing focus
+                onEvents={{
+                    'click': (p: any) => { if (p.dataType === 'node' && onNodeClick) onNodeClick(p.data); },
+                    'dblclick': (p: any) => { if (p.dataType === 'node' && onNodeDoubleClick) onNodeDoubleClick(p.data); }
+                }}
+                notMerge={false}
                 lazyUpdate={true}
             />
+            {viewMode === 'spine' && (
+                <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-30 w-[85%] max-w-[1000px]">
+                    <div className="relative flex items-center justify-between p-5 bg-white/60 backdrop-blur-3xl border border-white/40 rounded-[32px] shadow-2xl">
+                        <div className="relative z-10 flex items-center gap-2 pr-6 border-r border-slate-200/50 text-primary font-black text-[11px] tracking-widest uppercase">
+                            <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-lg ring-2 ring-white" />
+                            The Spine
+                        </div>
+                        <div className="flex-1 flex justify-around px-6 overflow-x-auto no-scrollbar gap-6 relative z-10">
+                            {Array.from({length:30},(_,i)=>(1997+i).toString()).map(y=>(
+                                <button key={y} onClick={()=>{if(onTimelineChange)onTimelineChange(y)}} className={`relative flex flex-col items-center group transition-all duration-300 ${focusYear===y?'scale-110':''}`}>
+                                    <div className={`w-3 h-3 rotate-45 border-2 transition-all ${focusYear===y?'bg-primary border-primary shadow-[0_0_15px_rgba(79,70,229,0.5)]':'bg-white border-slate-300 group-hover:border-primary'}`} />
+                                    <span className={`text-[10px] font-black mt-2 transition-colors ${focusYear===y?'text-primary':'text-slate-400 group-hover:text-slate-600'}`}>{y}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

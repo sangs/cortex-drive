@@ -41,63 +41,65 @@ class ExpertTools:
         """
 
     def _fragment_taxonomy_expansion(self) -> str:
-        return f"""
+        query = """
         // Step 0: Taxonomy Expansion (Identify Anchor Topics from keywords)
         OPTIONAL MATCH (anchor)
         WHERE any(label IN labels(anchor) WHERE label IN $anchorLabels)
           AND any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
-          AND ({self._get_security_clause("anchor")})
+          AND ({sec_anchor})
         
         // Find children/related entities AND their parent Episodes - Relaxed traversal
         OPTIONAL MATCH (anchor)-[*0..2]-(expandedNode)
-        WHERE ({self._get_security_clause("expandedNode")})
+        WHERE ({sec_expanded})
           AND NOT expandedNode:ReferenceLink
         
         OPTIONAL MATCH (expandedNode)<-[:CONTAINS|HAS_SOURCE|MENTIONS*1..3]-(parentEpisode:Episode)
-        WHERE ({self._get_security_clause("parentEpisode")})
+        WHERE ({sec_parent})
         
         WITH collect(DISTINCT elementId(anchor)) + collect(DISTINCT elementId(expandedNode)) + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
         """
+        return query.replace("{sec_anchor}", self._get_security_clause("anchor")).replace("{sec_expanded}", self._get_security_clause("expandedNode")).replace("{sec_parent}", self._get_security_clause("parentEpisode"))
 
     def _fragment_neighbor_aggregation(self) -> str:
+        from domain_registry import get_bridge_label_string
+        bridge_labels = get_bridge_label_string()
         whitelist = '["HELD_ROLE", "AT", "CONTRIBUTED_TO", "PARTICIPATED_IN", "EARNED_DEGREE", "FROM_INSTITUTION", "HAS_SKILL", "CONTAINS", "HAS_REFERENCE", "BUILT_DURING", "FEATURE_GUEST", "SIMILAR", "IS_SIMILAR", "HAS_TOPIC", "DISCUSSES", "COVERS_TECHNOLOGY", "DISCUSSES_CONCEPT", "PUBLISHED_BY", "AUTHORED", "CO_AUTHORED", "LEAD_BY", "MENTIONS", "COVERS"]'
-        return f"""
-        // 1. Neighbors & Relationships
+        
+        query = """
         OPTIONAL MATCH (node)-[r]-(neighbor)
         WHERE neighbor IS NOT NULL 
           AND type(r) IN {whitelist}
-          AND ({self._get_security_clause("neighbor")})
-          AND NOT neighbor:Chunk AND NOT neighbor:Source AND NOT neighbor:Podcast AND NOT neighbor:__MetaContext__
-          AND NOT neighbor:ReferenceLink AND NOT neighbor:PreparatoryNote
+          AND ({security_clause})
+          AND NOT neighbor:{bridge_labels}
+          
+        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
         
         WITH node, expanded_ids, 
-             collect(DISTINCT {{
+             collect(DISTINCT neighbor) AS neighbors,
+             collect(DISTINCT r) AS rels,
+             collect(DISTINCT {
                 id: elementId(neighbor),
                 name: neighbor.name,
                 type: labels(neighbor)[0],
                 relationship: type(r),
-                link_label: coalesce(r.role, r.title, neighbor.name)
-             }}) AS relationships,
-             collect(DISTINCT (CASE WHEN exists(r.start) OR exists(r.end) OR exists(r.date) THEN {{rel_start: r.start, rel_end: r.end, rel_date: r.date}} ELSE null END)) AS relDates
+                target_id: elementId(neighbor)
+             }) AS relationships,
+             collect(DISTINCT tech.name) AS technologies,
+             collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date} ELSE null END)) AS relDates
         """
+        return query.replace("{whitelist}", whitelist).replace("{security_clause}", self._get_security_clause("neighbor")).replace("{bridge_labels}", bridge_labels)
 
     def _fragment_narrative_aggregation(self) -> str:
-        return f"""
-        // 2. References & Private Notes
-        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
-        WITH node, expanded_ids, relationships, relDates, 
-             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS fused_links
+        query = """
+        // 2. Narrative Enrichment (Notes & Transcripts)
+        OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
+        WHERE ({sec_note})
         
-        OPTIONAL MATCH (node)-[:HAS_PRIVATE_NOTE|CONTAINS*1..2]-(note:PreparatoryNote)
-        WHERE ({self._get_security_clause("note")})
-        WITH node, expanded_ids, relationships, relDates, fused_links,
-             collect(DISTINCT note.text) AS narratives
-
-        OPTIONAL MATCH (node)-[:USES_TOOL|DISCUSSES|SIMILAR*1..2]-(tech:Technology)
-        WHERE ({self._get_security_clause("tech")})
-        WITH node, expanded_ids, relationships, relDates, fused_links, narratives,
-             collect(DISTINCT tech.name) AS technologies
+        WITH node, expanded_ids, neighbors, rels, relationships, technologies, relDates,
+             collect(DISTINCT note.text) AS narratives,
+             apoc.coll.toSet(coalesce(node.links, []) + [node.url, node.link]) AS fused_links
         """
+        return query.replace("{sec_note}", self._get_security_clause("note"))
 
     def _fragment_ranking_and_return(self) -> str:
         return """
@@ -181,7 +183,7 @@ class ExpertTools:
                 relationships: [rel IN relationships WHERE rel.name <> "Unknown"], 
                 technologies: [t IN technologies WHERE t IS NOT NULL], 
                 links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
-                text: apoc.text.join(narratives, "\\n\\n"),
+                text: apoc.text.join(narratives, "\n---\n"),
                 start_time: node.startTime,
                 end_time: node.endTime,
                 aired_date: node.aired_date
@@ -1091,10 +1093,14 @@ class ExpertTools:
         temporal_keywords = ["currently", "working", "now", "present", "active", "recent", "recently", "latest"]
         has_temporal_intent = any(tk in keyword.lower() for tk in temporal_keywords)
 
+        from domain_registry import get_discovery_label_string, get_visual_deny_list
+        discovery_labels = get_discovery_label_string()
+        visual_deny_list = get_visual_deny_list()
+
         query = f"""
         {self._fragment_taxonomy_expansion()}
              
-        MATCH (node:Project|Role|Company|Person|Hackathon|ThoughtLeadership|Publication|Institution|Podcast|Episode|Topic|Certification|Category)
+        MATCH (node:{discovery_labels})
         WHERE ({self._get_security_clause("node")})
           AND (
                 elementId(node) IN expanded_ids
@@ -1106,7 +1112,58 @@ class ExpertTools:
         
         {self._fragment_neighbor_aggregation()}
         {self._fragment_narrative_aggregation()}
-        {self._fragment_ranking_and_return()}
+        
+        WITH collect(DISTINCT node) AS matchedNodes,
+             apoc.coll.flatten(collect(DISTINCT neighbors)) AS allNeighbors,
+             apoc.coll.flatten(collect(DISTINCT rels)) AS allRels,
+             apoc.coll.flatten(collect(DISTINCT narratives)) AS allNarratives
+             
+        WITH apoc.coll.toSet(matchedNodes + [n IN allNeighbors WHERE n IS NOT NULL]) AS allNodes,
+             [r IN allRels WHERE r IS NOT NULL] AS allRels
+             
+        UNWIND allNodes AS node
+        
+        // Final enrichment of each node for the UI
+        OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
+        OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
+        OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
+        WHERE ({self._get_security_clause("note")})
+
+        WITH node, allNodes, allRels,
+             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
+             collect(DISTINCT tech.name) AS cluster_tech_urls,
+             collect(DISTINCT note.text) AS notes
+
+        WITH allNodes, allRels,
+             collect(DISTINCT {{
+                id: elementId(node),
+                name: node.name,
+                type: CASE 
+                    WHEN 'Category' IN labels(node) THEN 'Category'
+                    WHEN 'Role' IN labels(node) THEN 'Role'
+                    WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Company' IN labels(node) THEN 'Company'
+                    WHEN 'Project' IN labels(node) THEN 'Project'
+                    WHEN 'Episode' IN labels(node) THEN 'Episode'
+                    WHEN 'Technology' IN labels(node) THEN 'Technology'
+                    WHEN 'Topic' IN labels(node) THEN 'Topic'
+                    ELSE labels(node)[0] 
+                END,
+                description: left(coalesce(node.description, node.text, ""), 150),
+                text: apoc.text.join(notes, "\n---\n"),
+                url: node.url,
+                link: node.link,
+                links: [l IN apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) WHERE l IS NOT NULL AND l <> ""],
+                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""]
+             }}) AS uiNodes
+
+        RETURN uiNodes AS nodes,
+               [rel IN allRels WHERE rel IS NOT NULL | {{
+                  source: elementId(startNode(rel)),
+                  target: elementId(endNode(rel)),
+                  type: type(rel)
+               }}] AS links
+        LIMIT 1
         """
         # Phase 3: Hybrid Search Fallback
         embedding = None
@@ -1127,6 +1184,7 @@ class ExpertTools:
                 query, 
                 tenant_id=self.tenant_id,
                 requesting_user_id=requesting_user_id,
+                keyword=keyword,
                 keywords=keywords_list,
                 anchorLabels=anchor_labels,
                 allowed_labels=allowed_labels,
@@ -1156,26 +1214,24 @@ class ExpertTools:
 
             backbone_labels = get_backbone_labels()
             output = []
-            for record in result.records:
-                details = record["details"]
-                # Serialize any Neo4j Date objects or other non-serializable types
-                for k, v in details.items():
-                    if hasattr(v, 'iso_format'):
-                        details[k] = v.iso_format()
-                    elif isinstance(v, list):
-                        details[k] = [i.iso_format() if hasattr(i, 'iso_format') else i for i in v]
-
-                details.pop("embedding", None)
-                details.pop("tenant_id", None)
+            if not result.records:
+                return json.dumps({"nodes": [], "links": []})
                 
-                # Apply Discovery Backbone Guard
-                if is_discovery_request:
-                    node_labels = details.get('labels', [])
-                    # Filter: Only keep Backbone nodes in output if it's a discovery/career query
-                    if any(label in backbone_labels for label in node_labels) or details.get('type') in backbone_labels:
-                        output.append(details)
-                else:
-                    output.append(details)
+            record = result.records[0]
+            nodes = record["nodes"]
+            links = record["links"]
+
+            # Serialize and Clean nodes
+            for node in nodes:
+                for k, v in node.items():
+                    if hasattr(v, 'iso_format'):
+                        node[k] = v.iso_format()
+                    elif isinstance(v, list):
+                        node[k] = [i.iso_format() if hasattr(i, 'iso_format') else i for i in v]
+                node.pop("embedding", None)
+                node.pop("tenant_id", None)
+            
+            output = nodes
 
             # --- ON-DEMAND BRIDGE DISCOVERY (CONTEXTUAL FUSION) ---
             if is_contextual_fusion_on and output:
@@ -1289,7 +1345,7 @@ class ExpertTools:
 
             # 3. Visual Bouncer (Cleanliness & Zero-Trust)
             # We keep the narratives for the LLM, but strip the nodes from the Visual Graph.
-            visual_deny_list = ['PreparatoryNote', 'Chunk', '__MetaContext__']
+            # visual_deny_list is already imported and defined above
             
             clean_output = []
             for node in output:
@@ -1390,15 +1446,18 @@ class ExpertTools:
         if authorized_labels:
             domain_filter = "AND any(label IN labels(m) WHERE label IN $authorized_labels)"
 
+        from domain_registry import get_discovery_label_string, get_bridge_label_string, get_visual_deny_list
+        bridge_labels = get_bridge_label_string()
+
         # Identify the node by name or elementId
-        query = f"""
+        query = """
         MATCH (n)
         WHERE (elementId(n) = $node_name OR toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name)
-          AND ({self._get_security_clause("n")})
+          AND ({sec_n})
         
         OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m)
-        WHERE ({self._get_security_clause("m")})
-          AND ALL(node IN nodes(path) WHERE NOT node:ReferenceLink AND NOT node:Chunk)
+        WHERE ({sec_m})
+          AND ALL(node IN nodes(path) WHERE NOT node:{bridge_labels})
           {backbone_filter}
           {domain_filter}
         
@@ -1411,17 +1470,21 @@ class ExpertTools:
         OPTIONAL MATCH (node)-[:HAS_REFERENCE]->(ref:ReferenceLink)
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (p:Person)-[roleRel:CURRENTLY_BUILDING|HELD_ROLE|PARTICIPATED_IN|AUTHORED|CO_AUTHORED|CERTIFIED_BY|STUDIED_AT|GRADUATED_FROM|CONTRIBUTED_TO|FEATURE_GUEST|BUILT_DURING]-(node)
-        WHERE ({self._get_security_clause("p")})
+        WHERE ({sec_p})
+
+        OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
+        WHERE ({sec_note})
 
         WITH n, node, rel, roleRel, 
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
-             collect(DISTINCT tech.name) AS cluster_tech_urls
+             collect(DISTINCT tech.name) AS cluster_tech_urls,
+             collect(DISTINCT note.text) AS notes
 
-        WITH n, node, rel, roleRel, cluster_tech_urls,
+        WITH n, node, rel, roleRel, cluster_tech_urls, notes,
              apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links
 
         WITH n,
-             collect(DISTINCT {{
+             collect(DISTINCT {
                 id: elementId(node),
                 name: node.name,
                 type: CASE 
@@ -1433,10 +1496,15 @@ class ExpertTools:
                     WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
                     WHEN 'Certification' IN labels(node) THEN 'Certification'
                     WHEN 'Project' IN labels(node) THEN 'Project'
+                    WHEN 'Episode' IN labels(node) THEN 'Episode'
+                    WHEN 'Technology' IN labels(node) THEN 'Technology'
+                    WHEN 'Topic' IN labels(node) THEN 'Topic'
                     ELSE labels(node)[0] 
                 END,
                 description: left(coalesce(node.description, node.text, ""), 150),
+                text: apoc.text.join(notes, "\n---\n"),
                 url: node.url,
+                link: node.link,
                 links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
                 technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],
                 display_date: coalesce(
@@ -1457,36 +1525,42 @@ class ExpertTools:
                     left(node.published_at, 4),
                     "2026"
                 )
-             }}) AS allNodes, 
+             }) AS allNodes, 
              collect(DISTINCT rel) AS allRels
              
         // Hard node limit for Progressive Discovery
         WITH allNodes[0..50] AS nodes,
              [rel IN allRels WHERE rel IS NOT NULL AND any(n IN allNodes[0..50] WHERE n.id = elementId(startNode(rel))) 
-                            AND any(n IN allNodes[0..50] WHERE n.id = elementId(endNode(rel))) | {{
+                            AND any(n IN allNodes[0..50] WHERE n.id = elementId(endNode(rel))) | {
                 source: elementId(startNode(rel)),
                 target: elementId(endNode(rel)),
                 type: type(rel)
-             }}] AS links,
-             [n IN allNodes[0..10] | {{
+             }] AS links,
+             [n IN allNodes[0..10] | {
                 name: n.name,
                 type: n.type,
                 highlight: left(n.description, 80) + "..."
-             }}] AS snapshot
+             }] AS snapshot
              
         RETURN nodes, links, snapshot
         LIMIT 1
         """
+        query = query.replace("{safe_depth}", str(safe_depth)).replace("{bridge_labels}", bridge_labels).replace("{backbone_filter}", backbone_filter).replace("{domain_filter}", domain_filter)
+        query = query.replace("{sec_n}", self._get_security_clause("n")).replace("{sec_m}", self._get_security_clause("m")).replace("{sec_p}", self._get_security_clause("p")).replace("{sec_note}", self._get_security_clause("note"))
         try:
             from domain_registry import get_backbone_labels
             backbone_labels_list = get_backbone_labels(domain)
             result = self.driver.execute_query(
                 query, 
-                tenant_id=self.tenant_id, 
+                tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id,
                 node_name=node_name,
-                authorized_labels=authorized_labels,
                 backbone_labels_list=backbone_labels_list,
+                authorized_labels=authorized_labels,
+                keyword="",
+                keywords=[],
+                anchorLabels=[],
+                embedding=None,
                 owner_id=os.environ.get("OWNER_USER_ID")
             )
             if not result.records:

@@ -11,7 +11,11 @@ const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_sea
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const cors = require('cors');
 const OpenAI = require('openai');
+const NodeCache = require('node-cache');
 require('dotenv').config();
+
+// Initialize Semantic Cache (24h default TTL, check every 1h)
+const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
 
 // Ensure fetch is available globally (for orchestration)
 if (!global.fetch) {
@@ -21,19 +25,78 @@ if (!global.fetch) {
 const app = express();
 app.use(express.json()); // Handle JSON bodies for /query
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 4000;
 const mcpServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:8080';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+const crypto = require('crypto');
+
+/**
+ * Stateless Guest Share Token Utilities
+ * Uses HMAC-SHA256 for tamper-proof node sharing.
+ */
+const SHARE_SECRET = process.env.GATEWAY_SHARE_SECRET || 'cortex_default_fallback_secret_2026';
+
+const signShareToken = (tenantId, nodeId, expiresDays = 30) => {
+    const expiresAt = Date.now() + (expiresDays * 24 * 60 * 60 * 1000);
+    const payload = `${tenantId}:${nodeId}:${expiresAt}`;
+    const signature = crypto.createHmac('sha256', SHARE_SECRET).update(payload).digest('hex');
+    return Buffer.from(`${payload}:${signature}`).toString('base64');
+};
+
+const verifyShareToken = (token) => {
+    try {
+        const decoded = Buffer.from(token, 'base64').toString('utf-8');
+        const [tenantId, nodeId, expiresAt, signature] = decoded.split(':');
+        
+        if (Date.now() > parseInt(expiresAt)) return null;
+        
+        const expectedPayload = `${tenantId}:${nodeId}:${expiresAt}`;
+        const expectedSignature = crypto.createHmac('sha256', SHARE_SECRET).update(expectedPayload).digest('hex');
+        
+        if (signature !== expectedSignature) return null;
+        
+        return { tenantId, nodeId };
+    } catch (e) {
+        return null;
+    }
+};
 
 app.use(cors());
+
+/**
+ * Interceptor for Stateless Guest Share Tokens
+ */
+const guestTokenMiddleware = (req, res, next) => {
+    const token = req.query.share || req.headers['x-share-token'];
+    
+    if (token) {
+        const verified = verifyShareToken(token);
+        if (verified) {
+            console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
+            req.headers['x-tenant-id'] = verified.tenantId;
+            req.headers['x-user-id'] = 'guest-auth'; 
+            req.headers['x-guest-share-anchor'] = verified.nodeId;
+            return next();
+        } else {
+            console.warn(`[GUEST-AUTH] Expired or Invalid Share Token attempt.`);
+        }
+    }
+    next();
+};
 
 // Health check
 app.get('/health', (req, res) => res.send({ status: 'ok' }));
 
 // Auth Middleware
 const authMiddleware = async (req, res, next) => {
+    // 0. Guest Share Token Bypass (Signature-validated by guestTokenMiddleware)
+    if (req.headers['x-user-id'] === 'guest-auth') {
+        console.log(`[AUTH] Bypassing Clerk for guest-auth (Anchor: ${req.headers['x-guest-share-anchor']})`);
+        return next();
+    }
+
     const authHeader = req.headers.authorization;
     const apiKey = req.headers['x-api-key'];
 
@@ -86,9 +149,29 @@ const authMiddleware = async (req, res, next) => {
     return res.status(401).send({ error: 'Unauthorized: Authentication required (JWT or API Key)' });
 };
 
+/**
+ * Endpoints
+ */
+app.get('/api/share', authMiddleware, (req, res) => {
+    const { nodeId } = req.query;
+    const tenantId = req.headers['x-tenant-id'];
+    
+    if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
+    
+    const token = signShareToken(tenantId, nodeId);
+    const shareUrl = `${req.protocol}://${req.get('host')}/discovery?share=${token}`;
+    
+    res.send({ 
+        token, 
+        shareUrl,
+        expiresIn: '30 days',
+        note: "This URL grants stateless 'read-only' access to the specified graph island."
+    });
+});
+
 // --- LLM Orchestration Section ---
 
-async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false) {
+async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
     
     const toolCallId = Math.floor(Math.random() * 1000000);
@@ -98,7 +181,8 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
         headers: { 
             "x-tenant-id": tenantId, 
             "x-user-id": userId,
-            "x-schema-readable": schemaReadable ? "true" : "false"
+            "x-schema-readable": schemaReadable ? "true" : "false",
+            "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || ''
         }
     });
 
@@ -124,7 +208,8 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
                     'Content-Type': 'application/json', 
                     'x-tenant-id': tenantId, 
                     'x-user-id': userId,
-                    'x-schema-readable': schemaReadable ? "true" : "false"
+                    'x-schema-readable': schemaReadable ? "true" : "false",
+                    'x-guest-share-anchor': reqHeaders['x-guest-share-anchor'] || ''
                 },
                 body: JSON.stringify(body)
             });
@@ -196,6 +281,17 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
                             return; 
                         } catch (e) {
                             console.error("[GATEWAY] Error parsing tool result JSON:", e.message);
+                            // If we fail to parse, it might be a raw string error. 
+                            // Wrap it so the UI doesn't crash on SyntaxError.
+                            clearTimeout(timeout);
+                            resolve({
+                                jsonrpc: "2.0",
+                                id: toolCallId,
+                                result: {
+                                    content: [{ type: "text", text: JSON.stringify({ error: `Backend returned invalid JSON: ${jsonStr.substring(0, 100)}...` }) }]
+                                }
+                            });
+                            return;
                         }
                     }
                 }
@@ -400,13 +496,14 @@ const mcpToolsDefinitions = [
     {
         type: "function",
         function: {
-            name: "search_resume_graph",
-            description: "Search for entities across Sangeetha's professional history, including enterprise data infrastructure, software architecture, startups, hackathons, certifications, companies, projects, or publications.",
+            name: "search_enterprise_graph",
+            description: "Search for entities across the Universal Enterprise Graph, explicitly crossing boundaries between domains (Podcast/Resume/Federated). Use this for broad technical discovery or background checks.",
             parameters: {
                 type: "object",
                 properties: {
-                    keyword: { type: "string", description: "The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon')." },
-                    wants_visual_map: { type: "boolean", description: "Set to true if the user asks for a map, graph, overview, or visual landscape of their career." }
+                    keyword: { type: "string", description: "The search term to find across the graph (e.g., 'startup', 'Iceberg', 'Kafka')." },
+                    domain_intent: { type: "string", enum: ["all", "professional", "podcast", "federated"], default: "all", description: "The domain sandbox to search within." },
+                    wants_visual_map: { type: "boolean", description: "Set to true if the user asks for a map, graph, overview, or visual landscape." }
                 },
                 required: ["keyword"]
             }
@@ -485,166 +582,269 @@ const securityMiddleware = (req, res, next) => {
     next();
 };
 
-app.post('/query', authMiddleware, securityMiddleware, async (req, res) => {
-    const { question, history = [] } = req.body;
+/**
+ * SSE Endpoint for the Frontend
+ * This is the "Brain" of the system.
+ */
+app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
+    const { query } = req.query;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
-    console.log(`[QUERY] Processing question from User ${userId} for Tenant: ${tenantId}`);
 
-    if (!question) {
-        return res.status(400).send({ error: "Missing 'question' in request body" });
-    }
+    if (!query) return res.status(400).send({ error: "Missing 'query' parameter" });
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const sendEvent = (type, data) => {
+        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+    };
+
+    let isAborted = false;
+    req.on('close', () => {
+        console.log(`[SSE] Client disconnected. Aborting orchestration...`);
+        isAborted = true;
+    });
 
     try {
-        // Prepare current context messages
+        console.log(`[SSE] Starting orchestration for: ${query}`);
+        
         const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
-
-        let currentMessages = [
+        let messages = [
             { role: "system", content: systemPrompt },
-            ...history.map(m => {
-                const msg = { role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) };
-                if (m.tool_calls) msg.tool_calls = m.tool_calls;
-                if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
-                if (m.name) msg.name = m.name;
-                return msg;
-            }),
-            { role: "user", content: question }
+            { role: "user", content: query }
         ];
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
-        let aggregatedResults = [];
-        let toolUsed = null;
+        let graphNodes = [];
+        let graphLinks = [];
 
-        while (loopCount < MAX_LOOPS) {
+        while (loopCount < MAX_LOOPS && !isAborted) {
             loopCount++;
             
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
-                messages: currentMessages,
+                messages: messages,
                 tools: mcpToolsDefinitions,
                 tool_choice: "auto",
             });
 
             const assistantMessage = response.choices[0].message;
-            currentMessages.push(assistantMessage);
+            messages.push(assistantMessage);
+
+            if (assistantMessage.content) {
+                sendEvent('chat_response', { content: assistantMessage.content });
+            }
 
             if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-                console.log(`[LOOP ${loopCount}] calling ${assistantMessage.tool_calls.length} tools`);
-                
-                // Execute ALL tool calls in the message
                 for (const toolCall of assistantMessage.tool_calls) {
                     const toolName = toolCall.function.name;
                     const toolArgs = JSON.parse(toolCall.function.arguments);
-                    toolUsed = toolName; // Track last for UI simplicity
-
-                    console.log(`  -> ${toolName} with args:`, toolArgs);
+                    
+                    console.log(`[SSE LOOP ${loopCount}] Executing ${toolName}`);
                     
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true');
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
                         
-                        // Extract text content
+                        // Extract text for LLM
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
                             toolContent = mcpData.result.content[0].text;
                         }
 
-                        // PHASE 2: Deterministic Graph Routing Interception (Progressive Backbone First)
-                        if (toolName === 'search_resume_graph' && toolArgs.wants_visual_map) {
-                            console.log(`[GATEWAY] Deterministic trigger: wants_visual_map detected. Fetching graph backbone (LOD 0)...`);
-                            // DOMAIN SILO: Request Professional Domain Only to exclude media/podcasts
-                            const clusterData = await callMcpTool(tenantId, 'get_cluster_context', { node_name: 'Sangeetha Ramadurai', depth: 1, backbone_only: true, domain: 'professional' }, userId, req.headers['x-schema-readable'] === 'true');
-                            
-                            let clusterContent = JSON.stringify(clusterData);
-                            if (clusterData.result && clusterData.result.content && clusterData.result.content[0]) {
-                                clusterContent = clusterData.result.content[0].text;
-                            }
-                            aggregatedResults.push(clusterContent);
-                            toolUsed = 'get_cluster_context'; // Force UI to render the graph
-                        }
-                        
-                        // PHASE 1: Reranking Consensus Layer for Hybrid Search
-                        if (toolName === 'query_relevant_chunks_hybrid_tool') {
-                            console.log(`[GATEWAY] Performing Reranking on Hybrid Search results...`);
-                            const rawChunks = JSON.parse(toolContent);
-                            
-                            if (Array.isArray(rawChunks) && rawChunks.length > 0) {
-                                const rerankPrompt = gatewayRerankerPrompt.replace('{question}', question).replace('{candidates}', rawChunks.map((c, i) => `[${i}] ${c.text.substring(0, 500)}`).join('\n\n'));
+                        // GRAPH UPDATE LOGIC: If the tool returned nodes, update the UI
+                        try {
+                            const parsed = JSON.parse(toolContent);
+                            let newNodesRaw = [];
+                            let newLinksRaw = [];
 
-                                const rerankResponse = await openai.chat.completions.create({
-                                    model: "gpt-4o-mini",
-                                    messages: [{ role: "system", content: rerankPrompt }],
-                                    response_format: { type: "json_object" }
-                                });
+                            if (parsed.nodes) {
+                                newNodesRaw = parsed.nodes;
+                                newLinksRaw = parsed.links || [];
+                            } else if (Array.isArray(parsed)) {
+                                // Handle flat array or array of {details: ...}
+                                newNodesRaw = parsed.map(item => item.details || item);
+                            }
+
+                            if (newNodesRaw.length > 0) {
+                                // Transform to UI format
+                                const uiNodes = newNodesRaw.map(n => ({
+                                    id: n.element_id || n.id || n.name,
+                                    name: n.display_name || n.name,
+                                    type: n.labels ? n.labels[0] : (n.type || 'Unknown'),
+                                    isBackbone: n.is_backbone || false,
+                                    isBentoEligible: n.is_bento_eligible || true
+                                }));
                                 
-                                const rerankData = JSON.parse(rerankResponse.choices[0].message.content);
-                                const sortedIndices = Object.values(rerankData)[0]; // Extract the array
-                                
-                                if (Array.isArray(sortedIndices)) {
-                                    const rerankedChunks = sortedIndices.map(idx => rawChunks[idx]).filter(Boolean);
-                                    console.log(`[GATEWAY] Reranking complete. Selected ${rerankedChunks.length} high-fidelity chunks.`);
-                                    toolContent = JSON.stringify(rerankedChunks);
-                                }
-                            }
-                        }
-                        
-                        // AGGREGATION: Collect results for UI high-resolution rendering
-                        aggregatedResults.push(toolContent);
+                                graphNodes = [...graphNodes, ...uiNodes];
+                                // Dedup nodes by id
+                                graphNodes = Array.from(new Map(graphNodes.map(n => [n.id, n])).values());
 
-                        // COMPRESSION: Keep LLM context lean for TPM safety while UI gets full data
-                        let llmResponseContent = toolContent;
-                        if (toolName === 'get_cluster_context' || (toolName === 'search_resume_graph' && toolArgs.wants_visual_map)) {
-                            try {
-                                const parsed = JSON.parse(toolContent);
-                                if (parsed.nodes || (parsed.result && parsed.result.content)) {
-                                    const nodeCount = parsed.nodes ? parsed.nodes.length : "target";
-                                    llmResponseContent = JSON.stringify({
-                                        status: "success",
-                                        message: `Visual map context retrieved (${nodeCount} nodes). Data forwarded to Graph UI for rendering.`,
-                                        instruction: "Do not list all nodes. Summarize the top 3-5 landmarks that appear in the 'Backbone' view."
-                                    });
+                                if (newLinksRaw.length > 0) {
+                                    const uiLinks = newLinksRaw.map(l => ({
+                                        source: l.source,
+                                        target: l.target,
+                                        type: l.type
+                                    }));
+                                    graphLinks = [...graphLinks, ...uiLinks];
+                                    // Dedup links
+                                    graphLinks = Array.from(new Map(graphLinks.map(l => [`${l.source}-${l.target}-${l.type}`, l])).values());
                                 }
-                            } catch (e) {
-                                // Fallback to raw if parsing fails (unlikely)
+
+                                sendEvent('graph_update', { graph: { nodes: graphNodes, links: graphLinks } });
                             }
+                        } catch (e) {
+                            // Result wasn't a graph, just ignore
                         }
 
-                        currentMessages.push({
+                        messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: llmResponseContent
+                            content: toolContent
                         });
-                    } catch (toolError) {
-                        console.error(`Tool ${toolName} failed:`, toolError.message);
-                        currentMessages.push({
+
+                    } catch (err) {
+                        messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: `Error calling tool: ${toolError.message}`
+                            content: `Error: ${err.message}`
                         });
                     }
                 }
-                continue; // LLM might want to call more tools
+                continue;
             } else {
-                // Final synthesis complete
-                return res.send({ 
-                    answer: assistantMessage.content, 
-                    tool_used: toolUsed,
-                    raw_data: JSON.stringify(aggregatedResults) 
+                break;
+            }
+        }
+
+        console.log(`[SSE] Finished orchestration.`);
+        res.end();
+
+    } catch (err) {
+        console.error("[SSE] Error:", err);
+        sendEvent('error', { message: err.message });
+        res.end();
+    }
+});
+
+
+/**
+ * Non-streaming Orchestration Endpoint
+ * Used by the Dashboard for backward compatibility.
+ */
+app.post('/query', authMiddleware, async (req, res) => {
+    const { question, history, forceRefresh, is_contextual_fusion_on } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'] || 'trial-user';
+
+    if (!question) return res.status(400).send({ error: "Missing 'question' in body" });
+
+    let isAborted = false;
+    req.on('close', () => {
+        console.log(`[QUERY] Client disconnected. Aborting orchestration...`);
+        isAborted = true;
+    });
+
+    try {
+        console.log(`[QUERY] Starting orchestration for: ${question}`);
+        
+        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+        let messages = [
+            { role: "system", content: systemPrompt },
+            ...(history || []),
+            { role: "user", content: question }
+        ];
+
+        let loopCount = 0;
+        const MAX_LOOPS = 5;
+        let lastToolData = null;
+
+        while (loopCount < MAX_LOOPS && !isAborted) {
+            loopCount++;
+            
+            const response = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: messages,
+                tools: mcpToolsDefinitions,
+                tool_choice: "auto",
+            });
+
+            const assistantMessage = response.choices[0].message;
+            messages.push(assistantMessage);
+
+            if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+                for (const toolCall of assistantMessage.tool_calls) {
+                    const toolName = toolCall.function.name;
+                    const toolArgs = JSON.parse(toolCall.function.arguments);
+                    
+                    console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`);
+                    
+                    try {
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+                        lastToolData = mcpData;
+
+                        let toolContent = JSON.stringify(mcpData);
+                        if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
+                            toolContent = mcpData.result.content[0].text;
+                        }
+
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: toolCall.id,
+                            name: toolName,
+                            content: toolContent
+                        });
+
+                    } catch (err) {
+                        messages.push({
+                            role: "tool",
+                            tool_call_id: toolCall.id,
+                            name: toolName,
+                            content: `Error: ${err.message}`
+                        });
+                    }
+                }
+                continue;
+            } else {
+                // No more tool calls, return the final answer
+                return res.send({
+                    answer: assistantMessage.content,
+                    raw_data: lastToolData ? (lastToolData.result?.content?.[0]?.text || JSON.stringify(lastToolData)) : null
                 });
             }
         }
 
-        return res.status(500).send({ error: "Maximum orchestration loops reached" });
+        res.status(500).send({ error: "Maximum orchestration loops reached" });
 
     } catch (err) {
-        console.error("LLM Query failed:", err);
-        res.status(500).send({ error: "Internal server error during LLM orchestration", details: err.message });
+        console.error("[QUERY] Error:", err);
+        res.status(500).send({ error: err.message });
     }
 });
 
-// Proxy middleware (retained for backward compatibility or direct SSE access)
+
+const bentoServerUrl = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+
+// Bento Proxy (Fast Hydration)
+const bentoProxy = createProxyMiddleware({
+    target: bentoServerUrl,
+    changeOrigin: true,
+    pathRewrite: {
+        '^/api': '',
+    },
+    onProxyReq: (proxyReq, req, res) => {
+        if (req.headers['x-tenant-id']) proxyReq.setHeader('x-tenant-id', req.headers['x-tenant-id']);
+        if (req.headers['x-user-id']) proxyReq.setHeader('x-user-id', req.headers['x-user-id']);
+    }
+});
+
+// MCP Proxy (Standard Tools/SSE)
 const mcpProxy = createProxyMiddleware({
     target: mcpServerUrl,
     changeOrigin: true,
@@ -652,18 +852,19 @@ const mcpProxy = createProxyMiddleware({
         '^/api': '',
     },
     onProxyReq: (proxyReq, req, res) => {
-        if (req.headers['x-tenant-id']) {
-            proxyReq.setHeader('x-tenant-id', req.headers['x-tenant-id']);
-        }
+        if (req.headers['x-tenant-id']) proxyReq.setHeader('x-tenant-id', req.headers['x-tenant-id']);
+        if (req.headers['x-user-id']) proxyReq.setHeader('x-user-id', req.headers['x-user-id']);
     },
     ws: true,
 });
 
-// Apply auth to all /api routes
+// Smart Routing
+app.use('/api/get_node_details', authMiddleware, bentoProxy);
 app.use('/api', authMiddleware, mcpProxy);
 
 app.listen(port, () => {
     console.log(`Cortex Gateway listening at http://localhost:${port}`);
-    console.log(`Proxying to MCP Server at ${mcpServerUrl}`);
-    console.log(`Orchestration endpoint available at POST /query`);
+    console.log(`Smart Routing Active:`);
+    console.log(`  -> /api/get_node_details -> ${bentoServerUrl}`);
+    console.log(`  -> /api/* -> ${mcpServerUrl}`);
 });

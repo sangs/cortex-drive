@@ -24,21 +24,21 @@ try:
         print(f"📦 Total Nodes in Map: {len(nodes)}")
         
         # Check Cortex-Drive
-        cortex = next((n for n in nodes if "Cortex-Drive" in n["name"]), None)
+        cortex = next((n for n in nodes if n.get("name") and "Cortex-Drive" in n["name"]), None)
         if cortex:
             print(f"✅ Cortex-Drive Found: {cortex.get('display_date', 'No Date')}")
         else:
             print("❌ FAILURE: Cortex-Drive is MISSING from the map.")
             
         # Check Volarisation
-        volar = next((n for n in nodes if "Volarisation" in n["name"]), None)
+        volar = next((n for n in nodes if n.get("name") and "Volarisation" in n["name"]), None)
         if volar:
             print(f"✅ Volarisation Found: {volar.get('display_date', 'No Date')} (Year: {volar.get('year', 'No Year')})")
         else:
             print("❌ FAILURE: Volarisation Engine is MISSING from the map.")
             
         # Check JPMC VP
-        vp = next((n for n in nodes if "VP" in n["name"]), None)
+        vp = next((n for n in nodes if n.get("name") and "VP" in n["name"]), None)
         if vp:
             print(f"✅ JPMC VP Found: {vp.get('display_date', 'No Date')}")
             

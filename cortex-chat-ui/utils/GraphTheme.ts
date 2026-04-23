@@ -49,23 +49,28 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
     },
 
     // 2. PODCAST ENTITIES
+    Podcast: {
+        hsl: 'hsl(220, 70%, 50%)',      // Professional Blue
+        tailwind: 'bg-indigo-600 shadow-[0_0_8px_rgba(79,70,229,0.5)]',
+        radius: 14
+    },
     Episode: {
-        hsl: 'hsl(210, 80%, 45%)',      // Match Category for hierarchy
+        hsl: 'hsl(210, 80%, 45%)',      // Deep Blue
         tailwind: 'bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.5)]',
         radius: 10
     },
     Topic: {
-        hsl: 'hsl(270, 70%, 55%)',      // Match Hackathon for innovation
+        hsl: 'hsl(270, 70%, 55%)',      // Vibrant Purple (Innovation)
         tailwind: 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]',
         radius: 8
     },
     Person: {
-        hsl: 'hsl(142, 70%, 45%)',      // Emerald
+        hsl: 'hsl(142, 70%, 45%)',      // Emerald (Growth)
         tailwind: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]',
         radius: 7
     },
     Chunk: {
-        hsl: 'hsl(45, 90%, 50%)',       // Amber
+        hsl: 'hsl(45, 90%, 50%)',       // Amber (Insight)
         tailwind: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]',
         radius: 4
     },
@@ -75,21 +80,68 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
         radius: 8
     },
 
-    // 3. COMMON ENTITIES
+    // 3. COMMON & PROFESSIONAL LANDMARKS
     Company: {
         hsl: 'hsl(210, 20%, 40%)',      // Dark Slate
-        tailwind: 'bg-slate-600 shadow-[0_0_8px_rgba(71,85,105,0.5)]',
-        radius: 7
+        tailwind: 'bg-slate-700 shadow-[0_0_8px_rgba(51,65,85,0.5)]',
+        radius: 12
+    },
+    Startup: {
+        hsl: 'hsl(260, 70%, 50%)',      // Electric Purple
+        tailwind: 'bg-purple-600 shadow-[0_0_8px_rgba(147,51,234,0.5)]',
+        radius: 12
+    },
+    Hackathon: {
+        hsl: 'hsl(215, 80%, 45%)',      // Royal Blue
+        tailwind: 'bg-blue-700 shadow-[0_0_8px_rgba(29,78,216,0.5)]',
+        radius: 10
+    },
+    ThoughtLeadership: {
+        hsl: 'hsl(245, 70%, 50%)',      // Indigo Core
+        tailwind: 'bg-indigo-700 shadow-[0_0_8px_rgba(67,56,202,0.5)]',
+        radius: 11
+    },
+    Certification: {
+        hsl: 'hsl(142, 60%, 40%)',      // Forest Green
+        tailwind: 'bg-emerald-700 shadow-[0_0_8px_rgba(4,120,87,0.5)]',
+        radius: 9
+    },
+    Degree: {
+        hsl: 'hsl(25, 80%, 50%)',       // Achievement Orange
+        tailwind: 'bg-orange-600 shadow-[0_0_8px_rgba(234,88,12,0.5)]',
+        radius: 8
+    },
+    Institution: {
+        hsl: 'hsl(210, 20%, 30%)',      // Slate Heavy
+        tailwind: 'bg-slate-800 shadow-[0_0_8px_rgba(30,41,59,0.5)]',
+        radius: 11
     },
     Education: {
-        hsl: 'hsl(25, 80%, 50%)',       // Orange
+        hsl: 'hsl(25, 80%, 50%)',       
         tailwind: 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]',
-        radius: 7
+        radius: 9
+    },
+    SocialLearning: {
+        hsl: 'hsl(330, 70%, 50%)',      // Pink Social
+        tailwind: 'bg-pink-600 shadow-[0_0_8px_rgba(219,39,119,0.5)]',
+        radius: 8
+    },
+    Publication: {
+        hsl: 'hsl(200, 70%, 40%)',      // Teal/Bule Knowledge
+        tailwind: 'bg-sky-700 shadow-[0_0_8px_rgba(3,105,161,0.5)]',
+        radius: 9
     },
     Location: {
         hsl: 'hsl(0, 70%, 60%)',        // Rose
         tailwind: 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]',
         radius: 5
+    },
+    Year: {
+        hsl: 'hsl(226, 70%, 94%)',
+        color: '#e0e7ff',
+        icon: 'Calendar',
+        radius: 12,
+        isBackbone: true
     }
 };
 

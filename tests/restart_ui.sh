@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- CONFIGURATION ---
-PORT=3001
+PORT=3000
 UI_DIR="./cortex-chat-ui"
 LOG_FILE="./logs/ui.log"
 

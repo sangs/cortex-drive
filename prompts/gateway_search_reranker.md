@@ -5,4 +5,4 @@ Query: "{question}"
 Candidates:
 {candidates}
 
-Return ONLY a JSON array of indices sorted by relevance, e.g. [2, 0, 1]. Only include indices for chunks with a score > 7.
+Return ONLY a JSON array of indices sorted by relevance, e.g. [2, 0, 1]. Include indices for chunks with a score >= 5. Be inclusive of chunks that provide broader semantic context even if they don't perfectly match every keyword.

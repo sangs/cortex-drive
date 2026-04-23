@@ -1,12 +1,18 @@
 #!/bin/bash
 
 # --- CONFIGURATION ---
-PORT=3000
+PORT=4000
 GATEWAY_DIR="./cortex-gateway"
 LOG_FILE="./logs/gateway.log"
 
 # Ensure logs directory exists
 mkdir -p ./logs
+
+# Load environment variables
+if [ -f .env ]; then
+  echo "Loading environment variables from .env..."
+  set -a; source .env; set +a
+fi
 
 echo "--- 🛠️  RESTARTING CORTEX GATEWAY ---"
 

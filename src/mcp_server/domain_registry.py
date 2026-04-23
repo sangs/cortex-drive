@@ -1,5 +1,28 @@
 from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES
 
+# Centralized Label Registry
+DISCOVERY_LABELS = [
+    "Project", "Role", "Company", "Person", "Hackathon", "ThoughtLeadership", 
+    "Publication", "Institution", "Podcast", "Episode", "Topic", "Certification", 
+    "Category", "Technology", "Concept", "Degree", "ProfessionalEducation", "Skill"
+]
+
+BRIDGE_LABELS = ["ReferenceLink", "Chunk", "Source", "PreparatoryNote", "__MetaContext__"]
+
+VISUAL_DENY_LIST = BRIDGE_LABELS
+
+def get_discovery_label_string() -> str:
+    """Returns a Cypher-compatible label string like 'Project|Role|Company'."""
+    return "|".join(DISCOVERY_LABELS)
+
+def get_bridge_label_string() -> str:
+    """Returns a Cypher-compatible label string for bridge nodes."""
+    return "|".join(BRIDGE_LABELS)
+
+def get_visual_deny_list() -> list:
+    """Returns the list of labels that should be excluded from the visual graph."""
+    return VISUAL_DENY_LIST
+
 # Authoritative Domain Manifests (The Single Source of Experience Truth)
 DOMAIN_MANIFESTS = {
     "professional": {

@@ -8,19 +8,29 @@ import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from expert_tools import ExpertTools
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class ToolHandler(BaseHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+
     def do_POST(self):
-        """Handle POST requests to /search_episodes_gds_by_question_tool"""
+        """Handle POST requests to tools"""
         if self.path == "/search_episodes_gds_by_question_tool":
             try:
-                # Read request body
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length).decode("utf-8")
                 params = json.loads(body)
-                
-                # Extract parameters
                 question = params.get("question")
                 k = params.get("k", 5)
                 limit = params.get("limit", 10)
@@ -29,26 +39,45 @@ class ToolHandler(BaseHTTPRequestHandler):
                     self.send_error(400, "Missing required parameter: question")
                     return
                 
-                # Call the tool
-                expert = ExpertTools()
+                tenant_id = os.environ.get("TENANT_ID", "org_3AacpFBbt39hPmDKyZyNBQuuM6t")
+                expert = ExpertTools(tenant_id=tenant_id)
                 try:
                     result = expert.search_episodes_gds_by_question(question, k=k, limit=limit)
-                    
-                    # Return JSON response
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     self.wfile.write(json.dumps({"result": result}).encode("utf-8"))
                 finally:
                     expert.close()
-                    
-            except json.JSONDecodeError:
-                self.send_error(400, "Invalid JSON in request body")
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
+
+        elif self.path == "/get_node_details":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8")
+                params = json.loads(body)
+                # Handle both node_id and element_id for cross-compatibility
+                node_id = params.get("node_id") or params.get("element_id")
+                node_name = params.get("node_name")
+                
+                tenant_id = self.headers.get("x-tenant-id") or os.environ.get("TENANT_ID", "org_3AacpFBbt39hPmDKyZyNBQuuM6t")
+                user_id = self.headers.get("x-user-id") or ""
+                
+                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+                try:
+                    result_str = expert.get_node_details(node_id=node_id, node_name=node_name)
+                    result = json.loads(result_str)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(result).encode("utf-8"))
+                finally:
+                    expert.close()
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
         else:
             self.send_error(404, "Not Found")
-    
     def do_GET(self):
         """Handle GET requests (for health check)"""
         if self.path == "/health":

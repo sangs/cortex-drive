@@ -17,13 +17,33 @@ PROJECT_GRAPH_NODES = [
     'Team', 'Role', 'Responsibility', 'Task', 'Deliverable', 'TeamMember',
     'Company', 'Degree', 'Institution', 'Skill', 'Category', 'PreparatoryNote',
     'Startup', 'Hackathon', 'Certification', 'Publication', 'OpenSource', 'SocialLearning',
-    'ProfessionalEducation',
+    'ProfessionalEducation', 'Year',
+    # Federated Knowledge Labels
+    'ExternalSilo', 'DataLake', 'GitHub', 'Confluence', 'TableMetadata', 'PageMetadata',
     # Thought leadership and community nodes created by the resume seeder
     'ThoughtLeadership', 'Community', 'Person'
 ]
 
 SYSTEM_NODES = [
     '__MetaContext__'
+]
+
+# --- Discovery Logic Constants (Landmarks) ---
+# High-Fidelity backbone nodes that serve as the primary landmarks in discovery.
+# These appear as prominent "Sun" nodes in the initial graph expansion.
+BACKBONE_LANDMARKS = [
+    'Category', 
+    'Company', 
+    'Startup', 
+    'Hackathon', 
+    'ThoughtLeadership', 
+    'Institution', 
+    'Degree', 
+    'Certification', 
+    'Podcast', 
+    'Publication',
+    'Role',
+    'Year'
 ]
 
 CORTEX_DRIVE_RELATIONSHIPS = [
@@ -46,7 +66,10 @@ PROJECT_GRAPH_RELATIONSHIPS = [
     'RESPONSIBLE_FOR', 'HAS_TASK', 'HAS_DELIVERABLE',
     'HELD_ROLE', 'AT', 'CONTRIBUTED_TO', 'WORKED_AT',
     'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL',
-    'PARTICIPATED_IN', 'BUILT_DURING', 'AUTHORED', 'CO_AUTHORED', 'EARNED', 'LED', 'DERIVED_FROM'
+    'PARTICIPATED_IN', 'BUILT_DURING', 'AUTHORED', 'CO_AUTHORED', 'EARNED', 'LED', 
+    'DERIVED_FROM', 'ACTIVE_DURING',
+    # Federated Discovery Relationships
+    'STORES', 'FEDERATED_TO', 'DOCUMENTED_BY'
 ]
 
 class Neo4jBaseModel(BaseModel):
@@ -169,6 +192,27 @@ class SkillNode(Neo4jBaseModel):
     name: str = Field(..., description="Name of the skill.")
     category: Optional[str] = None
 
+class ExternalSiloNode(Neo4jBaseModel):
+    """Schema for External Silos (S3, GitHub, Confluence)."""
+    name: str = Field(..., description="The unique identifier or URL of the silo.")
+    type: str = Field(..., description="The type of silo (e.g., ObjectStore, VCS, Wiki).")
+    provider: Optional[str] = None
+    region: Optional[str] = None
+    description: Optional[str] = None
+    isIceberg: bool = Field(False, description="Whether this silo follows the Iceberg metadata pattern.")
+
+class TableMetadataNode(Neo4jBaseModel):
+    """Schema for Iceberg Table Metadata."""
+    name: str = Field(..., description="The table name.")
+    format: str = Field("Iceberg")
+    partitioning: Optional[str] = None
+
+class PageMetadataNode(Neo4jBaseModel):
+    """Schema for Wiki/Page Metadata."""
+    name: str = Field(..., description="The page title.")
+    pageId: Optional[str] = None
+    status: Optional[str] = None
+
 def validate_upsert(label: str, data: Dict[str, Any]):
     """
     Validation gate to be called before any Neo4j CREATE/MERGE.
@@ -217,6 +261,14 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         'OpenSource': GenericProjectNode,
         'SocialLearning': GenericProjectNode,
         'Category': GenericProjectNode,
+        'Year': GenericProjectNode,
+        # Federated Models
+        'ExternalSilo': ExternalSiloNode,
+        'DataLake': ExternalSiloNode,
+        'GitHub': ExternalSiloNode,
+        'Confluence': ExternalSiloNode,
+        'TableMetadata': TableMetadataNode,
+        'PageMetadata': PageMetadataNode,
         # System/Infrastructure
         '__MetaContext__': InfrastructureNode
     }

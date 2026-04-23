@@ -62,8 +62,7 @@ RESUME_CYPHER_QUERIES = [
     // Cortex-Drive (Independent Venture)
     MERGE (c1:Company {name: "Independent Ventures"})
     MERGE (r1:Project {name: "Cortex-Drive"})
-    MERGE (p)-[:CURRENTLY_BUILDING {start: "08/2025", end: "Present"}]->(r1)
-    MERGE (p)-[:HELD_ROLE {name: "Founder & Sr. Software Engineer", start: "08/2025", end: "Present"}]->(r1)
+    MERGE (p)-[:CURRENTLY_BUILDING {role: "Founder & Sr. Software Engineer", start: "08/2025", end: "Present"}]->(r1)
     MERGE (r1)-[:AT]->(c1)
     MERGE (cat1)-[:CONTAINS]->(r1)
     MERGE (cat2)-[:CONTAINS]->(r1)
@@ -73,60 +72,71 @@ RESUME_CYPHER_QUERIES = [
     SET star_founder.text = "Situation: Institutional memory is often lost across siloed tools and turnover. Task: Build a context-aware intelligent layer ('Cortex-Drive') to recover decision provenance. Action: Architected high-fidelity MCP server, Neo4j graphRAG, and Zero-Trust ABAC governance. Result: Enabled stable, traceable institutional memory across federated contexts."
     MERGE (r1)-[:HAS_PRIVATE_NOTE]->(star_founder)
 
+    // JPMC Hackathon: Humanless Autocode (02/2025)
+    MERGE (h1:Hackathon {name: "Humanless Autocode at Scale for SRE"})
+    SET h1.description = "Automated, context-aware IaC code review using Cody AI Agent, tailored for enterprise guardrails and multi-repo dependency analysis.",
+        h1.status = "Winner/Demonstrated",
+        h1.location = "JPMorgan Chase"
+    MERGE (p)-[:PARTICIPATED_IN {start: "02/2025", end: "03/2025"}]->(h1)
+    MERGE (cat5:Category {name: "Thought Leadership & Community"})
+    MERGE (cat5)-[:CONTAINS]->(h1)
+    
+    MERGE (star_h1:PreparatoryNote {name: "STAR: Humanless Autocode"})
+    SET star_h1.text = "Situation: IaC reviews were time-consuming and inconsistent. Task: Showcase automated code review at scale using Sourcegraph Cody. Action: Led hackathon project for context-aware IaC review, identifying module misuse and downstream API breaks. Result: Successfully demonstrated automated review at scale, reducing turnaround time and improving safety."
+    MERGE (h1)-[:HAS_PRIVATE_NOTE]->(star_h1)
+
+    // IBM Hackathon: Valorisation Engine (01/2026)
+    MERGE (h2:Hackathon {name: "Valorisation Engine"})
+    SET h2.description = "Explainable, agentic AI for patent research and life-sciences commercialization support, built on IBM Watsonx.",
+        h2.status = "PoC Demonstrated",
+        h2.location = "IBM Dev Day 2026"
+    MERGE (p)-[:PARTICIPATED_IN {start: "01/2026", end: "01/2026"}]->(h2)
+    MERGE (cat5)-[:CONTAINS]->(h2)
+    
+    MERGE (star_h2:PreparatoryNote {name: "STAR: Valorisation Engine"})
+    SET star_h2.text = "Situation: Early-stage patent triage is manual and opaque. Task: Formalize patent research into a transparent, logic-first workflow. Action: Built explainable agentic AI decision-support system using IBM Watsonx. Result: Showcased proof-of-concept for accelerated life-sciences commercialization with auditable insights."
+    MERGE (h2)-[:HAS_PRIVATE_NOTE]->(star_h2)
+
     // JPMC
     MERGE (c2:Company {name: "JPMorgan Chase", location: "Jersey City, NJ"})
-    MERGE (r2:Role {name: "Lead Software Engineer, VP"})
-    MERGE (p)-[:HELD_ROLE {start: "02/2024", end: "07/2025"}]->(r2)
-    MERGE (r2)-[:AT]->(c2)
-    MERGE (cat1)-[:CONTAINS]->(r2)
+    MERGE (p)-[:HELD_ROLE {title: "Lead Software Engineer, VP", start: "02/2024", end: "07/2025"}]->(c2)
+    MERGE (cat1)-[:CONTAINS]->(c2)
 
-    MERGE (r2_legacy:Role {name: "Sr. Software Engineer (JPMC)"})
-    MERGE (p)-[:HELD_ROLE {start: "06/2021", end: "01/2024"}]->(r2_legacy)
-    MERGE (r2_legacy)-[:AT]->(c2)
-    MERGE (cat1)-[:CONTAINS]->(r2_legacy)
+    MERGE (p)-[:HELD_ROLE {title: "Sr. Software Engineer (JPMC)", start: "06/2021", end: "01/2024"}]->(c2)
 
     // Mezocliq
     MERGE (c3:Company {name: "Mezocliq LLC", location: "New York, NY"})
-    MERGE (r3:Role {name: "Sr. Software Engineer (Mezocliq)"})
-    MERGE (p)-[:HELD_ROLE {start: "02/2013", end: "02/2021"}]->(r3)
-    MERGE (r3)-[:AT]->(c3)
-    MERGE (cat1)-[:CONTAINS]->(r3)
+    MERGE (p)-[:HELD_ROLE {title: "Sr. Software Engineer (Mezocliq)", start: "02/2013", end: "02/2021"}]->(c3)
+    MERGE (cat1)-[:CONTAINS]->(c3)
 
     // Goldman Sachs
     MERGE (c4:Company {name: "GOLDMAN SACHS & CO."})
-    MERGE (r4:Role {name: "Sr. Software Engineer, Consultant"})
-    MERGE (p)-[:HELD_ROLE {start: "06/2007", end: "12/2009"}]->(r4)
-    MERGE (r4)-[:AT]->(c4)
-    MERGE (cat1)-[:CONTAINS]->(r4)
+    MERGE (p)-[:HELD_ROLE {title: "Sr. Software Engineer, Consultant", start: "06/2007", end: "12/2009"}]->(c4)
+    MERGE (cat1)-[:CONTAINS]->(c4)
 
     // GE Healthcare
     MERGE (c5:Company {name: "GE Healthcare"})
-    MERGE (r5:Role {name: "IT Systems Specialist"})
-    MERGE (p)-[:HELD_ROLE {start: "05/1999", end: "01/2006"}]->(r5)
-    MERGE (r5)-[:AT]->(c5)
-    MERGE (cat1)-[:CONTAINS]->(r5)
+    MERGE (p)-[:HELD_ROLE {title: "IT Systems Specialist", start: "05/1999", end: "01/2006"}]->(c5)
+    MERGE (cat1)-[:CONTAINS]->(c5)
 
     // Macmet
     MERGE (c6:Company {name: "Macmet India Pvt. Ltd."})
-    MERGE (r6:Role {name: "Software Engineer"})
-    MERGE (p)-[:HELD_ROLE {start: "08/1997", end: "04/1999"}]->(r6)
-    MERGE (r6)-[:AT]->(c6)
-    MERGE (cat1)-[:CONTAINS]->(r6)
+    MERGE (p)-[:HELD_ROLE {title: "Software Engineer", start: "08/1997", end: "04/1999"}]->(c6)
+    MERGE (cat1)-[:CONTAINS]->(c6)
     """,
 
     # 3. PROJECTS: OPEN SOURCE & VENTURES
     """
     MERGE (pj:Startup:Project {name: "Cortex-Drive"})
     SET pj.status = "Active",
-        pj.description = "A personalized AI for organizing knowledge via a personal knowledge graph with explainable AI reasoning.",
+        pj.description = "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
         pj.links = ["https://github.com/sangs/cortex-drive"]
     
     WITH pj
-    MATCH (r:Role {name: "Founder & Sr. Software Engineer"})
+    MATCH (p:Person {name: "Sangeetha Ramadurai"})-[:CURRENTLY_BUILDING {role: "Founder & Sr. Software Engineer"}]->(pj)
     MATCH (catIndependent:Category {name: "Open Source & Independent Ventures"})
     MATCH (catProfessional:Category {name: "Professional Experience"})
     
-    MERGE (r)-[:CONTRIBUTED_TO {start: "08/2025", end: "Present"}]->(pj)
     MERGE (catIndependent)-[:CONTAINS]->(pj)
     MERGE (catProfessional)-[:CONTAINS]->(pj)
 
@@ -278,13 +288,15 @@ RESUME_CYPHER_QUERIES = [
 
     # 6. JPMC PROJECTS (MODERN ERA: 2024-2025)
     """
-    MATCH (r:Role {name: "Lead Software Engineer, VP"})
+    MATCH (p:Person {name: "Sangeetha Ramadurai"})
+    MATCH (c:Company {name: "JPMorgan Chase"})
     MATCH (cat:Category {name: "Professional Experience"})
 
     // Metadata Agent
     MERGE (p1:Project {name: "Metadata Agent Architecture"})
     SET p1.description = "Metadata Discovery & RAG Agent: Architected AWS-based AI solution using Lambda, Bedrock, and PG Vector to reduce data discovery time from hours to seconds."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p1)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p1)
+    MERGE (c)-[:CONTAINS]->(p1)
     MERGE (cat)-[:CONTAINS]->(p1)
     MERGE (n1:PreparatoryNote {name: "STAR: Metadata Agent"})
     SET n1.text = "Situation: Metadata was scattered across AWM data catalogs. Task: Develop AI Agent for natural language discovery. Action: Architected end-to-end with AWS Lambda/Bedrock/PG Vector, built RAG pattern. Result: Reduced discovery time from hours to seconds."
@@ -311,13 +323,15 @@ RESUME_CYPHER_QUERIES = [
 
     # 7. JPMC PROJECTS (2021-2024 ERA)
     """
-    MATCH (r:Role {name: "Sr. Software Engineer (JPMC)"})
+    MATCH (p:Person {name: "Sangeetha Ramadurai"})
+    MATCH (c:Company {name: "JPMorgan Chase"})
     MATCH (cat:Category {name: "Professional Experience"})
 
     // Gain/Loss
     MERGE (p4:Project {name: "Gain/Loss Cloud Native Microservice"})
     SET p4.description = "Cost Modernization: Designed and implemented a greenfield, cloud-native Gain/Loss microservice on AWS EKS, delivering $338k in annual cost savings and removing vendor dependency."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p4)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p4)
+    MERGE (c)-[:CONTAINS]->(p4)
     MERGE (cat)-[:CONTAINS]->(p4)
     MERGE (n4:PreparatoryNote {name: "STAR: Gain/Loss MS"})
     SET n4.text = "Situation: Costly dependency on vendor product for real-time gain/loss. Task: Replace vendor product with cloud-native MS. Action: Designed/implemented greenfield MS using Spring/AWS EKS/Kafka. Result: Saved $338k annually and removed external dependency."
@@ -352,44 +366,52 @@ RESUME_CYPHER_QUERIES = [
     # 8. LEGACY PROJECTS (MEZOCLIQ, GS, GE, MACMET)
     """
     // Mezocliq (02/2013-02/2021)
-    MATCH (r:Role {name: "Sr. Software Engineer (Mezocliq)"})
+    MATCH (p:Person {name: "Sangeetha Ramadurai"})
+    MATCH (c_mezo:Company {name: "Mezocliq LLC"})
     MATCH (cat1:Category {name: "Professional Experience"})
 
     MERGE (pm1:Project {name: "Cloud-Native Platform Orchestration & Workflow System"})
-    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm1)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm1)
+    MERGE (c_mezo)-[:CONTAINS]->(pm1)
     MERGE (cat1)-[:CONTAINS]->(pm1)
 
     MERGE (pm2:Project {name: "Enterprise Access Control, Search, and Distributed Infrastructure"})
-    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm2)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm2)
+    MERGE (c_mezo)-[:CONTAINS]->(pm2)
     MERGE (cat1)-[:CONTAINS]->(pm2)
 
-    WITH cat1
+    WITH p, cat1
     // Goldman Sachs (06/2007-12/2009)
-    MATCH (rg:Role {name: "Sr. Software Engineer, Consultant"})
+    MATCH (c_gs:Company {name: "GOLDMAN SACHS & CO."})
     MERGE (pg1:Project {name: "Executive Workflow Management Platform (Ten Thousand Women)"})
-    MERGE (rg)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg1)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg1)
+    MERGE (c_gs)-[:CONTAINS]->(pg1)
     MERGE (cat1)-[:CONTAINS]->(pg1)
 
     MERGE (pg2:Project {name: "Capital Attribution & Market Risk Data Platform"})
-    MERGE (rg)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg2)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg2)
+    MERGE (c_gs)-[:CONTAINS]->(pg2)
     MERGE (cat1)-[:CONTAINS]->(pg2)
 
-    WITH cat1
+    WITH p, cat1
     // GE Healthcare (05/1999-01/2006)
-    MATCH (re:Role {name: "IT Systems Specialist"})
+    MATCH (c_ge:Company {name: "GE Healthcare"})
     MERGE (pge1:Project {name: "Radiology Imaging Platform Integration"})
-    MERGE (re)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge1)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge1)
+    MERGE (c_ge)-[:CONTAINS]->(pge1)
     MERGE (cat1)-[:CONTAINS]->(pge1)
 
     MERGE (pge2:Project {name: "Image Management & Distributed Event Processing System"})
-    MERGE (re)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge2)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge2)
+    MERGE (c_ge)-[:CONTAINS]->(pge2)
     MERGE (cat1)-[:CONTAINS]->(pge2)
 
-    WITH cat1
+    WITH p, cat1
     // Macmet (08/1997-04/1999)
-    MATCH (rm:Role {name: "Software Engineer"})
+    MATCH (c_mac:Company {name: "Macmet India Pvt. Ltd."})
     MERGE (pma:Project {name: "Simulation systems development and evaluation (Macmet)"})
-    MERGE (rm)-[:CONTRIBUTED_TO {start: "08/1997", end: "04/1999"}]->(pma)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "08/1997", end: "04/1999"}]->(pma)
+    MERGE (c_mac)-[:CONTAINS]->(pma)
     MERGE (cat1)-[:CONTAINS]->(pma)
     """,
 
@@ -462,7 +484,7 @@ TOOL USAGE:
     # 9. TECHNOLOGY MAPPING: CORTEX
     """
     WITH {
-        cortex: ["Neo4j", "BAML", "Python", "Langflow", "AI Agent", "Supabase", "Railway"]
+        cortex: ["Neo4j", "BAML", "Python", "LangGraph", "Langflow", "AI Agent", "Claude Code", "Google Antigravity", "Software architecture", "AI", "Explainability", "Governance"]
     } as tech_map
     MATCH (pj:Project {name: "Cortex-Drive"})
     UNWIND tech_map.cortex as tool
@@ -539,7 +561,7 @@ TOOL USAGE:
     # 16. TECHNOLOGY MAPPING: INFOQ
     """
     WITH {
-        infoq: ["Software architecture", "AI", "C4 Model"]
+        infoq: ["Software architecture", "AI", "C4 Model", "Explainability", "Governance"]
     } as tech_map
     MATCH (tl:ThoughtLeadership) WHERE tl.name CONTAINS "InfoQ"
     UNWIND tech_map.infoq as tool
@@ -567,6 +589,51 @@ TOOL USAGE:
     UNWIND tech_map.os_agents as tool
     MERGE (t:Technology {name: tool})
     MERGE (os)-[:USES_TOOL]->(t)
+    """,
+
+    # 19. TECHNOLOGY MAPPING: NEW HACKATHONS
+    """
+    WITH {
+        autocode: ["Python", "Cody AI Agent", "Terraform", "Infrastructure as Code", "AI Agent"],
+        valorisation: ["Python", "Langflow", "IBM Watson", "AI Agent", "Decision Support"],
+        global_hacks: ["Neo4j", "MongoDB", "Python", "ML", "AI Agent", "MCP"]
+    } as tech_map
+    MATCH (h1:Hackathon {name: "Humanless Autocode at Scale for SRE"})
+    MATCH (h2:Hackathon {name: "Valorisation Engine"})
+    MATCH (h3:Hackathon {name: "Global Hackathons @ JPMorgan Chase"})
+    
+    UNWIND tech_map.autocode as t1
+    MERGE (tool1:Technology {name: t1})
+    MERGE (h1)-[:USES_TOOL]->(tool1)
+    
+    WITH tech_map, h2, h3
+    UNWIND tech_map.valorisation as t2
+    MERGE (tool2:Technology {name: t2})
+    MERGE (h2)-[:USES_TOOL]->(tool2)
+    
+    WITH tech_map, h3
+    UNWIND tech_map.global_hacks as t3
+    MERGE (tool3:Technology {name: t3})
+    MERGE (h3)-[:USES_TOOL]->(tool3)
+    """,
+
+    # 20. TECHNOLOGY MAPPING: EDUCATION & CERTS
+    """
+    WITH {
+        mit: ["Logistic Regression", "Decision Trees", "Random Forest", "Bagging", "Boosting", "Hyper-parameter Tuning", "EDA", "Data Visualization", "Statistics", "Python", "ML"],
+        infoq_cert: ["Software architecture", "AI", "Platform Engineering", "Governance", "Explainability"]
+    } as tech_map
+    MATCH (e1:Certification) WHERE e1.name CONTAINS "InfoQ Certified Architect"
+    MATCH (e2:ProfessionalEducation) WHERE e2.name CONTAINS "MIT: Applied Data Science"
+    
+    UNWIND tech_map.mit as t1
+    MERGE (tool1:Technology {name: t1})
+    MERGE (e2)-[:USES_TOOL]->(tool1)
+    
+    WITH tech_map, e1
+    UNWIND tech_map.infoq_cert as t2
+    MERGE (tool2:Technology {name: t2})
+    MERGE (e1)-[:USES_TOOL]->(tool2)
     """
 ]
 
@@ -652,7 +719,7 @@ def seed_resume_graph():
                 """
                 MATCH (n)
                 WHERE any(label IN labels(n) WHERE label IN [
-                    'Person', 'Category', 'Role', 'Company', 'Project',
+                    'Person', 'Category', 'Company', 'Project',
                     'Startup', 'Hackathon', 'ThoughtLeadership', 'Community',
                     'Publication', 'PreparatoryNote', 'Skill', 'Institution',
                     'Degree', 'Certification', 'ProfessionalEducation', 'OpenSource',
