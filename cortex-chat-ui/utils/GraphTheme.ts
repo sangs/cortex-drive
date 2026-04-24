@@ -22,16 +22,6 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
         tailwind: 'bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]',
         radius: 8
     },
-    Hackathon: {
-        hsl: 'hsl(270, 70%, 55%)',      // Vibrant Purple
-        tailwind: 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]',
-        radius: 8
-    },
-    ThoughtLeadership: {
-        hsl: 'hsl(245, 65%, 55%)',      // Indigo
-        tailwind: 'bg-indigo-600 shadow-[0_0_8px_rgba(79,70,229,0.5)]',
-        radius: 8
-    },
     Role: {
         hsl: 'hsl(180, 60%, 45%)',      // Teal
         tailwind: 'bg-teal-500 shadow-[0_0_8px_rgba(20,184,166,0.5)]',
@@ -138,10 +128,8 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
     },
     Year: {
         hsl: 'hsl(226, 70%, 94%)',
-        color: '#e0e7ff',
-        icon: 'Calendar',
-        radius: 12,
-        isBackbone: true
+        tailwind: 'bg-indigo-100 shadow-[0_0_8px_rgba(199,210,254,0.5)]',
+        radius: 12
     }
 };
 

@@ -1,5 +1,3 @@
-import { fetchEventSource } from "@microsoft/fetch-event-source";
-
 export class MCPClient {
     private serverUrl: string;
     private messageUrl: string | null = null;
@@ -15,79 +13,55 @@ export class MCPClient {
     }
 
     async connect() {
-        console.log("Connecting to MCP Server...", this.serverUrl);
+        const baseUrl = new URL(this.serverUrl);
+        const healthUrl = `${baseUrl.protocol}//${baseUrl.host}/health`;
+        console.log("Verifying gateway connection via:", healthUrl);
+
         const token = await this.getToken();
+        const headers: Record<string, string> = {
+            "x-api-key": "cortex_trial_key_2024"
+        };
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
 
-        return new Promise<void>((resolve, reject) => {
-            const headers: Record<string, string> = {
-                "x-tenant-id": this.tenantId,
-                "x-api-key": "cortex_trial_key_2024" // Support Gateway auth during connection
-            };
-            if (token) {
-                headers["Authorization"] = `Bearer ${token}`;
-            }
-
-            fetchEventSource(this.serverUrl, {
-                headers,
-                onopen: async (res) => {
-                    if (res.ok) {
-                        console.log("SSE Connection opened");
-                    } else {
-                        reject(new Error(`Failed to open SSE: ${res.statusText}`));
-                    }
-                },
-                onmessage: (ev) => {
-                    if (ev.event === "endpoint") {
-                        const relativePath = ev.data;
-                        const baseUrl = new URL(this.serverUrl);
-                        this.messageUrl = `${baseUrl.origin}${relativePath}`;
-                        console.log("Message endpoint received:", this.messageUrl);
-                        resolve(); // Resolve promise once we have the message endpoint
-                    } else if (ev.event === "message") {
-                        try {
-                            const data = JSON.parse(ev.data);
-                            this.onMessageCallback(data);
-                        } catch (e) {
-                            console.error("Failed to parse message", e);
-                        }
-                    }
-                },
-                onerror: (err) => {
-                    console.error("SSE Connection Error:", err);
-                    reject(err);
-                },
-            });
-        });
+        const res = await fetch(healthUrl, { headers });
+        if (!res.ok) {
+            throw new Error(`Gateway health check failed: ${res.status} ${res.statusText}`);
+        }
+        console.log("Gateway connection established.");
     }
 
-    async sendMessage(method: string, params: any = {}) {
-        if (!this.messageUrl) {
-            throw new Error("Cannot send message: no endpoint URL received yet.");
-        }
+    async sendMessage(method: string, params: any = {}): Promise<any> {
+        // Route tool calls through the gateway's /query endpoint.
+        // The orchestrator will select and execute the appropriate MCP tool.
+        const baseUrl = new URL(this.serverUrl);
+        const gatewayUrl = `${baseUrl.protocol}//${baseUrl.hostname}:4000/query`;
 
-        const id = Math.floor(Math.random() * 100000);
-        const body = {
-            jsonrpc: "2.0",
-            id,
-            method,
-            params,
+        const token = await this.getToken();
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "x-tenant-id": this.tenantId,
+            "x-api-key": "cortex_trial_key_2024"
         };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        const response = await fetch(this.messageUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-tenant-id": this.tenantId,
-                "x-api-key": "cortex_trial_key_2024"
-            },
-            body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to send message: ${response.statusText}`);
+        if (method === "tools/call" && params.name) {
+            // Translate a direct tool call into a natural-language proxy request
+            // so the gateway can authenticate and forward to the MCP server.
+            const response = await fetch(
+                `${baseUrl.protocol}//${baseUrl.hostname}:4000/api/${params.name}`,
+                {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(params.arguments || {}),
+                }
+            );
+            if (!response.ok) throw new Error(`Tool call failed: ${response.statusText}`);
+            return await response.json();
         }
 
-        return id;
+        throw new Error(`Unsupported sendMessage method: ${method}`);
     }
 
     /**

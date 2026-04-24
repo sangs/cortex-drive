@@ -118,6 +118,30 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         grid: { top: '10%', bottom: '15%', left: '10%', right: '10%', containLabel: true },
         xAxis: { show: false, min: -2000, max: 2000, type: 'value' },
         yAxis: { show: false, min: -500, max: 500, type: 'value' },
+        tooltip: {
+            trigger: 'item',
+            enterable: false,
+            backgroundColor: 'rgba(255,255,255,0.95)',
+            borderColor: '#e2e8f0',
+            borderWidth: 1,
+            padding: [8, 12],
+            textStyle: { color: '#1e293b', fontSize: 12 },
+            formatter: (params: any) => {
+                if (params.dataType !== 'node') return '';
+                const name = params.data.name || String(params.data.id || '');
+                const type = params.data.type || '';
+                const isExpandable = params.data.isExpandable;
+                const isBridge = params.data.hasFederatedBridge;
+                const hint = isExpandable
+                    ? '<span style="color:#6366f1;font-weight:bold">⊕ Double-click to expand</span>'
+                    : isBridge
+                    ? '<span style="color:#f59e0b;font-weight:bold">✦ Federated bridge — click to explore</span>'
+                    : '<span style="color:#64748b">○ Click to view details</span>';
+                return `<div style="font-weight:bold;margin-bottom:4px">${name}</div>
+                        <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">${type}</div>
+                        <div style="font-size:11px">${hint}</div>`;
+            }
+        },
         series: [{
             type: 'graph',
             coordinateSystem: viewMode === 'spine' ? 'cartesian2d' : undefined,
@@ -173,20 +197,41 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                     pos.x = Math.max(-1800, Math.min(1800, pos.x));
                     pos.y = Math.max(-500, Math.min(500, pos.y));
                 }
-                return { 
-                    ...node, ...pos, 
-                    itemStyle: { 
-                        color: theme.hsl, 
-                        shadowBlur: (node.isBentoEligible || node.hasFederatedBridge || node.name === focusYear) ? 30 : 5, 
-                        shadowColor: (node.isBentoEligible || node.hasFederatedBridge) ? '#FFD700' : theme.hsl, // System Gold Pulse for Federated Bridges
-                        borderWidth: 2, borderColor: '#fff'
+                // Visual tier: expandable hubs glow indigo; federated bridges glow gold; leaf nodes subtle
+                const isExpandable = node.isExpandable;
+                const isBridge = node.hasFederatedBridge;
+                const isFocusYear = node.name === focusYear;
+
+                return {
+                    ...node, ...pos,
+                    itemStyle: {
+                        color: theme.hsl,
+                        shadowBlur: isExpandable ? 22 : isBridge || isFocusYear ? 30 : node.isBentoEligible ? 10 : 4,
+                        shadowColor: isExpandable ? 'rgba(99,102,241,0.55)'   // Indigo aura — hub/expandable
+                                   : isBridge     ? '#FFD700'                  // Gold pulse — federated bridge
+                                   : theme.hsl,
+                        borderWidth: isExpandable ? 3 : 2,
+                        borderColor: isExpandable ? 'rgba(99,102,241,0.8)' : '#fff'
                     },
-                    // Expandable Badge: Render a "+" sign for nodes with hidden topology
                     label: {
                         show: true,
                         formatter: (params: any) => {
                             const baseLabel = params.data.name || params.data.title || params.data.topic || params.data.role || String(params.data.id || '');
-                            return params.data.isExpandable ? `+ ${baseLabel}` : baseLabel;
+                            // Rich-text badge for expandable hub nodes
+                            return params.data.isExpandable
+                                ? `{expand|⊕}  ${baseLabel}`
+                                : baseLabel;
+                        },
+                        rich: {
+                            expand: {
+                                backgroundColor: '#6366f1',
+                                color: '#fff',
+                                borderRadius: 8,
+                                padding: [1, 5],
+                                fontSize: 9,
+                                fontWeight: 'bold',
+                                lineHeight: 16
+                            }
                         },
                         position: 'right',
                         fontWeight: 'bold',

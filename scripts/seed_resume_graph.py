@@ -348,6 +348,7 @@ RESUME_CYPHER_QUERIES = [
 
     // Corporate Action
     MERGE (p6:Project {name: "Corporate Action Report Automation"})
+    SET p6.description = "Corporate Action Automation: Eliminated manual report delays by implementing an automation microservice integrated with upstream data sources, improving stakeholder delivery consistency."
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p6)
     MERGE (cat)-[:CONTAINS]->(p6)
     MERGE (n6:PreparatoryNote {name: "STAR: Corp Action Automation"})
@@ -356,6 +357,7 @@ RESUME_CYPHER_QUERIES = [
 
     // Settlement Verification
     MERGE (p7:Project {name: "Settlement Setup Instruction Verification System"})
+    SET p7.description = "Settlement Verification: Led brownfield migration off Sybase dependency, maintaining settlement instruction verification integrity without disruption to order-raising workflows."
     MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p7)
     MERGE (cat)-[:CONTAINS]->(p7)
     MERGE (n7:PreparatoryNote {name: "STAR: Settlement Verification"})
@@ -371,11 +373,13 @@ RESUME_CYPHER_QUERIES = [
     MATCH (cat1:Category {name: "Professional Experience"})
 
     MERGE (pm1:Project {name: "Cloud-Native Platform Orchestration & Workflow System"})
+    SET pm1.description = "Platform Orchestration: Designed Quarkus-based microservices architecture for UI orchestration and multi-stage approval workflows, with Docker/Kubernetes containerization and full CI/CD pipelines at Mezocliq."
     MERGE (p)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm1)
     MERGE (c_mezo)-[:CONTAINS]->(pm1)
     MERGE (cat1)-[:CONTAINS]->(pm1)
 
     MERGE (pm2:Project {name: "Enterprise Access Control, Search, and Distributed Infrastructure"})
+    SET pm2.description = "Access & Search Infrastructure: Architected Cassandra-based fine-grained privilege model and Elasticsearch full-text search across analytics platforms, with Hazelcast distributed caching for sub-second performance."
     MERGE (p)-[:CONTRIBUTED_TO {start: "02/2013", end: "02/2021"}]->(pm2)
     MERGE (c_mezo)-[:CONTAINS]->(pm2)
     MERGE (cat1)-[:CONTAINS]->(pm2)
@@ -384,11 +388,13 @@ RESUME_CYPHER_QUERIES = [
     // Goldman Sachs (06/2007-12/2009)
     MATCH (c_gs:Company {name: "GOLDMAN SACHS & CO."})
     MERGE (pg1:Project {name: "Executive Workflow Management Platform (Ten Thousand Women)"})
+    SET pg1.description = "Executive Workflow Platform: Led J2EE/Struts/Hibernate development of a multi-stage approval workflow system for Goldman Sachs' global Ten Thousand Women initiative, improving operational efficiency for administrators worldwide."
     MERGE (p)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg1)
     MERGE (c_gs)-[:CONTAINS]->(pg1)
     MERGE (cat1)-[:CONTAINS]->(pg1)
 
     MERGE (pg2:Project {name: "Capital Attribution & Market Risk Data Platform"})
+    SET pg2.description = "Market Risk Platform: Implemented capital attribution logic and redesigned market risk data workflows in DB2, improving accuracy and enabling better alignment with evolving risk reporting structures at Goldman Sachs."
     MERGE (p)-[:CONTRIBUTED_TO {start: "06/2007", end: "12/2009"}]->(pg2)
     MERGE (c_gs)-[:CONTAINS]->(pg2)
     MERGE (cat1)-[:CONTAINS]->(pg2)
@@ -397,11 +403,13 @@ RESUME_CYPHER_QUERIES = [
     // GE Healthcare (05/1999-01/2006)
     MATCH (c_ge:Company {name: "GE Healthcare"})
     MERGE (pge1:Project {name: "Radiology Imaging Platform Integration"})
+    SET pge1.description = "PACS Integration: Implemented a universal medical application interface enabling radiologists to access 3D clinical applications directly from PACS systems, demonstrated at RSNA conferences and adopted across GE Healthcare deployments."
     MERGE (p)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge1)
     MERGE (c_ge)-[:CONTAINS]->(pge1)
     MERGE (cat1)-[:CONTAINS]->(pge1)
 
     MERGE (pge2:Project {name: "Image Management & Distributed Event Processing System"})
+    SET pge2.description = "Distributed Imaging Workflows: Designed patient data processing workflows and prototyped distributed event communication using CORBA/ACE, improving reliability and scalability of large-scale medical image management at GE Healthcare."
     MERGE (p)-[:CONTRIBUTED_TO {start: "05/1999", end: "01/2006"}]->(pge2)
     MERGE (c_ge)-[:CONTAINS]->(pge2)
     MERGE (cat1)-[:CONTAINS]->(pge2)
@@ -410,6 +418,7 @@ RESUME_CYPHER_QUERIES = [
     // Macmet (08/1997-04/1999)
     MATCH (c_mac:Company {name: "Macmet India Pvt. Ltd."})
     MERGE (pma:Project {name: "Simulation systems development and evaluation (Macmet)"})
+    SET pma.description = "Simulation Engineering: Developed and evaluated industrial simulation systems as an early-career software engineer, building core foundations in systems development, evaluation methodologies, and engineering software design."
     MERGE (p)-[:CONTRIBUTED_TO {start: "08/1997", end: "04/1999"}]->(pma)
     MERGE (c_mac)-[:CONTAINS]->(pma)
     MERGE (cat1)-[:CONTAINS]->(pma)
@@ -454,6 +463,7 @@ RESUME_CYPHER_QUERIES = [
     MERGE (n_pge2:PreparatoryNote {name: "STAR: GE Workflows"})
     SET n_pge2.text = "Situation: Medical imaging required robust workflows for processing and storage across distributed systems. Task: Design scalable workflows and evaluate distributed communication models. Action: Designed patient data workflows and prototyped event communication using CORBA/ACE. Result: Improved reliability and scalability of imaging workflows for large-scale medical image data."
     MERGE (pge2)-[:HAS_PRIVATE_NOTE]->(n_pge2)
+
     """,
 
     # 8.5 META-CONTEXT: INTERACTIVE RESUME
@@ -704,31 +714,59 @@ def seed_resume_graph():
                 print(f"  -> Running Query {i}/{len(RESUME_CYPHER_QUERIES)}")
                 session.run(query)
 
-            # Step 2: Stamp tenant ID on all resume-domain nodes
+            # Step 2: Stamp identity tier on all resume-domain nodes (Zero-Trust ReBAC model)
             tenant_id = os.getenv("TENANT_ID")
             if not tenant_id or not tenant_id.startswith("org_"):
                 raise EnvironmentError(
                     "CRITICAL: 'TENANT_ID' environment variable is missing or invalid. "
                     "Seeding aborted to prevent accidental data corruption with placeholder IDs."
                 )
+            owner_id = os.getenv("OWNER_USER_ID")
+            if not owner_id or not owner_id.startswith("user_"):
+                raise EnvironmentError(
+                    "CRITICAL: 'OWNER_USER_ID' environment variable is missing or invalid. "
+                    "Seeding aborted to prevent nodes from being created without an owner."
+                )
 
-            print(f"  -> Authoritative Identity confirmed: {tenant_id}")
-            print("  -> Stamping graph with tenant isolation header.")
-            # Use an inclusion list (safer than exclusion — new types are NOT stamped by accident)
+            print(f"  -> Authoritative Identity confirmed: tenant={tenant_id}, owner={owner_id}")
+            print("  -> Stamping graph with Zero-Trust identity tier (SYSTEM / PUBLIC / PRIVATE).")
+
+            # Tier 1: SYSTEM — globally visible structural landmarks
             session.run(
                 """
                 MATCH (n)
                 WHERE any(label IN labels(n) WHERE label IN [
-                    'Person', 'Category', 'Company', 'Project',
-                    'Startup', 'Hackathon', 'ThoughtLeadership', 'Community',
-                    'Publication', 'PreparatoryNote', 'Skill', 'Institution',
-                    'Degree', 'Certification', 'ProfessionalEducation', 'OpenSource',
+                    'Company', 'Institution', 'Degree', 'Category'
+                ])
+                SET n.tenant_id = 'SYSTEM', n.owner_id = 'user_SYSTEM_ADMIN'
+                """
+            )
+
+            # Tier 2: PUBLIC — community benchmarks visible to any authenticated user
+            session.run(
+                """
+                MATCH (n)
+                WHERE any(label IN labels(n) WHERE label IN [
+                    'ThoughtLeadership', 'Publication', 'Hackathon'
+                ])
+                SET n.tenant_id = 'PUBLIC', n.owner_id = 'user_SYSTEM_ADMIN'
+                """
+            )
+
+            # Tier 3: PRIVATE — personal professional memory, gated by owner + tenant
+            session.run(
+                """
+                MATCH (n)
+                WHERE any(label IN labels(n) WHERE label IN [
+                    'Person', 'Project', 'Startup', 'Community', 'PreparatoryNote',
+                    'Skill', 'Certification', 'ProfessionalEducation', 'OpenSource',
                     'SocialLearning', 'ReferenceLink', '__MetaContext__', 'Outcome',
                     'Achievement'
                 ])
-                SET n.tenant_id = $tenant_id
+                SET n.tenant_id = $tenant_id, n.owner_id = $owner_id
                 """,
                 tenant_id=tenant_id,
+                owner_id=owner_id,
             )
 
             # Step 3a: Remove stale year-only duplicate relationships.

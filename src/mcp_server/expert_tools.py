@@ -30,13 +30,21 @@ class ExpertTools:
     
     def _get_security_clause(self, node_var: str) -> str:
         """
-        Unified security clause for zero-trust graph access.
+        Unified Zero-Trust ReBAC security clause.
+        Matches the identity migration spec:
+          - SYSTEM/PUBLIC nodes are globally visible (tenant_id IN ['SYSTEM','PUBLIC'])
+          - PRIVATE nodes require matching tenant AND (owner or HAS_ACCESS grant)
         """
         return f"""
         (
-            {node_var}.owner_id = $requesting_user_id 
-            OR {node_var}.tier IN ['SYSTEM', 'PUBLIC']
-            OR EXISTS {{ (u:User {{id: $requesting_user_id}})-[:HAS_ACCESS*1..2]->({node_var}) }}
+            {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC']
+            OR (
+                {node_var}.tenant_id = $tenant_id
+                AND (
+                    {node_var}.owner_id = $requesting_user_id
+                    OR EXISTS {{ (u:User {{id: $requesting_user_id}})-[:HAS_ACCESS*1..2]->({node_var}) }}
+                )
+            )
         )
         """
 
@@ -965,8 +973,8 @@ class ExpertTools:
         OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)
         WHERE (""" + self._get_security_clause("note") + """) AND NOT 'Category' IN labels(n)
 
-        WITH n, labels(n) AS labels, 
-             collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS ref_urls,
+        WITH n, labels(n) AS labels,
+             collect(DISTINCT coalesce(ref.url, ref.link)) AS ref_urls,
              collect(DISTINCT tech.name) AS technologies,
              collect(DISTINCT note.text) AS narratives
 
@@ -1424,11 +1432,15 @@ class ExpertTools:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def get_cluster_context(self, node_name: str, depth: int = 1, backbone_only: bool = False, domain: str = "all") -> str:
+    def get_cluster_context(self, node_name: str = None, depth: int = 1, backbone_only: bool = False, domain: str = "all", node_id: str = None) -> str:
         """
         Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
         Uses Progressive Discovery (Backbone-First) and Domain Masking to maintain scalability and clarity.
         """
+        # Accept node_id as an alias for node_name (GPT-4o sometimes passes node_id)
+        node_name = node_name or node_id
+        if not node_name:
+            return json.dumps({"error": "node_name is required"})
         safe_depth = max(1, min(depth, 2))
         
         # 1. Progressive Discovery Filter

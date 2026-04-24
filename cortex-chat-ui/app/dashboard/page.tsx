@@ -260,10 +260,23 @@ export default function DashboardPage() {
             });
 
             // Final Integrity Pass: Remove links pointing to non-existent nodes
-            const finalLinks = links.filter(l => 
-                nodes.some(n => n.id === l.source) && 
+            const finalLinks = links.filter(l =>
+                nodes.some(n => n.id === l.source) &&
                 nodes.some(n => n.id === l.target)
             );
+
+            // Interaction Affordance Pass: Tag nodes so the graph can render visual cues.
+            // isExpandable: node is a hub type AND has at least one linked neighbor → shows ⊕ badge + indigo aura
+            // isBentoEligible: all named nodes support single-click Bento → shows glow
+            const HUB_TYPES = new Set([
+                'Company', 'Category', 'Startup', 'Role', 'Person',
+                'Episode', 'Topic', 'Institution', 'Podcast', 'Degree'
+            ]);
+            nodes.forEach(node => {
+                node.isBentoEligible = !!(node.name);
+                const hasLinks = finalLinks.some(l => l.source === node.id || l.target === node.id);
+                node.isExpandable = HUB_TYPES.has(node.type) && hasLinks;
+            });
 
             return { nodes, links: finalLinks };
         } catch (e) {
@@ -411,10 +424,10 @@ export default function DashboardPage() {
             
             // Use get_cluster_context for high-fidelity backbone expansion
             // depth=1, backbone_only=false to hydrate with local details
-            const toolResponse = await callTool("get_cluster_context", { 
-                node_name: node.id || node.name,
+            const toolResponse = await callTool("get_cluster_context", {
+                node_name: node.name,
                 depth: 1,
-                backbone_only: false 
+                backbone_only: false
             });
 
             if (toolResponse && toolResponse.content && toolResponse.content[0]) {
@@ -803,6 +816,21 @@ export default function DashboardPage() {
                                             </div>
                                         );
                                     })}
+                                </div>
+                                {/* Interaction affordance key */}
+                                <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">⊕</span>
+                                        <span className="text-[10px] text-slate-500 font-medium">Double-click to expand</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-slate-400 bg-slate-50 rounded px-1.5 py-0.5">○</span>
+                                        <span className="text-[10px] text-slate-500 font-medium">Click for details</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black text-amber-500 bg-amber-50 rounded px-1.5 py-0.5">✦</span>
+                                        <span className="text-[10px] text-slate-500 font-medium">Federated bridge</span>
+                                    </div>
                                 </div>
                             </div>
                         )}
