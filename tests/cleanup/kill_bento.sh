@@ -1,15 +1,15 @@
 #!/bin/bash
-echo "Stopping BentoML Server..."
-PID=$(lsof -ti:5000)
+echo "Stopping Bento Detail Server on port 8000..."
+PID=$(lsof -ti:8000)
 if [ -n "$PID" ]; then
     kill -9 $PID
-    echo "BentoML Server (PID $PID) stopped on port 5000."
+    echo "Bento Server (PID $PID) stopped."
 else
-    PID=$(pgrep -f "bentoml")
+    PID=$(pgrep -f "cortex_os_mentalmodel_http_server")
     if [ -n "$PID" ]; then
         kill -9 $PID
-        echo "BentoML Server (PID $PID) stopped."
+        echo "Bento Server (PID $PID) stopped by name."
     else
-        echo "No BentoML process found."
+        echo "No Bento Server process found."
     fi
 fi

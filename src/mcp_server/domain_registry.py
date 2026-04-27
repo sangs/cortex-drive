@@ -52,7 +52,7 @@ DOMAIN_MANIFESTS = {
             "trace_sub_label": "Knowledge Evolution",
             "placeholder": "Extracting key technical insights from this episode transcript..."
         },
-        "node_set": CORTEX_DRIVE_NODES + ["ThoughtLeadership", "Publication", "Community", "Category"],
+        "node_set": CORTEX_DRIVE_NODES + ["Publication", "Community"],
         "anchor_labels": ["Episode", "Topic", "Concept", "Technology", "Publication", "Podcast"],
         "backbone_labels": ["Episode", "Topic", "Technology", "Publication", "Concept", "Category", "Podcast", "Source"],
         "realm": "INTERNAL"

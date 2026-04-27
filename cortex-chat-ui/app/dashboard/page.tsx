@@ -35,12 +35,85 @@ const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { 
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
 
-// Progressive Discovery: High-Fidelity backbone nodes that serve as primary landmarks.
-const BACKBONE_LANDMARKS = [
-    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership', 
-    'Institution', 'Degree', 'Certification', 'Podcast', 'Publication', 'Role', 'Year', 'Person',
-    'Episode', 'Topic', 'Chunk'
-];
+// Progressive Discovery: Domain-specific backbone node sets.
+const CAREER_BACKBONE = new Set([
+    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership',
+    'Institution', 'Degree', 'Certification', 'Publication', 'Role', 'Year', 'Person'
+]);
+
+const PODCAST_BACKBONE = new Set([
+    'Podcast', 'Episode', 'Year'
+]);
+
+// Infer the right backbone set from the raw response content.
+// Retained as fallback only — called when domain_signal is absent or "unknown".
+const inferBackbone = (raw: any): Set<string> => {
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const nodes = parsed.nodes || (Array.isArray(parsed) ? parsed : [parsed]);
+        const types = new Set(nodes.map((n: any) => n.type || '').filter(Boolean));
+        if (types.has('Company') || types.has('Role') || types.has('Institution')) return CAREER_BACKBONE;
+        if (types.has('Episode') || types.has('Topic')) return PODCAST_BACKBONE;
+    } catch {}
+    return new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]);
+};
+
+// Select backbone from gateway-declared domain_signal.
+// backboneOnly: false for cross_domain — all node types pass through (bridge nodes span domains).
+const domainToBackbone = (signal: string | undefined, rawData: any): { backbone: Set<string>, backboneOnly: boolean } => {
+    if (signal === 'podcast')      return { backbone: PODCAST_BACKBONE, backboneOnly: true };
+    if (signal === 'career')       return { backbone: CAREER_BACKBONE,  backboneOnly: true };
+    if (signal === 'cross_domain') return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]), backboneOnly: false };
+    return { backbone: inferBackbone(rawData), backboneOnly: true };
+};
+
+// Fix #2: Virtual Grouper Collapse — collapses ≥3 instances of the same type into one representative node.
+// On double-click, the grouper blooms its children directly in the graph without an API call.
+const GROUPER_LABELS: Record<string, string> = {
+    Company: 'Companies', ThoughtLeadership: 'Thought Leadership', Hackathon: 'Hackathons',
+    Institution: 'Institutions', Certification: 'Certifications', Publication: 'Publications',
+    Startup: 'Startups', Degree: 'Education'
+};
+const GROUPABLE_TYPES = new Set(Object.keys(GROUPER_LABELS));
+const GROUPER_MIN_COUNT = 2;
+
+const collapseToGroupers = (nodes: any[], links: any[]): { nodes: any[], links: any[] } => {
+    const byType = new Map<string, any[]>();
+    const ungrouped: any[] = [];
+    nodes.forEach(n => {
+        if (GROUPABLE_TYPES.has(n.type)) {
+            if (!byType.has(n.type)) byType.set(n.type, []);
+            byType.get(n.type)!.push(n);
+        } else {
+            ungrouped.push(n);
+        }
+    });
+    const outNodes: any[] = [...ungrouped];
+    const idRemap = new Map<string, string>();
+    byType.forEach((instances, type) => {
+        if (instances.length < GROUPER_MIN_COUNT) {
+            outNodes.push(...instances);
+        } else {
+            const grouperId = `group-${type}`;
+            outNodes.push({
+                id: grouperId, name: `${GROUPER_LABELS[type]} (${instances.length})`,
+                type, isGrouper: true, groupCount: instances.length,
+                children: instances, isExpandable: true, isBentoEligible: false, val: 18
+            });
+            instances.forEach(n => idRemap.set(n.id, grouperId));
+        }
+    });
+    const seenLinks = new Set<string>();
+    const outLinks: any[] = [];
+    links.forEach(l => {
+        const src = idRemap.get(l.source) || l.source;
+        const tgt = idRemap.get(l.target) || l.target;
+        if (src === tgt) return;
+        const key = `${src}→${tgt}`;
+        if (!seenLinks.has(key)) { seenLinks.add(key); outLinks.push({ ...l, source: src, target: tgt }); }
+    });
+    return { nodes: outNodes, links: outLinks };
+};
 
 export default function DashboardPage() {
     const { user } = useUser();
@@ -54,62 +127,160 @@ export default function DashboardPage() {
     // Layout State
     const [chatWidth, setChatWidth] = useState(40); // percentage
     const [isGraphVisible, setIsGraphVisible] = useState(true);
+    const [isChatVisible, setIsChatVisible] = useState(true);
     const [viewMode, setViewMode] = useState<'brain' | 'spine'>('brain');
     const [selectedNode, setSelectedNode] = useState<any | null>(null);
     const [focusYear, setFocusYear] = useState<string | null>(null);
     const [autoClear, setAutoClear] = useState(true); // TDD: Focus Mode (Clear Map between queries)
-    const [contextualFusion, setContextualFusion] = useState(true); // Always on: Intent-Based Bridge Discovery
     const [hasMounted, setHasMounted] = useState(false);
+    const [nodeExpansionDepth, setNodeExpansionDepth] = useState<Map<string, number>>(new Map());
+    const [domainSignal, setDomainSignal] = useState<string>('career');
+    const [focusedNodeIds, setFocusedNodeIds] = useState<Set<string> | null>(null);
+    const expansionCache = useRef<Map<string, any>>(new Map());
+    const expandedNodes = useRef<Set<string>>(new Set());
+    const expansionContributions = useRef<Map<string, Set<string>>>(new Map());
     const isResizing = useRef(false);
+
+    const computeFocusedIds = (): Set<string> | null => {
+        if (expandedNodes.current.size === 0) return null;
+        const ids = new Set<string>();
+        expandedNodes.current.forEach(key => ids.add(key));
+        expansionContributions.current.forEach(contributed => {
+            contributed.forEach(id => ids.add(id));
+        });
+        return ids;
+    };
+    const singleClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [legendOpen, setLegendOpen] = useState(false);
 
     useEffect(() => {
         setHasMounted(true);
     }, []);
 
     // Helper to parse tool data into graph format
-    const parseDataToGraph = (rawData: any, existingData?: any, backboneOnly: boolean = false) => {
+    const parseDataToGraph = (rawData: any, existingData?: any, backboneOnly: boolean = false, backboneSet?: Set<string>) => {
         try {
             if (!rawData) return existingData || { nodes: [], links: [] };
             const parsedRaw = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
-            
+
             // Start with existing data for additive hydration
             const nodes = existingData ? [...existingData.nodes] : [];
             const links = existingData ? [...existingData.links] : [];
 
             // Helper to decide if a node should even be added in backbone-only mode
+            const allowedSet = backboneSet || new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]);
             const isAllowed = (nodeType: string) => {
                 if (!backboneOnly) return true;
-                return BACKBONE_LANDMARKS.includes(nodeType);
+                return allowedSet.has(nodeType);
             };
 
-            // Direct Graph Fragment Handling (e.g. from expand_node_topology)
+            // Interaction affordance constants — hoisted so both code paths can use them.
+            const TAG_LEAF_TYPES = new Set(['Technology', 'Concept', 'Chunk', 'ReferenceLink', 'Source']);
+            // Nodes that must never appear as canvas nodes (visual noise or privacy).
+            const GRAPH_VISUAL_EXCLUDE = new Set(['Chunk', 'Source', 'ReferenceLink', 'PreparatoryNote', '__MetaContext__']);
+            const ALWAYS_EXPANDABLE = new Set([
+                'Episode', 'Podcast', 'Category', 'Person',
+                'Company', 'Startup', 'Hackathon', 'ThoughtLeadership'
+            ]);
+            const HUB_TYPES = new Set([
+                'Role', 'Topic', 'Institution', 'Degree', 'Project', 'Certification'
+            ]);
+            const applyAffordanceFlags = (nodeList: any[], linkList: any[]) => {
+                nodeList.forEach(node => {
+                    if (TAG_LEAF_TYPES.has(node.type)) {
+                        node.isBentoEligible = false;
+                        node.isExpandable = false;
+                        return;
+                    }
+                    if (node.type === 'Topic') {
+                        node.isBentoEligible = false;
+                        const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
+                        node.isExpandable = hasLinks;
+                        return;
+                    }
+                    node.isBentoEligible = !!(node.name) && !node.isGrouper;
+                    const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
+                    node.isExpandable = node.isGrouper || ALWAYS_EXPANDABLE.has(node.type) || (HUB_TYPES.has(node.type) && hasLinks);
+                });
+            };
+
+            // Direct Graph Fragment Handling (e.g. from get_cluster_context / expand_node_topology)
             if (parsedRaw.nodes && Array.isArray(parsedRaw.nodes)) {
+                const allowedIds = new Set<string>();
                 parsedRaw.nodes.forEach((n: any) => {
                     if (!n.id) return;
+                    if (GRAPH_VISUAL_EXCLUDE.has(n.type)) return;
+                    if (!isAllowed(n.type)) return;
+                    allowedIds.add(n.id);
                     const existingIdx = nodes.findIndex(node => node.id === n.id);
                     if (existingIdx === -1) nodes.push(n);
                     else nodes[existingIdx] = { ...nodes[existingIdx], ...n };
                 });
+
+                const addLinkToArray = (l: any) => {
+                    const exists = links.some(link =>
+                        (link.source === l.source && link.target === l.target) ||
+                        (link.source === l.target && link.target === l.source)
+                    );
+                    if (!exists) links.push({
+                        ...l,
+                        isVirtual: l.isVirtual || l.type === 'VIRTUAL_BRIDGE',
+                        label: l.type === 'VIRTUAL_BRIDGE' ? { show: true, formatter: l.discovery_reason } : undefined
+                    });
+                };
+
                 if (parsedRaw.links && Array.isArray(parsedRaw.links)) {
                     parsedRaw.links.forEach((l: any) => {
-                        const exists = links.some(link => 
-                            (link.source === l.source && link.target === l.target) ||
-                            (link.source === l.target && link.target === l.source)
-                        );
-                        if (!exists) links.push({
-                            ...l,
-                            isVirtual: l.type === 'VIRTUAL_BRIDGE',
-                            label: l.type === 'VIRTUAL_BRIDGE' ? { show: true, formatter: l.discovery_reason } : undefined
-                        });
+                        if (backboneOnly && (!allowedIds.has(l.source) || !allowedIds.has(l.target))) return;
+                        addLinkToArray(l);
                     });
                 }
+                if (parsedRaw.virtual_links && Array.isArray(parsedRaw.virtual_links)) {
+                    parsedRaw.virtual_links.forEach((l: any) => addLinkToArray({ ...l, isVirtual: true }));
+                }
+
+                // Identity anchor detection (mirrors legacy path — needed when gateway returns { nodes, links })
+                if (backboneOnly) {
+                    const degreeCounts = new Map<string, number>();
+                    links.forEach(l => {
+                        degreeCounts.set(l.source, (degreeCounts.get(l.source) || 0) + 1);
+                        degreeCounts.set(l.target, (degreeCounts.get(l.target) || 0) + 1);
+                    });
+                    let maxDegree = 0; let anchorId: string | null = null;
+                    nodes.filter(n => n.type === 'Person').forEach(n => {
+                        const d = degreeCounts.get(n.id) || 0;
+                        if (d > maxDegree) { maxDegree = d; anchorId = n.id; }
+                    });
+                    if (anchorId && maxDegree >= 3) {
+                        const anchor = nodes.find(n => n.id === anchorId);
+                        if (anchor) anchor.isIdentityAnchor = true;
+                    }
+                }
+                // Career backbone: hide individual instances — only Category groupers visible initially (Fix Q2).
+                if (backboneOnly && backboneSet === CAREER_BACKBONE) {
+                    const hasCategoryNodes = nodes.some(n => n.type === 'Category');
+                    if (hasCategoryNodes) {
+                        const CATEGORY_CHILD_TYPES = new Set([
+                            'ThoughtLeadership', 'Degree', 'Certification', 'Hackathon',
+                            'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project'
+                        ]);
+                        const filteredNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
+                        const filteredLinks = links.filter(l =>
+                            filteredNodes.some(n => n.id === l.source) &&
+                            filteredNodes.some(n => n.id === l.target)
+                        );
+                        applyAffordanceFlags(filteredNodes, filteredLinks);
+                        return { nodes: filteredNodes, links: filteredLinks };
+                    }
+                }
+                applyAffordanceFlags(nodes, links);
                 return { nodes, links };
             }
 
             const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [parsedRaw];
 
             const addNode = (node: any) => {
-                if (!node.id || node.type === 'PreparatoryNote') return null;
+                if (!node.id || GRAPH_VISUAL_EXCLUDE.has(node.type)) return null;
                 if (!isAllowed(node.type)) return null; // Backbone-only filter
 
                 const existingIndex = nodes.findIndex(n => n.id === node.id);
@@ -181,7 +352,8 @@ export default function DashboardPage() {
                     addLink({ source: id, target: simId, type: 'SIMILAR' });
                 }
 
-                // 3. Metadata Enrichment (Topics/People) - Removed Tech to stop floating nodes
+                // 3. Metadata Enrichment (Topics/People) — suppressed in backbone-only mode to prevent Q1 over-expansion
+                if (!backboneOnly) {
                 const metadata = [
                     { key: ['topics', 'Topics', 'topic'], type: 'Topic', linkType: 'HAS_TOPIC' },
                     { key: ['person_name', 'Person', 'people'], type: 'Person', linkType: 'HAS_PARTICIPANT' }
@@ -200,6 +372,7 @@ export default function DashboardPage() {
                         });
                     }
                 });
+                }
 
                 // 4. Universal Schema-Agnostic Relationships Array (For Resumes, Projects, etc)
                 const relationships = extractValue(item, ['relationships', 'Relationships', 'edges']);
@@ -265,20 +438,61 @@ export default function DashboardPage() {
                 nodes.some(n => n.id === l.target)
             );
 
-            // Interaction Affordance Pass: Tag nodes so the graph can render visual cues.
-            // isExpandable: node is a hub type AND has at least one linked neighbor → shows ⊕ badge + indigo aura
-            // isBentoEligible: all named nodes support single-click Bento → shows glow
-            const HUB_TYPES = new Set([
-                'Company', 'Category', 'Startup', 'Role', 'Person',
-                'Episode', 'Topic', 'Institution', 'Podcast', 'Degree'
-            ]);
-            nodes.forEach(node => {
-                node.isBentoEligible = !!(node.name);
-                const hasLinks = finalLinks.some(l => l.source === node.id || l.target === node.id);
-                node.isExpandable = HUB_TYPES.has(node.type) && hasLinks;
-            });
+            // Fix #5: Identity Anchor Detection — the Person node with highest degree is the career map root.
+            // EnterpriseGraph pins it to center (x:0, y:0) in brain mode.
+            if (backboneOnly) {
+                const degreeCounts = new Map<string, number>();
+                finalLinks.forEach(l => {
+                    degreeCounts.set(l.source, (degreeCounts.get(l.source) || 0) + 1);
+                    degreeCounts.set(l.target, (degreeCounts.get(l.target) || 0) + 1);
+                });
+                let maxDegree = 0; let anchorId: string | null = null;
+                nodes.filter(n => n.type === 'Person').forEach(n => {
+                    const d = degreeCounts.get(n.id) || 0;
+                    if (d > maxDegree) { maxDegree = d; anchorId = n.id; }
+                });
+                if (anchorId && maxDegree >= 3) {
+                    const anchor = nodes.find(n => n.id === anchorId);
+                    if (anchor) anchor.isIdentityAnchor = true;
+                }
+            }
 
-            return { nodes, links: finalLinks };
+            // Grouper logic — three cases:
+            let processedNodes = nodes;
+            let processedLinks = finalLinks;
+
+            if (backboneOnly && backboneSet === CAREER_BACKBONE) {
+                // Q2: Career backbone mode.
+                // If real Career Category nodes came back from the DB (e.g. "Education & Continuous Learning"),
+                // they ARE the top-level groupers. Hide individual instances — they're revealed by double-clicking.
+                const hasCategoryNodes = nodes.some(n => n.type === 'Category');
+                if (hasCategoryNodes) {
+                    const CATEGORY_CHILD_TYPES = new Set([
+                        'ThoughtLeadership', 'Degree', 'Certification', 'Hackathon',
+                        'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project'
+                    ]);
+                    processedNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
+                    processedLinks = finalLinks.filter(l =>
+                        processedNodes.some(n => n.id === l.source) &&
+                        processedNodes.some(n => n.id === l.target)
+                    );
+                } else {
+                    // No Category nodes — fall back to virtual groupers from collapseToGroupers
+                    const collapsed = collapseToGroupers(nodes, finalLinks);
+                    processedNodes = collapsed.nodes;
+                    processedLinks = collapsed.links;
+                }
+            } else if (!backboneOnly && nodes.some(n => n.type === 'Person') &&
+                       nodes.some(n => n.type === 'ThoughtLeadership' || n.type === 'Hackathon')) {
+                // Q3: Cross-domain mode with ThoughtLeadership/Hackathon present.
+                // Collapse them so the graph starts at grouper level, not individual instances.
+                const collapsed = collapseToGroupers(nodes, finalLinks);
+                processedNodes = collapsed.nodes;
+                processedLinks = collapsed.links;
+            }
+
+            applyAffordanceFlags(processedNodes, processedLinks);
+            return { nodes: processedNodes, links: processedLinks };
         } catch (e) {
             console.error("Failed to parse graph data", e);
             return existingData || { nodes: [], links: [] };
@@ -303,8 +517,7 @@ export default function DashboardPage() {
             // Check for force-refresh flag (per-message)
             const forceRefresh = userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
 
-            // Use the orchestration query with history and Fusion preference
-            const result = await query(userMsg, history, forceRefresh, contextualFusion);
+            const result = await query(userMsg, history, forceRefresh);
             
             // 1. Add assistant text answer
             setMessages(prev => [...prev, { 
@@ -315,8 +528,15 @@ export default function DashboardPage() {
             if (result.raw_data) {
                 // Focus Mode: Clear existing graph if autoClear is enabled
                 const contextGraph = autoClear ? { nodes: [], links: [] } : graphData;
-                // Initial Load Enrichment: Use backboneOnly: true to prevent map flooding
-                const newGraph = parseDataToGraph(result.raw_data, contextGraph, true);
+                // Backbone selection: explicit domain_signal from gateway, inferBackbone only as fallback
+                if (result.domain_signal) setDomainSignal(result.domain_signal);
+                const { backbone, backboneOnly } = domainToBackbone(result.domain_signal, result.raw_data);
+                const newGraph = parseDataToGraph(result.raw_data, contextGraph, backboneOnly, backbone);
+                // New query clears expansion state — cached topology no longer matches new graph
+                expansionCache.current = new Map();
+                expandedNodes.current = new Set();
+                expansionContributions.current = new Map();
+                setFocusedNodeIds(null);
                 setGraphData(newGraph);
                 
                 // 3. Auto-Shift Timeline: Scan for the most relevant year in the results
@@ -364,100 +584,222 @@ export default function DashboardPage() {
             }
         ]);
         setGraphData({ nodes: [], links: [] });
+        setNodeExpansionDepth(new Map());
+        setFocusedNodeIds(null);
+        expansionCache.current = new Map();
+        expandedNodes.current = new Set();
+        expansionContributions.current = new Map();
     };
 
-    const handleNodeClick = async (node: any) => {
-        // Optimistically open Bento instantly
-        setSelectedNode(node);
-        
-        try {
-            console.log("Hydrating node (High-Speed Path via Gateway):", node.id || node.name);
-            const token = await getToken();
-            const response = await fetch('http://localhost:4000/api/get_node_details', {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ 
-                    node_name: node.name, 
-                    node_id: node.element_id || node.id 
-                })
-            });
+    const handleNodeClick = (node: any) => {
+        // Debounce: wait 250ms before opening Bento so a double-click can cancel this first.
+        if (singleClickTimer.current) clearTimeout(singleClickTimer.current);
+        singleClickTimer.current = setTimeout(async () => {
+            singleClickTimer.current = null;
+            // ECharts params.data can be stale when lazyUpdate=true defers a render cycle.
+            // Always resolve affordance flags from React graphData — it is the source of truth.
+            const freshNode = graphData.nodes.find(n => n.id === node.id) ?? node;
+            if (!freshNode.isBentoEligible) return;
+            setSelectedNode(freshNode);
+            try {
+                console.log("Hydrating node (High-Speed Path via Gateway):", freshNode.id || freshNode.name);
+                const token = await getToken();
+                const response = await fetch('http://localhost:4000/api/get_node_details', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        node_name: freshNode.name,
+                        node_id: freshNode.element_id || freshNode.id
+                    })
+                });
 
-            if (response.ok) {
-                const results = await response.json();
-                // handle direct result or tool-wrapped result
-                const payload = Array.isArray(results) ? results[0] : (results.result?.content ? JSON.parse(results.result.content[0].text)[0] : results);
-                
-                if (payload && !payload.error) {
-                    setSelectedNode((prev: any) => {
-                        if (!prev || prev.id !== node.id) return prev;
-                        
-                        // DEEP PROPERTY EXTRACTION: Handle nested properties or tool-specific keys
-                        const p = payload.properties || payload;
-                        const narratives = payload.narratives || (p.text ? [p.text] : (p.description ? [p.description] : []));
-                        const description = narratives.length > 0 ? narratives.join('\n\n') : (p.description || prev.description);
-                        const tech = p.technologies || p.tech_stack || p.tools || prev.technologies;
-                        const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
-                        
-                        return {
-                            ...prev,
-                            ...p,
-                            description,
-                            text: description,
-                            technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
-                            links: Array.from(new Set([...(prev.links || []), ...refLinks]))
-                        };
-                    });
+                if (response.ok) {
+                    const results = await response.json();
+                    const payload = Array.isArray(results) ? results[0] : (results.result?.content ? JSON.parse(results.result.content[0].text)[0] : results);
+
+                    if (payload && !payload.error) {
+                        setSelectedNode((prev: any) => {
+                            if (!prev || prev.id !== freshNode.id) return prev;
+                            const p = payload.properties || payload;
+                            const narratives = payload.narratives || (p.text ? [p.text] : (p.description ? [p.description] : []));
+                            const description = narratives.length > 0 ? narratives.join('\n\n') : (p.description || prev.description);
+                            const tech = p.technologies || p.tech_stack || p.tools || prev.technologies;
+                            const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
+                            return {
+                                ...prev, ...p,
+                                description,
+                                text: description,
+                                technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
+                                links: Array.from(new Set([...(prev.links || []), ...refLinks]))
+                            };
+                        });
+                    }
                 }
+            } catch (e) {
+                console.error("Progressive hydration failed:", e);
             }
-        } catch (e) {
-            console.error("Progressive hydration failed:", e);
-        }
+        }, 250);
     };
 
     const handleNodeDoubleClick = async (node: any) => {
+        // Cancel any pending single-click (bento open) — double-click takes precedence.
+        if (singleClickTimer.current) {
+            clearTimeout(singleClickTimer.current);
+            singleClickTimer.current = null;
+        }
+
+        // Resolve fresh affordance flags from React state — ECharts params.data can be stale.
+        const freshNode = graphData.nodes.find(n => n.id === node.id) ?? node;
+
+        // Non-expandable node: open bento if eligible, otherwise ignore double-click.
+        if (!freshNode.isGrouper && !freshNode.isExpandable) {
+            if (freshNode.isBentoEligible) setSelectedNode(freshNode);
+            return;
+        }
+
+        // Grouper expansion is client-side — bloom children without an API call.
+        // Rewires both physical links and virtual_links (gold dashed VIRTUAL_BRIDGE)
+        // so Q3 bridge lines survive after the ThoughtLeadership grouper is expanded.
+        if (freshNode.isGrouper && freshNode.children) {
+            setGraphData(prev => {
+                const newNodes = prev.nodes.filter(n => n.id !== freshNode.id).concat(freshNode.children);
+
+                // Rewire all links (physical and virtual) from the grouper to each child.
+                // Use { ...gl, source, target } spread to preserve isVirtual, label, and
+                // other link properties so gold dashed VIRTUAL_BRIDGE lines survive expansion.
+                const grouperLinks = prev.links.filter(l => l.source === freshNode.id || l.target === freshNode.id);
+                const remainingLinks = prev.links.filter(l => l.source !== freshNode.id && l.target !== freshNode.id);
+                const expandedLinks = [...remainingLinks];
+                freshNode.children.forEach((child: any) => {
+                    grouperLinks.forEach((gl: any) => {
+                        const src = gl.source === freshNode.id ? child.id : gl.source;
+                        const tgt = gl.target === freshNode.id ? child.id : gl.target;
+                        if (!expandedLinks.some(el => el.source === src && el.target === tgt)) {
+                            expandedLinks.push({ ...gl, source: src, target: tgt });
+                        }
+                    });
+                });
+
+                return { ...prev, nodes: newNodes, links: expandedLinks };
+            });
+            return;
+        }
+
+        const nodeKey = freshNode.id || freshNode.name;
+
+        // TOGGLE COLLAPSE: node already expanded → remove its contributed nodes
+        if (expandedNodes.current.has(nodeKey)) {
+            setGraphData(prev => {
+                const contributed = expansionContributions.current.get(nodeKey) || new Set<string>();
+                // Nodes shared with other expanded nodes must not be removed
+                const sharedIds = new Set<string>();
+                expandedNodes.current.forEach(otherId => {
+                    if (otherId === nodeKey) return;
+                    (expansionContributions.current.get(otherId) || new Set()).forEach(id => sharedIds.add(id));
+                });
+                const toRemove = new Set([...contributed].filter(id => !sharedIds.has(id)));
+                const newNodes = prev.nodes.filter(n => !toRemove.has(n.id));
+                const newLinks = prev.links.filter(l =>
+                    newNodes.some(n => n.id === l.source) && newNodes.some(n => n.id === l.target)
+                );
+                return { nodes: newNodes, links: newLinks };
+            });
+            expandedNodes.current.delete(nodeKey);
+            expansionContributions.current.delete(nodeKey);
+            setFocusedNodeIds(() => computeFocusedIds());
+            return;
+        }
+
+        // EXPAND FROM CACHE: no server call
+        if (expansionCache.current.has(nodeKey)) {
+            console.log("Expanding from cache:", nodeKey);
+            setGraphData(prev => {
+                const cached = expansionCache.current.get(nodeKey);
+                const existingIds = new Set(prev.nodes.map((n: any) => n.id as string));
+                const newGraph = parseDataToGraph(cached, prev);
+                const contributed = new Set<string>(newGraph.nodes.filter((n: any) => !existingIds.has(n.id)).map((n: any) => n.id as string));
+                expansionContributions.current.set(nodeKey, contributed);
+                expandedNodes.current.add(nodeKey);
+                return newGraph;
+            });
+            setFocusedNodeIds(() => computeFocusedIds());
+            return;
+        }
+
+        // EXPAND FROM SERVER: fetch and cache
         try {
-            console.log("Expanding topology for:", node.id || node.name);
+            console.log("Expanding topology for:", nodeKey);
             setIsProcessing(true);
-            
-            // Use get_cluster_context for high-fidelity backbone expansion
-            // depth=1, backbone_only=false to hydrate with local details
             const toolResponse = await callTool("get_cluster_context", {
-                node_name: node.name,
+                node_name: freshNode.name,
                 depth: 1,
                 backbone_only: false
             });
 
-            if (toolResponse && toolResponse.content && toolResponse.content[0]) {
+            if (toolResponse?.content?.[0]) {
                 const results = JSON.parse(toolResponse.content[0].text);
-                // ADDITIVE HYDRATION: Pass current graphData to parseDataToGraph
-                const newGraph = parseDataToGraph(results, graphData);
-                setGraphData(newGraph);
+                expansionCache.current.set(nodeKey, results);
+                setGraphData(prev => {
+                    const existingIds = new Set(prev.nodes.map((n: any) => n.id as string));
+                    const newGraph = parseDataToGraph(results, prev);
+                    const contributed = new Set<string>(newGraph.nodes.filter((n: any) => !existingIds.has(n.id)).map((n: any) => n.id as string));
+                    expansionContributions.current.set(nodeKey, contributed);
+                    expandedNodes.current.add(nodeKey);
+                    return newGraph;
+                });
+                setFocusedNodeIds(() => computeFocusedIds());
+                setNodeExpansionDepth(prev => new Map(prev).set(freshNode.id, (prev.get(freshNode.id) || 0) + 1));
             }
         } catch (e) {
-            console.error("Progressive hydration failed:", e);
+            console.error("Node expansion failed:", e);
         } finally {
             setIsProcessing(false);
         }
     };
 
-    const handleDiscoverBridge = async (nodeId: string) => {
+    const handleDiscoverBridge = async (nodeId: string, node?: any) => {
         try {
-            console.log("Identifying cross-domain bridges for:", nodeId);
+            console.log("Identifying cross-domain bridges for:", node?.name || nodeId);
             setIsProcessing(true);
-            const toolResponse = await callTool("connect_knowledge_on_demand", { 
+
+            // Infer the best target domain: if the source is a podcast type, bridge to professional; vice versa
+            const podcastTypes = new Set(['Episode', 'Podcast', 'Topic']);
+            const sourceDomain = node?.type && podcastTypes.has(node.type) ? 'professional' : 'podcast';
+
+            const toolResponse = await callTool("connect_knowledge_on_demand", {
                 source_node_id: nodeId,
-                target_domain: "podcast" // Cross-silo to podcasts by default
+                source_node_name: node?.name || "",   // name-based fallback for robustness
+                target_domain: sourceDomain,
+                min_anchors: 1,
+                limit: 5
             });
-            
+
             if (toolResponse && toolResponse.content && toolResponse.content[0]) {
                 const results = JSON.parse(toolResponse.content[0].text);
+
                 if (results.virtual_links && results.virtual_links.length > 0) {
+                    // Merge bridge nodes and virtual links into the current graph (additive)
                     const newGraph = parseDataToGraph(results, graphData);
                     setGraphData(newGraph);
                 }
+
+                // Surface the bridge summary in chat so the user understands what was found
+                if (results.bridge_summary) {
+                    setMessages(prev => [...prev, {
+                        role: "assistant",
+                        content: `**Knowledge Bridge Discovery**\n\n${results.bridge_summary}\n\nGold dashed connections on the graph show the inferred links. Nothing was written to the graph — these are session-only virtual bridges.`
+                    }]);
+                } else if (!results.virtual_links?.length) {
+                    setMessages(prev => [...prev, {
+                        role: "assistant",
+                        content: `**Knowledge Bridge Discovery**\n\nNo cross-domain bridges found for **${node?.name || nodeId}** with the current anchor threshold. Try expanding the node first (double-click) to enrich its context, then retry.`
+                    }]);
+                }
+                // Close Bento to reveal the updated graph with gold dashed lines
+                setSelectedNode(null);
             }
         } catch (e) {
             console.error("Bridge discovery failed:", e);
@@ -648,7 +990,8 @@ export default function DashboardPage() {
             {/* Split Content Layer (30/70) */}
             <div className="flex-1 flex overflow-hidden relative">
                 {/* 1. Analysis Pane (Chat/Narrative) */}
-                <section 
+                {isChatVisible && (
+                <section
                     style={{ width: isGraphVisible ? `${chatWidth}%` : '100%' }}
                     className="flex flex-col border-r border-border relative bg-white shrink-0 z-10"
                 >
@@ -657,6 +1000,13 @@ export default function DashboardPage() {
                             <History className="w-4 h-4 text-primary" />
                             <span className="text-xs font-black uppercase tracking-widest text-primary">Institutional Memory</span>
                         </div>
+                        <button
+                            onClick={() => setIsChatVisible(false)}
+                            className="p-2 rounded-xl text-slate-400 hover:text-primary hover:bg-slate-100 transition-all"
+                            title="Collapse analysis panel"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
                     </header>
 
                     <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-32">
@@ -707,9 +1057,10 @@ export default function DashboardPage() {
                         </div>
                     </div>
                 </section>
+                )}
 
                 {/* Resizable Divider */}
-                {isGraphVisible && (
+                {isGraphVisible && isChatVisible && (
                     <div 
                         onMouseDown={startResizing}
                         className="w-1 cursor-col-resize bg-border hover:bg-primary/30 transition-colors flex items-center justify-center group z-30"
@@ -735,6 +1086,16 @@ export default function DashboardPage() {
                         <div className="w-full h-full relative">
                             {/* Visual Action Bar */}
                             <div className="absolute top-6 left-6 z-20 flex items-center gap-6">
+                                {/* Restore Analysis Panel */}
+                                {!isChatVisible && (
+                                    <button
+                                        onClick={() => setIsChatVisible(true)}
+                                        className="bg-white/80 hover:bg-indigo-50 border border-border hover:border-indigo-200 text-slate-600 hover:text-primary px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg"
+                                    >
+                                        <ChevronRight className="w-4 h-4" />
+                                        Analysis
+                                    </button>
+                                )}
                                 {/* Perspective Switcher */}
                                 <div className="flex bg-white/80 backdrop-blur-md border border-border p-1 rounded-2xl shadow-xl ring-1 ring-primary/5">
                                     <button 
@@ -766,6 +1127,10 @@ export default function DashboardPage() {
                                         onClick={() => {
                                             setGraphData({ nodes: [], links: [] });
                                             setSelectedNode(null);
+                                            setNodeExpansionDepth(new Map());
+                                            expansionCache.current = new Map();
+                                            expandedNodes.current = new Set();
+                                            expansionContributions.current = new Map();
                                         }}
                                         className="bg-white/80 hover:bg-rose-50 border border-border hover:border-rose-200 text-slate-600 hover:text-rose-600 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg"
                                     >
@@ -775,11 +1140,13 @@ export default function DashboardPage() {
                                 )}
                             </div>
 
-                            <EnterpriseGraph 
-                                data={graphData} 
+                            <EnterpriseGraph
+                                data={graphData}
                                 focusYear={focusYear}
                                 viewMode={viewMode}
                                 selectedNodeId={selectedNode?.id}
+                                focusedNodeIds={focusedNodeIds}
+                                expandedNodeKeys={expandedNodes.current}
                                 onNodeClick={handleNodeClick}
                                 onNodeDoubleClick={handleNodeDoubleClick}
                                 onTimelineChange={(year) => setFocusYear(year)}
@@ -787,12 +1154,13 @@ export default function DashboardPage() {
 
                             {selectedNode && (
                                 <div className="absolute inset-y-0 right-0 z-40 pointer-events-auto">
-                                    <BentoDetailPanel 
-                                        node={selectedNode} 
+                                    <BentoDetailPanel
+                                        node={selectedNode}
                                         allNodes={graphData.nodes}
                                         allLinks={graphData.links}
-                                        onClose={() => setSelectedNode(null)} 
-                                        onDiscoverBridge={(nodeId) => handleDiscoverBridge(nodeId)}
+                                        onClose={() => setSelectedNode(null)}
+                                        onDiscoverBridge={(nodeId) => handleDiscoverBridge(nodeId, selectedNode)}
+                                        domainSignal={domainSignal}
                                     />
                                 </div>
                             )}
@@ -800,38 +1168,46 @@ export default function DashboardPage() {
 
                         {/* Visual Ontology Legend */}
                         {graphData.nodes.length > 0 && (
-                            <div className="absolute top-[80px] left-6 z-20 bg-white/90 backdrop-blur-xl border border-border rounded-2xl p-5 flex flex-col gap-3 pointer-events-none transition-all shadow-2xl ring-1 ring-primary/5">
-                                <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
-                                     Active Context Domain
-                                </div>
-                                <div className="flex flex-wrap gap-5 max-w-xs">
-                                    {Array.from(new Set(graphData.nodes.map(n => n.type)))
-                                        .filter(type => type !== "PreparatoryNote")
-                                        .map(type => {
-                                        const theme = getThemeForType(type);
-                                        return (
-                                            <div key={type} className="flex items-center gap-2.5">
-                                                <div className={`w-3 h-3 rounded-full ${theme.tailwind} ring-2 ring-white shadow-lg`} />
-                                                <span className="text-[11px] text-slate-700 font-bold capitalize tracking-tight">{type}</span>
+                            <div className="absolute top-[80px] left-6 z-20 bg-white/90 backdrop-blur-xl border border-border rounded-2xl shadow-2xl ring-1 ring-primary/5 transition-all">
+                                <button
+                                    onClick={() => setLegendOpen(o => !o)}
+                                    className="flex items-center gap-2 w-full px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                                >
+                                    <span className="flex-1 text-left">Active Context Domain</span>
+                                    <span className="text-[11px] text-slate-400">{legendOpen ? "▲" : "▼"}</span>
+                                </button>
+                                {legendOpen && (
+                                    <div className="px-4 pb-4 flex flex-col gap-3">
+                                        <div className="flex flex-wrap gap-5 max-w-xs">
+                                            {Array.from(new Set(graphData.nodes.map(n => n.type)))
+                                                .filter(type => type !== "PreparatoryNote")
+                                                .map(type => {
+                                                const theme = getThemeForType(type);
+                                                return (
+                                                    <div key={type} className="flex items-center gap-2.5">
+                                                        <div className={`w-3 h-3 rounded-full ${theme.tailwind} ring-2 ring-white shadow-lg`} />
+                                                        <span className="text-[11px] text-slate-700 font-bold capitalize tracking-tight">{type}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                        {/* Interaction affordance key */}
+                                        <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">⊕</span>
+                                                <span className="text-[10px] text-slate-500 font-medium">Double-click to expand</span>
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                                {/* Interaction affordance key */}
-                                <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">⊕</span>
-                                        <span className="text-[10px] text-slate-500 font-medium">Double-click to expand</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-black text-slate-400 bg-slate-50 rounded px-1.5 py-0.5">○</span>
+                                                <span className="text-[10px] text-slate-500 font-medium">Click for details</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-black text-amber-500 bg-amber-50 rounded px-1.5 py-0.5">✦</span>
+                                                <span className="text-[10px] text-slate-500 font-medium">Federated bridge</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-black text-slate-400 bg-slate-50 rounded px-1.5 py-0.5">○</span>
-                                        <span className="text-[10px] text-slate-500 font-medium">Click for details</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-black text-amber-500 bg-amber-50 rounded px-1.5 py-0.5">✦</span>
-                                        <span className="text-[10px] text-slate-500 font-medium">Federated bridge</span>
-                                    </div>
-                                </div>
+                                )}
                             </div>
                         )}
                     </section>

@@ -1,0 +1,22 @@
+{
+  "podcast": {
+    "node_types": [
+      "Podcast", "Episode", "Chunk", "Topic", "Concept",
+      "ReferenceLink", "Person", "Technology", "Source",
+      "Publication", "Community"
+    ]
+  },
+  "career": {
+    "node_types": [
+      "Project", "Purpose", "Objective", "Value", "Benefit", "Metric",
+      "Outcome", "SuccessCriteria", "MeasurableResult", "Approach",
+      "Plan", "Method", "MethodStep", "Tool", "Timeline", "Milestone",
+      "Team", "Role", "Responsibility", "Task", "Deliverable", "TeamMember",
+      "Company", "Degree", "Institution", "Skill", "Category", "PreparatoryNote",
+      "Startup", "Hackathon", "Certification", "Publication", "OpenSource",
+      "SocialLearning", "ProfessionalEducation", "Year",
+      "ExternalSilo", "DataLake", "GitHub", "Confluence", "TableMetadata", "PageMetadata",
+      "ThoughtLeadership", "Community", "Person"
+    ]
+  }
+}

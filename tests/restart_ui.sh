@@ -18,9 +18,9 @@ if [ -n "$PID" ]; then
   sleep 1
 fi
 
-# 2. Start Next.js process in background
-echo "Starting UI: $UI_DIR (Force port 3001)..."
-cd "$UI_DIR" && npm run dev -- -p "$PORT" > "../$LOG_FILE" 2>&1 &
+# 2. Clear Next.js cache and start process in background
+echo "Starting UI: $UI_DIR on port $PORT..."
+cd "$UI_DIR" && rm -rf .next && npx next dev > "../$LOG_FILE" 2>&1 &
 NEW_PID=$!
 
 echo "✅ Started (PID: $NEW_PID). Logs redirected to $LOG_FILE"

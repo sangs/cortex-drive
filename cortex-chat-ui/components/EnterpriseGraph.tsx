@@ -5,9 +5,16 @@ import ReactECharts from 'echarts-for-react';
 import { getThemeForType } from '@/utils/GraphTheme';
 
 const BACKBONE_LANDMARKS = [
-    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership', 
+    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership',
     'Institution', 'Degree', 'ProfessionalExperience', 'Certification', 'Podcast', 'Publication', 'Project', 'Role', 'Year', 'Person'
 ];
+
+// Podcast-domain relationship types — rendered in teal to distinguish from career (indigo).
+const PODCAST_REL_FAMILIES = new Set([
+    'HAS_EPISODE', 'HAS_TOPIC', 'COVERS_TECHNOLOGY', 'COVERS_CONCEPT',
+    'GUEST_ON', 'HOSTS', 'INTERVIEWED_BY', 'FEATURE_GUEST',
+    'HAS_SOURCE', 'MENTIONED', 'LISTENS_TO', 'SUBSCRIBES_TO', 'HAS_CHUNK'
+]);
 
 interface EnterpriseGraphProps {
     data: { nodes: any[], links: any[] };
@@ -17,10 +24,12 @@ interface EnterpriseGraphProps {
     viewMode?: 'brain' | 'spine';
     focusYear?: string | null;
     selectedNodeId?: string | null;
+    focusedNodeIds?: Set<string> | null;
+    expandedNodeKeys?: Set<string>;
 }
 
-const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({ 
-    data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId 
+const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
+    data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId, focusedNodeIds, expandedNodeKeys
 }) => {
     const chartRef = useRef<any>(null);
     const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map()); 
@@ -101,6 +110,16 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         return ids;
     }, [processed.links, focusYear, viewMode]);
 
+    // 3a. Degree map — used for variable node sizing
+    const degreeMap = useMemo(() => {
+        const map = new Map<string, number>();
+        processed.links.forEach(l => {
+            map.set(l.source, (map.get(l.source) || 0) + 1);
+            map.set(l.target, (map.get(l.target) || 0) + 1);
+        });
+        return map;
+    }, [processed.links]);
+
     // 3. Filter nodes based on viewMode context + Relational relevance
     const visibleNodes = useMemo(() => processed.nodes.filter(n => {
         // Sticky Selection: The currently selected node must ALWAYS remain visible
@@ -113,7 +132,25 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         return true;
     }), [processed.nodes, viewMode, relevantIds, selectedNodeId]);
 
-    const getOption = () => ({
+    const getOption = () => {
+        // Pre-compute initial angular positions for the identity anchor's direct neighbors
+        // so the force simulation starts from a radial layout rather than a random cluster.
+        const anchorNode = visibleNodes.find((n: any) => n.isIdentityAnchor);
+        const neighborInitialPos = new Map<string, {x: number, y: number}>();
+        if (anchorNode && viewMode === 'brain') {
+            const directNeighborIds: string[] = [];
+            processed.links.forEach(l => {
+                if (l.source === anchorNode.id && !pinnedRef.current.has(l.target)) directNeighborIds.push(l.target);
+                else if (l.target === anchorNode.id && !pinnedRef.current.has(l.source)) directNeighborIds.push(l.source);
+            });
+            const unique = [...new Set(directNeighborIds)];
+            unique.forEach((id, idx) => {
+                const angle = (idx / unique.length) * 2 * Math.PI - Math.PI / 2;
+                neighborInitialPos.set(id, { x: Math.round(380 * Math.cos(angle)), y: Math.round(380 * Math.sin(angle)) });
+            });
+        }
+
+        return ({
         backgroundColor: 'transparent',
         grid: { top: '10%', bottom: '15%', left: '10%', right: '10%', containLabel: true },
         xAxis: { show: false, min: -2000, max: 2000, type: 'value' },
@@ -131,12 +168,18 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 const name = params.data.name || String(params.data.id || '');
                 const type = params.data.type || '';
                 const isExpandable = params.data.isExpandable;
+                const isBentoEligible = params.data.isBentoEligible;
                 const isBridge = params.data.hasFederatedBridge;
-                const hint = isExpandable
-                    ? '<span style="color:#6366f1;font-weight:bold">⊕ Double-click to expand</span>'
-                    : isBridge
-                    ? '<span style="color:#f59e0b;font-weight:bold">✦ Federated bridge — click to explore</span>'
-                    : '<span style="color:#64748b">○ Click to view details</span>';
+                let hint = '';
+                if (isExpandable && isBentoEligible) {
+                    hint = '<span style="color:#6366f1;font-weight:bold">⊕ Double-click to expand</span> &nbsp;·&nbsp; <span style="color:#0d9488;font-weight:bold">ⓘ Click for details</span>';
+                } else if (isExpandable) {
+                    hint = '<span style="color:#6366f1;font-weight:bold">⊕ Double-click to expand</span>';
+                } else if (isBridge) {
+                    hint = '<span style="color:#f59e0b;font-weight:bold">✦ Federated bridge — click to explore</span>';
+                } else if (isBentoEligible) {
+                    hint = '<span style="color:#0d9488;font-weight:bold">ⓘ Click for details</span>';
+                }
                 return `<div style="font-weight:bold;margin-bottom:4px">${name}</div>
                         <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">${type}</div>
                         <div style="font-size:11px">${hint}</div>`;
@@ -147,33 +190,67 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             coordinateSystem: viewMode === 'spine' ? 'cartesian2d' : undefined,
             layout: viewMode === 'spine' ? 'none' : 'force',
             force: {
-                repulsion: 1500,
-                gravity: 0.1,
-                edgeLength: 150,
+                repulsion: 3500,
+                gravity: 0.05,
+                edgeLength: [160, 320],
                 layoutAnimation: true,
-                friction: 0.8
+                friction: 0.25
             },
             symbol: (val: any, params: any) => params.data.type === 'Year' ? 'diamond' : 'circle',
             symbolSize: (val: any, params: any) => {
+                if (params.data.isIdentityAnchor) return 70;
                 if (viewMode === 'spine') {
                     if (params.data.name === focusYear) return 100;
                     return params.data.type === 'Year' ? 40 : 30;
                 }
-                return params.data.isBackbone ? 50 : 30;
+                if (params.data.isGrouper) return 55;
+                if (params.data.isBackbone) return 50;
+                const degree = degreeMap.get(params.data.id) || 0;
+                return Math.min(20 + degree * 3, 55);
             },
+            labelLayout: { hideOverlap: true },
             roam: true,
             draggable: viewMode === 'brain',
             selectedMode: 'single', 
             focusNodeAdjacency: true, 
-            label: { show: true, position: 'right', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.7)', borderRadius: 4, padding: [2,4] },
-            edgeSymbol: ['none', 'none'],
+            label: {
+                show: true,
+                position: 'right',
+                fontWeight: 'bold',
+                backgroundColor: 'rgba(255,255,255,0.7)',
+                borderRadius: 4,
+                padding: [2, 4],
+                formatter: (params: any) => {
+                    const baseLabel = params.data.name || params.data.title || params.data.topic || params.data.role || String(params.data.id || '');
+                    if (params.data.isIdentityAnchor) return `{anchor|★}  ${baseLabel}`;
+                    if (params.data.isExpanded && params.data.isBentoEligible) return `{collapse|⊖} {bento|ⓘ}  ${baseLabel}`;
+                    if (params.data.isExpanded) return `{collapse|⊖}  ${baseLabel}`;
+                    if (params.data.isGrouper) return `{expand|⊕}  ${baseLabel}`;
+                    if (params.data.isExpandable && params.data.isBentoEligible) return `{expand|⊕} {bento|ⓘ}  ${baseLabel}`;
+                    if (params.data.isExpandable) return `{expand|⊕}  ${baseLabel}`;
+                    if (params.data.isBentoEligible) return `{bento|ⓘ}  ${baseLabel}`;
+                    return baseLabel;
+                },
+                rich: {
+                    expand:   { backgroundColor: '#6366f1', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
+                    collapse: { backgroundColor: '#f97316', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
+                    bento:    { backgroundColor: '#0d9488', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
+                    anchor:   { backgroundColor: '#4f46e5', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 }
+                }
+            },
             data: visibleNodes.map(node => {
                 const theme = getThemeForType(node.type);
                 let pos: any = {};
                 // Apply pinned positions in Brain mode
-                if (viewMode === 'brain' && pinnedRef.current.has(node.id)) {
+                // Fix #5: Identity anchor pinned to center; user-dragged pins take precedence
+                if (node.isIdentityAnchor && viewMode === 'brain' && !pinnedRef.current.has(node.id)) {
+                    pos = { x: 0, y: 0, fixed: true };
+                } else if (viewMode === 'brain' && pinnedRef.current.has(node.id)) {
                     const pinned = pinnedRef.current.get(node.id)!;
                     pos = { x: pinned.x, y: pinned.y, fixed: true };
+                } else if (viewMode === 'brain' && neighborInitialPos.has(node.id)) {
+                    const p = neighborInitialPos.get(node.id)!;
+                    pos = { x: p.x, y: p.y };
                 }
 
                 if (viewMode === 'spine') {
@@ -197,73 +274,76 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                     pos.x = Math.max(-1800, Math.min(1800, pos.x));
                     pos.y = Math.max(-500, Math.min(500, pos.y));
                 }
-                // Visual tier: expandable hubs glow indigo; federated bridges glow gold; leaf nodes subtle
+                // Visual tier: identity anchor glows violet; groupers glow indigo-heavy; bridges glow gold; bento teal; leaves subtle
                 const isExpandable = node.isExpandable;
+                const isBentoEligible = node.isBentoEligible;
                 const isBridge = node.hasFederatedBridge;
                 const isFocusYear = node.name === focusYear;
+                const isAnchor = node.isIdentityAnchor;
+                const isGrouper = node.isGrouper;
 
+                // Leaf nodes (no badges) show label only on hover to reduce clutter
+                const showLabelAtRest = !!(isExpandable || isBentoEligible || isAnchor || isGrouper);
+
+                const isDimmed = !!(focusedNodeIds && focusedNodeIds.size > 0 && !focusedNodeIds.has(node.id));
+                const isExpanded = !!(expandedNodeKeys && expandedNodeKeys.has(node.id));
                 return {
                     ...node, ...pos,
+                    // Expose isExpanded in the data so the label formatter can read it
+                    isExpanded,
+                    label: { show: showLabelAtRest && !isDimmed },
+                    emphasis: { label: { show: true } },
                     itemStyle: {
-                        color: theme.hsl,
-                        shadowBlur: isExpandable ? 22 : isBridge || isFocusYear ? 30 : node.isBentoEligible ? 10 : 4,
-                        shadowColor: isExpandable ? 'rgba(99,102,241,0.55)'   // Indigo aura — hub/expandable
-                                   : isBridge     ? '#FFD700'                  // Gold pulse — federated bridge
+                        color: isAnchor ? '#4f46e5' : (isGrouper ? '#6366f1' : theme.hsl),
+                        shadowBlur: isDimmed ? 0 : (isAnchor ? 40 : isGrouper ? 28 : isExpandable ? 22 : isBridge || isFocusYear ? 30 : isBentoEligible ? 14 : 4),
+                        shadowColor: isAnchor    ? 'rgba(79,70,229,0.7)'
+                                   : isGrouper   ? 'rgba(99,102,241,0.65)'
+                                   : isExpandable? 'rgba(99,102,241,0.55)'
+                                   : isBridge    ? '#FFD700'
+                                   : isBentoEligible ? 'rgba(13,148,136,0.45)'
                                    : theme.hsl,
-                        borderWidth: isExpandable ? 3 : 2,
-                        borderColor: isExpandable ? 'rgba(99,102,241,0.8)' : '#fff'
+                        borderWidth: isAnchor ? 4 : isGrouper ? 3 : isExpanded ? 4 : isExpandable ? 3 : isBentoEligible ? 2 : 1,
+                        borderColor: isExpanded ? '#f97316'
+                                   : isAnchor ? '#fff'
+                                   : isGrouper ? 'rgba(99,102,241,0.8)'
+                                   : isExpandable ? 'rgba(99,102,241,0.8)'
+                                   : isBentoEligible ? 'rgba(13,148,136,0.75)'
+                                   : 'rgba(255,255,255,0.4)',
+                        opacity: isDimmed ? 0.15 : 1
                     },
-                    label: {
-                        show: true,
-                        formatter: (params: any) => {
-                            const baseLabel = params.data.name || params.data.title || params.data.topic || params.data.role || String(params.data.id || '');
-                            // Rich-text badge for expandable hub nodes
-                            return params.data.isExpandable
-                                ? `{expand|⊕}  ${baseLabel}`
-                                : baseLabel;
-                        },
-                        rich: {
-                            expand: {
-                                backgroundColor: '#6366f1',
-                                color: '#fff',
-                                borderRadius: 8,
-                                padding: [1, 5],
-                                fontSize: 9,
-                                fontWeight: 'bold',
-                                lineHeight: 16
-                            }
-                        },
-                        position: 'right',
-                        fontWeight: 'bold',
-                        backgroundColor: 'rgba(255,255,255,0.7)',
-                        borderRadius: 4,
-                        padding: [2, 4]
-                    }
                 };
             }),
             links: processed.links.filter(l => visibleNodes.some(n => n.id === l.source) && visibleNodes.some(n => n.id === l.target)).map(l => ({
                 ...l,
+                // Fix #5: Directional arrows radiate outward from identity anchor; suppressed on structural/similarity edges
+                edgeSymbol: (l.type === 'TEMPORAL_SPINE' || l.type === 'SIMILAR' || l.type === 'YEAR_ANCHOR') ? ['none', 'none'] : ['none', 'arrow'],
+                edgeSymbolSize: [0, 8],
                 label: {
-                    show: false, // Default to hidden for Executive Clarity
+                    show: false,
                     formatter: (p: any) => p.data.link_label || p.data.discovery_reason || p.data.title || p.data.role || '',
                     fontSize: 10,
                     fontWeight: 'bold',
                     color: '#6366f1'
                 },
                 emphasis: {
-                    label: { show: true }, // Reveal on hover/click
+                    label: { show: true },
                     lineStyle: { width: 6, opacity: 1 }
                 },
-                lineStyle: { 
-                    color: (l.isVirtual || l.hasFederatedBridge) ? '#FFD700' : (l.type === 'TEMPORAL_SPINE' ? '#6366f1' : '#edeff2'), 
+                lineStyle: {
+                    color: (l.isVirtual || l.hasFederatedBridge) ? '#FFD700'
+                         : l.type === 'TEMPORAL_SPINE' ? '#6366f1'
+                         : l.type === 'YEAR_ANCHOR'    ? '#94a3b8'
+                         : PODCAST_REL_FAMILIES.has(l.type) ? '#14b8a6'
+                         : '#818cf8',
                     width: l.type === 'TEMPORAL_SPINE' ? 4 : ((l.isVirtual || l.hasFederatedBridge) ? 3 : 2),
                     type: (l.isVirtual || l.hasFederatedBridge) ? 'dashed' : 'solid',
-                    opacity: 0.8,
-                    curveness: (viewMode === 'spine' && l.type !== 'TEMPORAL_SPINE') ? 0.3 : 0 
+                    opacity: (focusedNodeIds && focusedNodeIds.size > 0 && !focusedNodeIds.has(l.source) && !focusedNodeIds.has(l.target)) ? 0.08 : 0.8,
+                    curveness: (viewMode === 'spine' && l.type !== 'TEMPORAL_SPINE') ? 0.3 : 0
                 }
             }))
         }]
     });
+    };
 
     useEffect(() => {
         if (!chartRef.current) return;

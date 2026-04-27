@@ -398,6 +398,42 @@ async def get_cluster_context(
     finally:
         expert.close()
 
+@mcp.tool()
+async def connect_knowledge_on_demand(
+    source_node_id: Optional[str] = Field(None, description="The unique element_id of the source node."),
+    source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),
+    target_domain: str = Field("all", description="Domain to bridge INTO: 'podcast', 'professional', or 'all'."),
+    min_anchors: int = Field(1, description="Minimum number of shared concept/technology anchors required for a bridge. Default 1."),
+    limit: int = Field(5, description="Maximum number of bridge targets to return. Default 5.")
+) -> str:
+    """
+    Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
+    Finds nodes in another domain that share Technology, Topic, or Concept anchors with the source node.
+    Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI').
+    Returns session-only virtual links rendered as gold dashed connections in the graph UI.
+    Use this when the user asks how one domain influenced another, e.g.:
+      - 'How did this thought leadership influence the Cortex-Drive project?'
+      - 'What podcast episodes relate to this career project?'
+      - 'Where did this hackathon work show up later?'
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    try:
+        return expert.connect_knowledge_on_demand(
+            source_node_id=source_node_id,
+            source_node_name=source_node_name,
+            target_domain=target_domain,
+            min_anchors=min_anchors,
+            limit=limit
+        )
+    except Exception as e:
+        print(f"Error in connect_knowledge_on_demand: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
 # FastMCP exposes a starlette app for SSE via .sse_app()
 app = mcp.sse_app()
 

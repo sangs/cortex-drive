@@ -57,17 +57,17 @@ export function useMCP() {
         }
     }, []);
 
-    const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false, isContextualFusion: boolean = false) => {
+    const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false) => {
         if (!clientRef.current) throw new Error("MCP Client not initialized");
-        
+
         // Abort any existing query
         if (abortControllerRef.current) abortControllerRef.current.abort();
-        
+
         const controller = new AbortController();
         abortControllerRef.current = controller;
-        
+
         try {
-            return await clientRef.current.query(question, history, forceRefresh, isContextualFusion, controller.signal);
+            return await clientRef.current.query(question, history, forceRefresh, controller.signal);
         } finally {
             if (abortControllerRef.current === controller) {
                 abortControllerRef.current = null;

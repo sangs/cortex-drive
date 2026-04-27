@@ -2,6 +2,40 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { classifyDomain } = require('./lib/intent_classifier');
+
+// Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
+const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
+const DOMAIN_ALLOWED_TYPES = {
+    podcast: new Set(_domainManifestsRaw.podcast.node_types),
+    career: new Set(_domainManifestsRaw.career.node_types),
+};
+
+// Tools that return large graph payloads — LLM only needs a compact summary.
+// Full graph data is already accumulated in accumulatedGraph before truncation.
+const GRAPH_HEAVY_TOOLS = new Set(['search_enterprise_graph', 'get_cluster_context', 'connect_knowledge_on_demand']);
+// Max chars sent to LLM for knowledge/text tools (chunks, resume narratives).
+const MAX_KNOWLEDGE_CONTENT_CHARS = 8000;
+
+function buildLlmToolContent(toolName, toolContent) {
+    if (GRAPH_HEAVY_TOOLS.has(toolName)) {
+        try {
+            const parsed = JSON.parse(toolContent);
+            const nodes = parsed.nodes || [];
+            const nodeList = nodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join(', ');
+            const extra = nodes.length > 20 ? ` … and ${nodes.length - 20} more` : '';
+            const vl = parsed.virtual_links ? ` ${parsed.virtual_links.length} virtual bridge(s).` : '';
+            const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
+            return `Graph tool returned ${nodes.length} node(s): ${nodeList}${extra}.${vl}${bs} Full graph data accumulated for visualization.`;
+        } catch (e) {
+            return toolContent.slice(0, 500) + (toolContent.length > 500 ? ' [truncated]' : '');
+        }
+    }
+    if (toolContent.length > MAX_KNOWLEDGE_CONTENT_CHARS) {
+        return toolContent.slice(0, MAX_KNOWLEDGE_CONTENT_CHARS) + `\n[Truncated — ${toolContent.length} chars total]`;
+    }
+    return toolContent;
+}
 
 // Load externalized prompts into memory on startup
 const promptsDir = path.join(__dirname, '..', 'prompts');
@@ -557,6 +591,24 @@ const mcpToolsDefinitions = [
                 required: ["question"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "connect_knowledge_on_demand",
+            description: "Discover virtual cross-domain knowledge bridges for a specific node WITHOUT writing to Neo4j. Finds nodes in another domain that share Technology, Topic, or Concept anchors. Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI'). Returns session-only ghost links rendered as GOLD DASHED connections in the graph. Use for cross-domain influence questions: 'How did this thought leadership influence Cortex-Drive?', 'What podcast episodes relate to this project?', 'How did Sangeetha's work at X influence Y?'.",
+            parameters: {
+                type: "object",
+                properties: {
+                    source_node_name: { type: "string", description: "The name of the source node to find bridges from." },
+                    source_node_id: { type: "string", description: "The element_id of the source node (optional, use with source_node_name)." },
+                    target_domain: { type: "string", enum: ["podcast", "professional", "all"], default: "all", description: "The domain to search for bridge targets in." },
+                    min_anchors: { type: "integer", default: 1, description: "Minimum shared anchor count for a bridge to qualify." },
+                    limit: { type: "integer", default: 5, description: "Max number of bridge targets to return." }
+                },
+                required: ["source_node_name"]
+            }
+        }
     }
 ];
 
@@ -705,7 +757,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: toolContent
+                            content: buildLlmToolContent(toolName, toolContent)
                         });
 
                     } catch (err) {
@@ -739,7 +791,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
  * Used by the Dashboard for backward compatibility.
  */
 app.post('/query', authMiddleware, async (req, res) => {
-    const { question, history, forceRefresh, is_contextual_fusion_on } = req.body;
+    const { question, history, forceRefresh } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
 
@@ -753,8 +805,18 @@ app.post('/query', authMiddleware, async (req, res) => {
 
     try {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
-        
-        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+
+        const domainSignal = classifyDomain(question);
+        console.log(`[QUERY] domain_signal=${domainSignal}`);
+
+        const domainInstruction = `\n\nCURRENT QUERY DOMAIN CONTEXT: ${domainSignal}\n` +
+            `Respect this classification. ` +
+            `For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. ` +
+            `For 'career': get_cluster_context is appropriate. ` +
+            `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node. ` +
+            `For 'unknown': use your judgment.`;
+
+        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
         let messages = [
             { role: "system", content: systemPrompt },
             ...(history || []),
@@ -763,11 +825,42 @@ app.post('/query', authMiddleware, async (req, res) => {
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
-        let lastToolData = null;
+
+        // Accumulate graph data from ALL tool calls so every tool's nodes/links reach the UI.
+        // Previously only the last tool's result was forwarded (Gap #1 fix).
+        const accumulatedGraph = { nodes: [], links: [], virtual_links: [] };
+        const seenNodeIds = new Set();
+        const seenLinkKeys = new Set();
+
+        const mergeGraphData = (parsed) => {
+            if (!parsed || typeof parsed !== 'object') return;
+            const inNodes = parsed.nodes || (Array.isArray(parsed) ? parsed : []);
+            const inLinks = parsed.links || [];
+            const inVirtual = parsed.virtual_links || [];
+
+            inNodes.forEach(n => {
+                const id = n.element_id || n.id || n.name;
+                if (id && !seenNodeIds.has(id)) {
+                    seenNodeIds.add(id);
+                    accumulatedGraph.nodes.push(n);
+                }
+            });
+            [...inLinks, ...inVirtual].forEach(l => {
+                const key = `${l.source}-${l.target}-${l.type || ''}`;
+                if (l.source && l.target && !seenLinkKeys.has(key)) {
+                    seenLinkKeys.add(key);
+                    if (inVirtual.includes(l) || l.type === 'VIRTUAL_BRIDGE') {
+                        accumulatedGraph.virtual_links.push(l);
+                    } else {
+                        accumulatedGraph.links.push(l);
+                    }
+                }
+            });
+        };
 
         while (loopCount < MAX_LOOPS && !isAborted) {
             loopCount++;
-            
+
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: messages,
@@ -782,23 +875,41 @@ app.post('/query', authMiddleware, async (req, res) => {
                 for (const toolCall of assistantMessage.tool_calls) {
                     const toolName = toolCall.function.name;
                     const toolArgs = JSON.parse(toolCall.function.arguments);
-                    
+
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`);
-                    
+
                     try {
                         const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
-                        lastToolData = mcpData;
 
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
                             toolContent = mcpData.result.content[0].text;
                         }
 
+                        // Accumulate graph data from every tool that returns nodes/links
+                        try {
+                            const parsed = JSON.parse(toolContent);
+                            mergeGraphData(parsed);
+                            // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
+                            // AP-3: manifest-driven, not exclusion lists. cross_domain passes all through.
+                            const _allowedForDomain = DOMAIN_ALLOWED_TYPES[domainSignal];
+                            if (_allowedForDomain) {
+                                accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => _allowedForDomain.has(n.type));
+                                // Also filter out-of-domain nodes from the LLM-facing summary.
+                                // buildLlmToolContent reads parsed.nodes — without this, the LLM sees
+                                // e.g. "Data Engineering Podcast (Podcast)" in a career-domain query.
+                                if (parsed.nodes) {
+                                    parsed.nodes = parsed.nodes.filter(n => _allowedForDomain.has(n.type));
+                                    toolContent = JSON.stringify(parsed);
+                                }
+                            }
+                        } catch (e) { /* non-graph tool result, skip */ }
+
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: toolContent
+                            content: buildLlmToolContent(toolName, toolContent)
                         });
 
                     } catch (err) {
@@ -812,10 +923,12 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 continue;
             } else {
-                // No more tool calls, return the final answer
+                // No more tool calls — return final answer with merged graph from all tools
+                const hasGraph = accumulatedGraph.nodes.length > 0;
                 return res.send({
                     answer: assistantMessage.content,
-                    raw_data: lastToolData ? (lastToolData.result?.content?.[0]?.text || JSON.stringify(lastToolData)) : null
+                    raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
+                    domain_signal: domainSignal
                 });
             }
         }
@@ -857,6 +970,28 @@ const mcpProxy = createProxyMiddleware({
     },
     ws: true,
 });
+
+// Direct MCP tool endpoints for frontend progressive disclosure.
+// These MUST come before the mcpProxy catch-all — the SSE server has no REST routes.
+const mcpToolEndpoint = (toolName) => async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'] || 'trial-user';
+    try {
+        const mcpData = await callMcpTool(tenantId, toolName, req.body, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+        let toolContent = JSON.stringify(mcpData);
+        if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
+            toolContent = mcpData.result.content[0].text;
+        }
+        res.json({ content: [{ type: 'text', text: toolContent }] });
+    } catch (err) {
+        console.error(`[/api/${toolName}] ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluster_context'));
+app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
+app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 
 // Smart Routing
 app.use('/api/get_node_details', authMiddleware, bentoProxy);

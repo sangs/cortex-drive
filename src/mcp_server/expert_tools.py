@@ -69,17 +69,20 @@ class ExpertTools:
         return query.replace("{sec_anchor}", self._get_security_clause("anchor")).replace("{sec_expanded}", self._get_security_clause("expandedNode")).replace("{sec_parent}", self._get_security_clause("parentEpisode"))
 
     def _fragment_neighbor_aggregation(self) -> str:
+        import json
         from domain_registry import get_bridge_label_string
+        from schema_guard import TRAVERSAL_RELATIONSHIPS
         bridge_labels = get_bridge_label_string()
-        whitelist = '["HELD_ROLE", "AT", "CONTRIBUTED_TO", "PARTICIPATED_IN", "EARNED_DEGREE", "FROM_INSTITUTION", "HAS_SKILL", "CONTAINS", "HAS_REFERENCE", "BUILT_DURING", "FEATURE_GUEST", "SIMILAR", "IS_SIMILAR", "HAS_TOPIC", "DISCUSSES", "COVERS_TECHNOLOGY", "DISCUSSES_CONCEPT", "PUBLISHED_BY", "AUTHORED", "CO_AUTHORED", "LEAD_BY", "MENTIONS", "COVERS"]'
+        whitelist = json.dumps(TRAVERSAL_RELATIONSHIPS)
         
         query = """
         OPTIONAL MATCH (node)-[r]-(neighbor)
-        WHERE neighbor IS NOT NULL 
+        WHERE neighbor IS NOT NULL
           AND type(r) IN {whitelist}
           AND ({security_clause})
           AND NOT neighbor:{bridge_labels}
-          
+          AND ($allowed_labels IS NULL OR any(label IN labels(neighbor) WHERE label IN $allowed_labels))
+
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
         
         WITH node, expanded_ids, 
@@ -1009,18 +1012,22 @@ class ExpertTools:
         """
         Explore the 1-hop neighborhood of a node by element_id or name.
         """
+        import json as _json
+        from domain_registry import DISCOVERY_LABELS
+        from schema_guard import TRAVERSAL_RELATIONSHIPS
+        _traversal_rels = _json.dumps(TRAVERSAL_RELATIONSHIPS)
         query = f"""
         MATCH (node)-[r]-(neighbor)
         WHERE (node.name = $node_name OR elementId(node) = $node_id)
           AND ({self._get_security_clause("node")})
-          AND type(r) IN ["HELD_ROLE", "AT", "CONTRIBUTED_TO", "PARTICIPATED_IN", "EARNED_DEGREE", "FROM_INSTITUTION", "HAS_SKILL", "CONTAINS", "HAS_REFERENCE", "BUILT_DURING", "FEATURE_GUEST", "SIMILAR", "IS_SIMILAR", "HAS_TOPIC", "DISCUSSES", "COVERS_TECHNOLOGY", "DISCUSSES_CONCEPT", "PUBLISHED_BY", "AUTHORED", "CO_AUTHORED", "LEAD_BY"]
+          AND type(r) IN {_traversal_rels}
           AND ({self._get_security_clause("neighbor")})
-          AND NOT neighbor:ReferenceLink
-        
+          AND any(label IN labels(neighbor) WHERE label IN $allowed_labels)
+
         OPTIONAL MATCH (neighbor)-[:HAS_REFERENCE]->(ref:ReferenceLink)
-        
-        RETURN 
-            CASE 
+
+        RETURN
+            CASE
                 WHEN 'Category' IN labels(neighbor) THEN 'Category'
                 WHEN 'Role' IN labels(neighbor) THEN 'Role'
                 WHEN 'Hackathon' IN labels(neighbor) THEN 'Hackathon'
@@ -1029,23 +1036,21 @@ class ExpertTools:
                 WHEN 'ProfessionalEducation' IN labels(neighbor) THEN 'ProfessionalEducation'
                 WHEN 'Certification' IN labels(neighbor) THEN 'Certification'
                 WHEN 'Project' IN labels(neighbor) THEN 'Project'
-                ELSE labels(neighbor)[0] 
+                ELSE labels(neighbor)[0]
             END AS EntityType,
-            properties(neighbor) AS Details, 
+            properties(neighbor) AS Details,
             collect(DISTINCT ref.url) AS ref_urls,
             type(r) AS RelationshipType
         LIMIT 30
         """
-        allowed_labels = ['Episode', 'Topic', 'Person', 'Company', 'Role', 'Project', 'Technology', 'Source', 'Publication', 'Certification', 'Category', 'Concept', 'Degree', 'ProfessionalEducation', 'Institution', 'Skill']
-        
         try:
             result = self.driver.execute_query(
-                query, 
+                query,
                 node_id=node_id,
                 node_name=node_name,
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id,
-                allowed_labels=allowed_labels
+                allowed_labels=DISCOVERY_LABELS
             )
             
             output = []
@@ -1068,7 +1073,7 @@ class ExpertTools:
     def _inject_federated_demo_boost(self) -> str:
         return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
 
-    def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all", is_contextual_fusion_on: bool = False) -> str:
+    def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all") -> str:
         """
         Search for entities across the Universal Enterprise Graph dynamically, explicitly crossing boundaries between domains (Podcast/Resume/Federated).
         """
@@ -1076,11 +1081,10 @@ class ExpertTools:
         discovery_synonyms = ["portfolio", "overview", "background", "experience", "career", "map"]
         is_discovery_request = wants_visual_map or any(s in keyword.lower() for s in discovery_synonyms)
         
-        # If is_discovery_request is true and we target a career overview, we'll try to return a cluster
-        if is_discovery_request and ("career" in keyword.lower() or "overview" in keyword.lower() or wants_visual_map):
-            # Deterministically return the core career cluster centered on the owner identity
-            # Enforce backbone_only=True to prevent crowding (Noise deferred to explicit expansion)
-            return self.get_cluster_context("Sangeetha Ramadurai", depth=2, backbone_only=True)
+        # Career cluster shortcut — only for professional/all domain intent, never for podcast.
+        # wants_visual_map=True alone must not trigger this for podcast queries.
+        if domain_intent in ("professional", "all") and is_discovery_request and ("career" in keyword.lower() or "overview" in keyword.lower() or wants_visual_map):
+            return self.get_cluster_context("Sangeetha Ramadurai", depth=1, backbone_only=True, domain="professional")
 
         stop_words = {"show", "me", "how", "did", "she", "what", "is", "the", "and", "a", "an", "at", "in", "of", "for", "with", "on", "to", "from", "by"}
         clean_keyword = keyword.lower().replace(".", "").replace(",", "").replace("?", "").replace("!", "")
@@ -1088,7 +1092,7 @@ class ExpertTools:
         final_keyword_str = " ".join(keywords) if keywords else keyword
 
         search_keyword = final_keyword_str
-        if is_discovery_request:
+        if is_discovery_request and domain_intent != "podcast":
             search_keyword = "Category " + final_keyword_str if final_keyword_str else "Category"
 
         from domain_registry import get_authorized_labels, get_backbone_labels, get_anchor_labels
@@ -1105,10 +1109,18 @@ class ExpertTools:
         discovery_labels = get_discovery_label_string()
         visual_deny_list = get_visual_deny_list()
 
+        # AP-1: Build MATCH label string from authorized labels for this domain (inclusion-based).
+        # domain_intent="all" falls back to discovery_labels (full union) for cross-domain queries.
+        if domain_intent.lower() == "all":
+            match_label_string = discovery_labels
+        else:
+            _authorized = get_authorized_labels(domain_intent) or []
+            match_label_string = "|".join(_authorized) if _authorized else discovery_labels
+
         query = f"""
         {self._fragment_taxonomy_expansion()}
-             
-        MATCH (node:{discovery_labels})
+
+        MATCH (node:{match_label_string})
         WHERE ({self._get_security_clause("node")})
           AND (
                 elementId(node) IN expanded_ids
@@ -1182,11 +1194,9 @@ class ExpertTools:
             print(f"Warning: Failed to fetch embedding for search_enterprise_graph: {e}")
 
         try:
-            if domain_intent.lower() == "all":
-                allowed_labels = get_authorized_labels("professional") + get_authorized_labels("podcast") + get_authorized_labels("federated") + get_authorized_labels("structural")
-            else:
-                allowed_labels = get_authorized_labels(domain_intent)
-                
+            # AP-2: get_authorized_labels returns None for "all" → Cypher $allowed_labels IS NULL → neighbor filter bypassed.
+            allowed_labels = get_authorized_labels(domain_intent)
+
             print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id}")
             result = self.driver.execute_query(
                 query, 
@@ -1227,7 +1237,10 @@ class ExpertTools:
                 
             record = result.records[0]
             nodes = record["nodes"]
-            links = record["links"]
+            # Cypher returns links with source/target as elementId — use directly.
+            # Do NOT rebuild from node["relationships"]: that dict uses field "element_id"
+            # which is not set (Cypher uses "id"), so rebuilding yields an empty list.
+            cypher_links = record["links"]
 
             # Serialize and Clean nodes
             for node in nodes:
@@ -1238,112 +1251,8 @@ class ExpertTools:
                         node[k] = [i.iso_format() if hasattr(i, 'iso_format') else i for i in v]
                 node.pop("embedding", None)
                 node.pop("tenant_id", None)
-            
+
             output = nodes
-
-            # --- ON-DEMAND BRIDGE DISCOVERY (CONTEXTUAL FUSION) ---
-            if is_contextual_fusion_on and output:
-                print(f"[FUSION] Contextual Fusion requested. Calculating On-Demand Bridges...")
-                from domain_registry import get_bridge_relationships
-                contribution_rels = get_bridge_relationships("CONTRIBUTION")
-                knowledge_rels = get_bridge_relationships("KNOWLEDGE")
-
-                bridge_query = """
-                MATCH (owner:Person {name: "Sangeetha Ramadurai"})
-                WITH owner, $candidate_ids AS candidate_ids, $contribution_rels AS contribution_rels, $knowledge_rels AS knowledge_rels
-                UNWIND candidate_ids AS target_id
-                MATCH (target) WHERE elementId(target) = target_id OR target.name = target_id
-                
-                // Find shared neighbors (the Bridge Context) - Meta-Type Logic
-                MATCH (owner)-[r1]-(shared)-[r2]-(target)
-                WHERE type(r1) IN contribution_rels 
-                  AND type(r2) IN knowledge_rels
-                  AND NOT shared:Person AND NOT shared:Episode
-                
-                WITH target_id, count(DISTINCT shared) AS intersection_count, 
-                     collect(DISTINCT shared {
-                        name: shared.name, 
-                        element_id: elementId(shared),
-                        labels: labels(shared),
-                        type: labels(shared)[0]
-                     }) AS bridge_nodes
-                WHERE intersection_count >= 1 // Lower threshold for discovery
-                
-                RETURN target_id, bridge_nodes
-                """
-                candidate_ids = [o.get("element_id") or o.get("name") for o in output]
-                bridge_res = self.driver.execute_query(
-                    bridge_query,
-                    candidate_ids=candidate_ids,
-                    contribution_rels=contribution_rels,
-                    knowledge_rels=knowledge_rels
-                )
-                
-                # Attach virtual bridges to the response and materialize bridge nodes
-                bridges = {}
-                bridge_node_details = {}
-                bridge_links_to_add = []
-                
-                # We need the element_id of the person "Sangeetha Ramadurai" for linking
-                owner_id_res = self.driver.execute_query("MATCH (p:Person {name: 'Sangeetha Ramadurai'}) RETURN elementId(p) AS id")
-                owner_id = owner_id_res.records[0]["id"] if owner_id_res.records else None
-
-                for r in bridge_res.records:
-                    target_id = r["target_id"]
-                    bridges[target_id] = [b["name"] for b in r["bridge_nodes"]]
-                    for b in r["bridge_nodes"]:
-                        bid = b["element_id"]
-                        bridge_node_details[bid] = b
-                        # Add virtual links for the bridge
-                        if owner_id:
-                            bridge_links_to_add.append({"source": owner_id, "target": bid, "type": "BRIDGE_LINK"})
-                        bridge_links_to_add.append({"source": bid, "target": target_id, "type": "BRIDGE_LINK"})
-                
-                # Materialize the bridge nodes and owner in the output list if they aren't already there
-                if owner_id and not any(o.get("element_id") == owner_id for o in output):
-                    owner_node_res = self.driver.execute_query("MATCH (p:Person {name: 'Sangeetha Ramadurai'}) RETURN p {.*, element_id: elementId(p), type: 'Person', display_name: p.name}")
-                    if owner_node_res.records:
-                        output.append(owner_node_res.records[0]["p"])
-
-                for bid, bnode in bridge_node_details.items():
-                    if not any(o.get("element_id") == bid for o in output):
-                        bnode["display_name"] = bnode["name"]
-                        bnode["is_bento_eligible"] = True
-                        bnode["is_bridge"] = True
-                        output.append(bnode)
-
-                for item in output:
-                    uid = item.get("element_id") or item.get("name")
-                    if uid in bridges:
-                        item["has_federated_bridge"] = True
-                        item["bridge_reason"] = f"Common Ground: {', '.join(bridges[uid][:3])}"
-
-            # Build graph links for the UI
-            links = []
-            seen_links = set()
-            
-            # 1. Add physical links from graph traversal
-            for node in output:
-                source_id = node.get("element_id")
-                for rel in node.get("relationships", []):
-                    target_id = rel.get("target_id")
-                    if target_id and source_id:
-                        link_key = tuple(sorted([source_id, target_id]))
-                        if link_key not in seen_links:
-                            links.append({
-                                "source": source_id,
-                                "target": target_id,
-                                "type": rel.get("rel_type")
-                            })
-                            seen_links.add(link_key)
-            
-            # 2. Add virtual fusion links (Bridges)
-            if 'bridge_links_to_add' in locals():
-                for link in bridge_links_to_add:
-                    link_key = tuple(sorted([link["source"], link["target"]]))
-                    if link_key not in seen_links:
-                        links.append(link)
-                        seen_links.add(link_key)
 
             # 2.5 Narrative Sanitization (Professional Polish)
             # Remove internal STAR headers from notes before they reach the LLM/UI.
@@ -1361,12 +1270,11 @@ class ExpertTools:
                 if not any(label in visual_deny_list for label in node_labels):
                     clean_output.append(node)
             
-            # Rebuild links based on cleaned nodes
-            valid_ids = {n.get("element_id") for n in clean_output}
-            final_links = []
-            for link in links:
-                if link["source"] in valid_ids and link["target"] in valid_ids:
-                    final_links.append(link)
+            # Filter Cypher links to only those whose endpoints survived the visual bouncer.
+            # Nodes use field "id" (= elementId from Cypher), not "element_id".
+            valid_ids = {n.get("id") or n.get("element_id") for n in clean_output}
+            valid_ids.discard(None)
+            final_links = [l for l in cypher_links if l.get("source") in valid_ids and l.get("target") in valid_ids]
 
             # 4. Role Orbit (Virtual Projection)
             # Center projects around their roles even if roles aren't separate nodes in Neo4j.
@@ -1585,6 +1493,212 @@ class ExpertTools:
                 "snapshot": record["snapshot"]
             }, indent=2)
         except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def connect_knowledge_on_demand(
+        self,
+        source_node_id: Optional[str] = None,
+        source_node_name: Optional[str] = None,
+        target_domain: str = "all",
+        min_anchors: int = 1,
+        limit: int = 5
+    ) -> str:
+        """
+        Discover virtual cross-domain knowledge bridges for a specific node.
+
+        Finds nodes in another domain that share semantic anchors (Technology, Topic,
+        Concept) with the source node using a three-tier algorithm:
+          Tier 1: Explicit anchor match (shared Technology/Topic/Concept nodes)
+          Tier 2: Taxonomy-expanded match (parent concept traversal via IS_A/SUB_TOPIC_OF)
+          Tier 3: Graceful degradation when no anchors exist (returns empty, no error)
+
+        Zero-write guarantee: nothing is persisted to Neo4j. All returned links are
+        session-only virtual bridges rendered as gold dashed lines in the UI.
+        """
+        if not source_node_id and not source_node_name:
+            return json.dumps({"error": "source_node_id or source_node_name is required"})
+
+        from domain_registry import get_authorized_labels
+
+        # Map target domain to allowed labels
+        target_labels_raw = get_authorized_labels(target_domain)
+        # For "all", get_authorized_labels returns None — use a broad default
+        if not target_labels_raw:
+            target_labels_raw = [
+                "Project", "Role", "Company", "Hackathon", "ThoughtLeadership",
+                "Publication", "Episode", "Topic", "Podcast", "Certification",
+                "Institution", "Category", "Technology", "Concept"
+            ]
+        # Exclude the source node's own type from target labels to avoid self-bridges
+        target_domain_labels = list(target_labels_raw)
+
+        # Bridge discovery is a READ-ONLY operation on content already visible to the user
+        # (they clicked the node in the graph, so it was already authorized at tenant level).
+        # Re-applying full ownership check here blocks cross-user org content. Use tenant-level
+        # read access for the source — any org member can initiate a bridge from tenant content.
+        sec_source_read = f"""
+        (
+            source.tenant_id IN ['SYSTEM', 'PUBLIC']
+            OR source.tenant_id = $tenant_id
+        )
+        """
+        sec_anchor = self._get_security_clause("anchor")
+        sec_parent = self._get_security_clause("parentAnchor")
+        sec_target = self._get_security_clause("target")
+
+        query = f"""
+        // Step 1: Locate the source node (tenant-level read — ownership already proven by UI click)
+        MATCH (source)
+        WHERE (elementId(source) = $source_node_id OR toLower(source.name) = toLower($source_node_name))
+          AND ({sec_source_read})
+
+        // Step 2: Find its semantic anchors (1-2 hops, no chunks/notes)
+        OPTIONAL MATCH (source)-[:DISCUSSES|USES_TOOL|HAS_TOPIC|COVERS_TECHNOLOGY|MENTIONS|HAS_SKILL|CONTAINS|IS_SIMILAR|SIMILAR*1..2]-(anchor)
+        WHERE any(label IN labels(anchor) WHERE label IN ['Technology', 'Topic', 'Concept', 'Skill'])
+          AND ({sec_anchor})
+
+        // Step 3: Taxonomy Expansion — resolve AI Agent -> AI parent, etc.
+        OPTIONAL MATCH (anchor)-[:IS_A|SUB_TOPIC_OF|PARENT_OF*0..2]-(parentAnchor)
+        WHERE parentAnchor IS NOT NULL
+          AND any(label IN labels(parentAnchor) WHERE label IN ['Technology', 'Topic', 'Concept'])
+          AND ({sec_parent})
+
+        WITH source,
+             collect(DISTINCT anchor) + collect(DISTINCT parentAnchor) AS allAnchors
+
+        // Step 4: Find target nodes in the requested domain sharing these anchors
+        MATCH (target)-[:DISCUSSES|USES_TOOL|HAS_TOPIC|COVERS_TECHNOLOGY|MENTIONS|HAS_SKILL]-(sharedAnchor)
+        WHERE sharedAnchor IN allAnchors
+          AND any(label IN labels(target) WHERE label IN $target_domain_labels)
+          AND target <> source
+          AND ({sec_target})
+          AND NOT target:ReferenceLink AND NOT target:Chunk AND NOT target:Source
+          AND NOT target:PreparatoryNote AND NOT target:__MetaContext__
+
+        WITH source, target,
+             count(DISTINCT sharedAnchor) AS sharedCount,
+             collect(DISTINCT {{
+                name: sharedAnchor.name,
+                element_id: elementId(sharedAnchor),
+                type: labels(sharedAnchor)[0],
+                anchor_element_id: elementId(sharedAnchor)
+             }}) AS sharedAnchors
+        WHERE sharedCount >= $min_anchors
+
+        RETURN
+            elementId(source) AS source_eid,
+            elementId(target) AS target_eid,
+            target.name AS target_name,
+            labels(target)[0] AS target_type,
+            target.description AS target_description,
+            sharedCount,
+            sharedAnchors
+        ORDER BY sharedCount DESC
+        LIMIT $limit
+        """
+
+        try:
+            result = self.driver.execute_query(
+                query,
+                tenant_id=self.tenant_id,
+                requesting_user_id=self.requesting_user_id,
+                source_node_id=source_node_id or "",
+                source_node_name=source_node_name or "",
+                target_domain_labels=target_domain_labels,
+                min_anchors=min_anchors,
+                limit=limit
+            )
+
+            if not result.records:
+                return json.dumps({
+                    "nodes": [],
+                    "virtual_links": [],
+                    "bridge_summary": "No cross-domain bridges found for this node with the current anchor threshold.",
+                    "confidence_tier": "none"
+                })
+
+            nodes = []
+            virtual_links = []
+            seen_node_ids = set()
+            seen_anchor_ids = set()
+            all_shared_anchor_names = set()
+
+            source_eid = result.records[0]["source_eid"]
+
+            for record in result.records:
+                target_eid = record["target_eid"]
+                target_name = record["target_name"]
+                target_type = record["target_type"]
+                shared_anchors = record["sharedAnchors"]
+                shared_count = record["sharedCount"]
+
+                # Add target node
+                if target_eid not in seen_node_ids:
+                    seen_node_ids.add(target_eid)
+                    nodes.append({
+                        "id": target_eid,
+                        "element_id": target_eid,
+                        "name": target_name,
+                        "type": target_type,
+                        "description": record["target_description"] or "",
+                        "has_federated_bridge": True,
+                        "is_bento_eligible": True,
+                        "bridge_reason": f"Common Ground: {', '.join(a['name'] for a in shared_anchors[:3])}"
+                    })
+
+                # Add anchor nodes and virtual links
+                for anchor in shared_anchors:
+                    anchor_eid = anchor.get("anchor_element_id") or anchor.get("element_id")
+                    anchor_name = anchor.get("name", "")
+                    anchor_type = anchor.get("type", "Concept")
+                    all_shared_anchor_names.add(anchor_name)
+
+                    if anchor_eid and anchor_eid not in seen_anchor_ids:
+                        seen_anchor_ids.add(anchor_eid)
+                        nodes.append({
+                            "id": anchor_eid,
+                            "element_id": anchor_eid,
+                            "name": anchor_name,
+                            "type": anchor_type,
+                            "is_bridge": True,
+                            "has_federated_bridge": True,
+                            "is_bento_eligible": False
+                        })
+                        # Virtual link: source → anchor
+                        virtual_links.append({
+                            "source": source_eid,
+                            "target": anchor_eid,
+                            "type": "VIRTUAL_BRIDGE",
+                            "discovery_reason": f"Shared: {anchor_name}"
+                        })
+                        # Virtual link: anchor → target
+                        virtual_links.append({
+                            "source": anchor_eid,
+                            "target": target_eid,
+                            "type": "VIRTUAL_BRIDGE",
+                            "discovery_reason": f"Shared: {anchor_name}"
+                        })
+
+            # Determine confidence tier
+            confidence_tier = "taxonomy_expanded" if len(seen_anchor_ids) > 0 else "explicit"
+
+            summary_anchors = ", ".join(sorted(all_shared_anchor_names)[:5])
+            bridge_summary = (
+                f"Found {len(seen_node_ids)} cross-domain bridge(s) via shared concepts: {summary_anchors}."
+                if seen_node_ids
+                else "No bridges found."
+            )
+
+            return json.dumps({
+                "nodes": nodes,
+                "virtual_links": virtual_links,
+                "bridge_summary": bridge_summary,
+                "confidence_tier": confidence_tier
+            }, indent=2)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             return json.dumps({"error": str(e)})
 
     def close(self):

@@ -67,7 +67,7 @@ export class MCPClient {
     /**
      * Sends a natural language query to the Gateway's orchestration endpoint.
      */
-    async query(question: string, history: any[] = [], forceRefresh: boolean = false, isContextualFusion: boolean = false, signal?: AbortSignal) {
+    async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal) {
         // Gateway URL is typically on port 4000
         const baseUrl = new URL(this.serverUrl);
         // Note: The /api prefix from serverUrl (if present) should be stripped to hit the root /query
@@ -92,12 +92,7 @@ export class MCPClient {
             method: "POST",
             headers,
             signal,
-            body: JSON.stringify({ 
-                question, 
-                history, 
-                forceRefresh, 
-                is_contextual_fusion_on: isContextualFusion 
-            }),
+            body: JSON.stringify({ question, history, forceRefresh }),
         });
 
         if (!response.ok) {

@@ -27,7 +27,7 @@ fi
 # 2. Start core process in background
 echo "Starting MCP Server: $SERVER_SCRIPT..."
 export PYTHONPATH=$PYTHONPATH:.
-python3 $SERVER_SCRIPT > "$LOG_FILE" 2>&1 &
+.venv/bin/python $SERVER_SCRIPT > "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 
 echo "✅ Started (PID: $NEW_PID). Logs redirected to $LOG_FILE"
