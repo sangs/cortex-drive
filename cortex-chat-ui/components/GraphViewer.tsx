@@ -180,7 +180,7 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                 linkCanvasObjectMode={() => 'after'}
                 linkCanvasObject={(link: any, ctx, globalScale) => {
                     const label = link.start ? `${link.start}${link.end ? ' – ' + link.end : ''}` : '';
-                    if (!label || globalScale < 1.4) return;
+                    if (!label || globalScale < 0.6) return;
 
                     const start = link.source;
                     const end = link.target;

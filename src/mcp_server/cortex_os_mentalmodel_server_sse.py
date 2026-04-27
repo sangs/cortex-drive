@@ -23,6 +23,8 @@ tenant_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("tenant_id",
 user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", default="")
 # Contextvar to hold the 'Schema Readable' permission state
 schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
+# Contextvar to hold the authorized node ID for Guest Share Tokens
+guest_share_anchor_var: contextvars.ContextVar[str] = contextvars.ContextVar("guest_share_anchor", default="")
 
 mcp = FastMCP("cortex-os-mentalmodel")
 
@@ -32,25 +34,16 @@ async def search_episodes_gds_by_question_tool(
     k: Optional[int] = Field(5, description="Number of vector neighbors to find. Default 5."),
     limit: Optional[int] = Field(10, description="Total number of final results to return. Default 10.")
 ) -> str:
-    """Extended search combining vector index with GDS KNN. Wraps ExpertTools.search_episodes_gds_by_question.
-
-    Parameters
-    ----------
-    question: str
-        The natural language question or topic to search for.
-    k: Optional[int]
-        Number of vector neighbors to find. Default 5.
-    limit: Optional[int]
-        Total number of final results to return. Default 10.
-    """
-    tenant_id = tenant_id_var.get()
-    if not tenant_id:
-        # Prioritize TENANT_ID (Clerk Org), then TEST_TENANT fallback, then default
-        tenant_id = os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-        
-    expert = ExpertTools(tenant_id=tenant_id)
+    """Extended search combining vector index with GDS KNN. Wraps ExpertTools.search_episodes_gds_by_question."""
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
         return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
+    except Exception as e:
+        print(f"Error in search_episodes_gds_by_question_tool: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -62,18 +55,40 @@ async def search_episodes_by_question_tool(
     """Search for relevant episodes using vector similarity search on chunk embeddings.
     Returns JSON string with EpisodeTitle, EpisodeNumber, ChunkContent, and SimilarityScore.
     Use this for summarization or detailed content questions.
-
-    Parameters
-    ----------
-    question: str
-        The natural language question or topic to search for.
-    k: Optional[int]
-        Number of vector neighbors to find. Default 5.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
         return expert.search_episodes_by_question(question, k=k)
+    except Exception as e:
+        print(f"Error in search_episodes_by_question_tool: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def query_relevant_chunks_hybrid_tool(
+    question: str = Field(description="The natural language question or topic to search for using Hybrid (Vector + BM25) search."),
+    top_k: Optional[int] = Field(10, description="Number of results to return. Default 10.")
+) -> str:
+    """
+    Perform a High-Fidelity Hybrid Search (BM25 + Vector) with Reciprocal Rank Fusion (RRF).
+    This is the most accurate tool for finding specific context from transcripts.
+    It combines conceptual depth (Vector) with literal keyword precision (BM25).
+    
+    Returns JSON with episode metadata and transcript chunks.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    try:
+        return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
+    except Exception as e:
+        print(f"Error in query_relevant_chunks_hybrid_tool: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -81,9 +96,14 @@ async def search_episodes_by_question_tool(
 async def get_context() -> str:
     """Gets the context for how to use & access podcast episode data. Always run this first and store in your memory."""
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
         return expert.get_tool_context()
+    except Exception as e:
+        print(f"Error in get_context: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -94,9 +114,14 @@ async def get_tool_statistics() -> str:
     Returns counts of episodes, topics, reference links, and transcript chunks.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
         return expert.get_episode_statistics()
+    except Exception as e:
+        print(f"Error in get_tool_statistics: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -109,9 +134,30 @@ async def find_episodes_by_people(question: str) -> str:
     to the episode (e.g., HOSTS, GUEST_ON, LISTENS_TO_EPISODE, etc.).
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_people(question)
+    except Exception as e:
+        print(f"Error in find_episodes_by_people: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def get_episodes_with_cast() -> str:
+    """
+    List all available podcast episodes along with their hosts and guests.
+    Use this for broad discovery of the podcast catalog.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    try:
+        return expert.get_episodes_with_cast()
+    except Exception as e:
+        print(f"Error in get_episodes_with_cast: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -123,9 +169,13 @@ async def find_episodes_by_concept(question: str) -> str:
     to find relevant episodes.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_concept(question)
+    except Exception as e:
+        print(f"Error in find_episodes_by_concept: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -137,9 +187,13 @@ async def find_episodes_by_topic(question: str) -> str:
     and topic names to find episodes that match the given question.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_topic(question)
+    except Exception as e:
+        print(f"Error in find_episodes_by_topic: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -151,9 +205,13 @@ async def find_episodes_by_technology(question: str) -> str:
     that discuss or mention the technology.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_technology(question)
+    except Exception as e:
+        print(f"Error in find_episodes_by_technology: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -166,9 +224,13 @@ async def find_episodes_by_reference(reference_string: str) -> str:
     contains the provided string. It performs a case-insensitive search.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_reference(reference_string)
+    except Exception as e:
+        print(f"Error in find_episodes_by_reference: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -180,9 +242,13 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
     Returns episodes with the matched reference link and which search term was matched.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.find_episodes_by_mentions(search_terms)
+    except Exception as e:
+        print(f"Error in find_episodes_by_mentions: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -195,9 +261,13 @@ async def get_people_by_episode_tool(
     Use this when you have an episode and need to know who the guest or host is.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.get_people_by_episode(episode_name)
+    except Exception as e:
+        print(f"Error in get_people_by_episode: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -212,8 +282,9 @@ async def run_cypher_query(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id)
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
         return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
     finally:
@@ -221,33 +292,44 @@ async def run_cypher_query(
 
 @mcp.tool()
 async def get_node_details(
-    node_name: str = Field(description="The 'name' property of the node to fetch details for.")
+    node_id: Optional[str] = Field(None, description="The unique element_id of the node."),
+    node_name: Optional[str] = Field(None, description="The 'name' property of the node (fallback).")
 ) -> str:
     """
-    Fetch all properties and labels for a specific node by its 'name'.
-    Use this to 'enrich' your knowledge of an entity once you have its name from a search.
+    Fetch all properties and labels for a specific node by its 'element_id' or 'name'.
+    Use this to 'enrich' your knowledge of an entity once you have its handle from a search.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
-        return expert.get_node_details(node_name)
+        return expert.get_node_details(node_id=node_id, node_name=node_name)
+    except Exception as e:
+        print(f"Error in get_node_details: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
 @mcp.tool()
-async def search_resume_graph(
-    keyword: str = Field(description="The search term to find across professional entities (e.g., 'startup', 'clerk', 'hackathon').")
+async def search_enterprise_graph(
+    keyword: str = Field(description="The search term to find across the graph (e.g., 'startup', 'BAML', 'Iceberg', 'Kafka')."),
+    domain_intent: str = Field("all", description="The domain sandbox to search within. Allowed values: 'professional' (Resume), 'podcast' (Episodes/Chunks), 'federated' (External Silos), or 'all'."),
+    wants_visual_map: bool = Field(False, description="Set to true if the user asks for a map, graph, overview, or visual landscape.")
 ) -> str:
     """
-    Search for entities across the Interactive Resume Graph.
-    Matches keywords against Node Names and Descriptions for any node that represents 
-    a professional entity (Company, Role, Project, Publication, Startup, Hackathon, etc.).
-    Explicitly excludes Podcast-related conceptual nodes.
+    Search for entities across the Universal Enterprise Graph.
+    Acts as the main switchboard for all domain-specific subgraph routing. 
+    Use this when the user asks questions spanning Resume, Podcasts, or Federated Data Silos.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or "trial-user"
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
-        return expert.search_resume_graph(keyword)
+        return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent)
+    except Exception as e:
+        print(f"Error in search_enterprise_graph: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -258,10 +340,14 @@ async def explore_graph_schema() -> str:
     Call this tool whenever you don't know the exact schema needed to write a Cypher query.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id)
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.explore_graph_schema(schema_readable=schema_readable)
+    except Exception as e:
+        print(f"Error in explore_graph_schema: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -278,25 +364,73 @@ async def hybrid_discovery_tool(
     Returns JSON with content, similarity, metadata, and participants.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
     try:
         return expert.hybrid_discovery(question, k=k)
+    except Exception as e:
+        print(f"Error in hybrid_discovery_tool: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
 @mcp.tool()
 async def get_cluster_context(
-    node_name: str = Field(description="The 'name' property of the node to fetch neighbors for."),
-    depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1.")
+    node_id: Optional[str] = Field(None, description="The unique element_id of the node to expand."),
+    node_name: Optional[str] = Field(None, description="The 'name' property of the node (fallback)."),
+    depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1."),
+    backbone_only: bool = Field(False, description="If true, only returns high-level landmarks (Companies, Categories, Hubs)."),
+    domain: str = Field("all", description="The domain to filter results by: 'professional', 'podcast', or 'all'. Default 'all'.")
 ) -> str:
     """
-    Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
+    Fetch the semantic neighbors and relationships for a specific node by its element_id or name.
     Use this for Directed Autonomy to proactively discover related nodes and hidden context.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
-    expert = ExpertTools(tenant_id=tenant_id)
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
     try:
-        return expert.get_cluster_context(node_name, depth=depth)
+        return expert.get_cluster_context(node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
+    except Exception as e:
+        print(f"Error in get_cluster_context: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def connect_knowledge_on_demand(
+    source_node_id: Optional[str] = Field(None, description="The unique element_id of the source node."),
+    source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),
+    target_domain: str = Field("all", description="Domain to bridge INTO: 'podcast', 'professional', or 'all'."),
+    min_anchors: int = Field(1, description="Minimum number of shared concept/technology anchors required for a bridge. Default 1."),
+    limit: int = Field(5, description="Maximum number of bridge targets to return. Default 5.")
+) -> str:
+    """
+    Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
+    Finds nodes in another domain that share Technology, Topic, or Concept anchors with the source node.
+    Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI').
+    Returns session-only virtual links rendered as gold dashed connections in the graph UI.
+    Use this when the user asks how one domain influenced another, e.g.:
+      - 'How did this thought leadership influence the Cortex-Drive project?'
+      - 'What podcast episodes relate to this career project?'
+      - 'Where did this hackathon work show up later?'
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    try:
+        return expert.connect_knowledge_on_demand(
+            source_node_id=source_node_id,
+            source_node_name=source_node_name,
+            target_domain=target_domain,
+            min_anchors=min_anchors,
+            limit=limit
+        )
+    except Exception as e:
+        print(f"Error in connect_knowledge_on_demand: {e}")
+        return json.dumps({"error": str(e)})
     finally:
         expert.close()
 
@@ -337,9 +471,16 @@ class TenantASGIMiddleware:
             query_params.get("user_id")
         )
 
+        # Extract guest share anchor for URL-based stateless discovery
+        guest_share_anchor = (
+            headers.get("x-guest-share-anchor") or
+            query_params.get("share_anchor")
+        )
+
         tenant_token = tenant_id_var.set(tenant_id) if tenant_id else None
         user_token = user_id_var.set(user_id) if user_id else None
         schema_token = schema_readable_var.set(schema_readable)
+        guest_anchor_token = guest_share_anchor_var.set(guest_share_anchor) if guest_share_anchor else None
 
         try:
             await self.app(scope, receive, send)
@@ -348,6 +489,8 @@ class TenantASGIMiddleware:
                 tenant_id_var.reset(tenant_token)
             if user_token:
                 user_id_var.reset(user_token)
+            if guest_anchor_token:
+                guest_share_anchor_var.reset(guest_anchor_token)
             schema_readable_var.reset(schema_token)
 
 app.add_middleware(TenantASGIMiddleware)

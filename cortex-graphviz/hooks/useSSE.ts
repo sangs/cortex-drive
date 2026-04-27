@@ -9,8 +9,7 @@ export function useSSE() {
     const eventSourceRef = useRef<EventSource | null>(null);
 
     const connect = (query: string) => {
-        // Construct the SSE URL with query parameters
-        const url = new URL('http://localhost:8080/sse');
+        const url = new URL('http://localhost:4000/sse');
         url.searchParams.append('query', query);
 
         if (orgId) {

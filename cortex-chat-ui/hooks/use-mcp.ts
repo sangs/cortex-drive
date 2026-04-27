@@ -16,7 +16,7 @@ export function useMCP() {
         const tenantId = orgId || userId; // Prefer Organization ID, fallback to User ID
         console.log("Initializing MCP Client for tenant:", tenantId);
 
-        const serverUrl = process.env.NEXT_PUBLIC_MCP_SERVER_URL || "http://localhost:3000/api/sse";
+        const serverUrl = process.env.NEXT_PUBLIC_MCP_SERVER_URL || "http://localhost:4000/sse";
 
         const mcpClient = new MCPClient(serverUrl, tenantId, getToken, (msg: any) => {
             console.log("MCP Message received:", msg);
@@ -47,10 +47,33 @@ export function useMCP() {
         });
     }, []);
 
-    const query = useCallback(async (question: string, history: any[] = []) => {
-        if (!clientRef.current) throw new Error("MCP Client not initialized");
-        return await clientRef.current.query(question, history);
+    const abortControllerRef = useRef<AbortController | null>(null);
+    
+    const abortQuery = useCallback(() => {
+        if (abortControllerRef.current) {
+            console.log("Aborting current MCP query...");
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
     }, []);
 
-    return { isConnected, responses, callTool, query };
+    const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false) => {
+        if (!clientRef.current) throw new Error("MCP Client not initialized");
+
+        // Abort any existing query
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        try {
+            return await clientRef.current.query(question, history, forceRefresh, controller.signal);
+        } finally {
+            if (abortControllerRef.current === controller) {
+                abortControllerRef.current = null;
+            }
+        }
+    }, []);
+
+    return { isConnected, responses, callTool, query, abortQuery };
 }

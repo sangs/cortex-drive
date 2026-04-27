@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "description": "Intent registry for Cortex-Drive gateway. Each entry declares the domain signal, backbone, tool sequence, and blocked tools for a recognized query intent. Adding a new domain requires only a new entry here — no code changes in gateway logic, system prompt, or frontend.",
+  "default_intent": "unknown",
+  "intents": [
+    {
+      "label": "podcast_discovery",
+      "domain_signal": "podcast",
+      "backbone": "PODCAST_BACKBONE",
+      "blocked_tools": ["get_cluster_context"],
+      "tool_sequence": [
+        {
+          "tool": "query_relevant_chunks_hybrid_tool",
+          "purpose": "Populate chat answer with transcript evidence"
+        },
+        {
+          "tool": "search_enterprise_graph",
+          "params": { "domain_intent": "podcast", "wants_visual_map": true },
+          "purpose": "Populate graph with Episode and Podcast backbone nodes"
+        }
+      ],
+      "prototypes": [
+        "find episodes discussing",
+        "what podcasts cover",
+        "show me episodes about",
+        "which episodes mention",
+        "are there any talks about",
+        "what was discussed in",
+        "find podcast about"
+      ]
+    },
+    {
+      "label": "career_map",
+      "domain_signal": "career",
+      "backbone": "CAREER_BACKBONE",
+      "blocked_tools": [],
+      "tool_sequence": [
+        {
+          "tool": "get_cluster_context",
+          "params": { "backbone_only": true, "depth": 1 },
+          "purpose": "Render career topology with grouper nodes"
+        }
+      ],
+      "prototypes": [
+        "show career map",
+        "background of",
+        "professional experience",
+        "companies worked at",
+        "education and certifications",
+        "career timeline",
+        "resume overview",
+        "professional background"
+      ]
+    },
+    {
+      "label": "cross_domain_influence",
+      "domain_signal": "cross_domain",
+      "backbone": null,
+      "blocked_tools": [],
+      "tool_sequence": [
+        {
+          "tool": "search_enterprise_graph",
+          "params": { "domain_intent": "professional" },
+          "purpose": "Discover ThoughtLeadership node names — source for bridge discovery"
+        },
+        {
+          "tool": "connect_knowledge_on_demand",
+          "params": { "target_domain": "all" },
+          "purpose": "Find virtual cross-domain bridges — rendered as gold dashed lines"
+        }
+      ],
+      "prototypes": [
+        "how did influence",
+        "connects work to",
+        "relation between domains",
+        "bridge between",
+        "how did thought leadership shape",
+        "what connects podcast to projects",
+        "intellectual influence on"
+      ]
+    }
+  ]
+}

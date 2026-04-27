@@ -1,0 +1,10 @@
+[run]
+source = src/mcp_server
+omit = 
+    */tests/*
+    */__init__.py
+    src/mcp_server/schema_guard.py
+
+[report]
+show_missing = True
+precision = 2

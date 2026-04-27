@@ -1,0 +1,2 @@
+[SEARCH] Running resume search for user: user_3AadvqIme5F12afWwde9nv92T5R
+{"error": "{code: Neo.ClientError.Statement.SyntaxError} {message: PatternExpressions are not allowed to introduce new variables: 'u'. (line 59, column 17 (offset: 4036))\n\"          AND ((u)-[:HAS_ACCESS|OWNS|REPRESENTS|OWNS_IDENTITY|IDENTITY_OF*0..3]->(neighbor) OR any(l IN labels(neighbor) WHERE l IN [\"Technology\", \"Skill\", \"Category\"]))\"\n                 ^}"}
