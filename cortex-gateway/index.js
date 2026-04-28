@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { classifyDomain } = require('./lib/intent_classifier');
+const { classifyDomain } = require('./utils/intent_classifier');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -22,11 +22,16 @@ function buildLlmToolContent(toolName, toolContent) {
         try {
             const parsed = JSON.parse(toolContent);
             const nodes = parsed.nodes || [];
-            const nodeList = nodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join(', ');
+            const nodeList = nodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join('; ');
             const extra = nodes.length > 20 ? ` … and ${nodes.length - 20} more` : '';
             const vl = parsed.virtual_links ? ` ${parsed.virtual_links.length} virtual bridge(s).` : '';
             const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
-            return `Graph tool returned ${nodes.length} node(s): ${nodeList}${extra}.${vl}${bs} Full graph data accumulated for visualization.`;
+            // Include description snippet for nodes that have one, so the LLM can synthesize roles/status.
+            const snapNodes = nodes.filter(n => n.description && n.description.length > 5).slice(0, 8);
+            const snapText = snapNodes.length > 0
+                ? '\nNode context: ' + snapNodes.map(n => `${n.name}: ${n.description.slice(0, 100)}`).join(' | ')
+                : '';
+            return `Graph tool returned ${nodes.length} node(s): ${nodeList}${extra}.${vl}${bs}${snapText} Full graph data accumulated for visualization.`;
         } catch (e) {
             return toolContent.slice(0, 500) + (toolContent.length > 500 ? ' [truncated]' : '');
         }
