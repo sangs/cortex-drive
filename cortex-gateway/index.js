@@ -22,12 +22,18 @@ function buildLlmToolContent(toolName, toolContent) {
         try {
             const parsed = JSON.parse(toolContent);
             const nodes = parsed.nodes || [];
-            const nodeList = nodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join('; ');
-            const extra = nodes.length > 20 ? ` … and ${nodes.length - 20} more` : '';
+            // Deduplicate by name+type: prefer nodes with descriptions over SYSTEM-tenant duplicates.
+            const seenKeys = new Map();
+            nodes.forEach(n => {
+                const key = `${n.name}::${n.type}`;
+                if (!seenKeys.has(key) || (!seenKeys.get(key).description && n.description)) seenKeys.set(key, n);
+            });
+            const uniqueNodes = Array.from(seenKeys.values());
+            const nodeList = uniqueNodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join('; ');
+            const extra = uniqueNodes.length > 20 ? ` … and ${uniqueNodes.length - 20} more` : '';
             const vl = parsed.virtual_links ? ` ${parsed.virtual_links.length} virtual bridge(s).` : '';
             const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
-            // Include description snippet for nodes that have one, so the LLM can synthesize roles/status.
-            const snapNodes = nodes.filter(n => n.description && n.description.length > 5).slice(0, 8);
+            const snapNodes = uniqueNodes.filter(n => n.description && n.description.length > 5).slice(0, 8);
             const snapText = snapNodes.length > 0
                 ? '\nNode context: ' + snapNodes.map(n => `${n.name}: ${n.description.slice(0, 100)}`).join(' | ')
                 : '';
