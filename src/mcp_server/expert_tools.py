@@ -11,7 +11,7 @@ import os
 import json
 import numpy as np
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast, LiteralString
 
 
 class ExpertTools:
@@ -47,6 +47,10 @@ class ExpertTools:
             )
         )
         """
+
+    def _exec_query(self, query: str, **kwargs: Any):
+        """Execute a parameterized Cypher query. cast() satisfies Pylance's LiteralString requirement — all user values are passed as $params, never interpolated."""
+        return self.driver.execute_query(cast(LiteralString, query), **kwargs)
 
     def _fragment_taxonomy_expansion(self) -> str:
         query = """
@@ -152,19 +156,21 @@ class ExpertTools:
                 element_id: elementId(node),
                 labels: labels(node),
                 display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
-                type: CASE 
+                type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
+                    WHEN 'Degree' IN labels(node) THEN 'Degree'
                     WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
                     WHEN 'Certification' IN labels(node) THEN 'Certification'
                     WHEN 'Project' IN labels(node) THEN 'Project'
                     WHEN 'Episode' IN labels(node) THEN 'Episode'
                     WHEN 'Technology' IN labels(node) THEN 'Technology'
                     WHEN 'Topic' IN labels(node) THEN 'Topic'
-                    ELSE labels(node)[0] 
+                    ELSE labels(node)[0]
                 END,
                 is_bento_eligible: is_bento_eligible,
                 is_expandable: EXISTS { (node)-[]-(n2) WHERE NOT labels(n2)[0] IN ['ReferenceLink', 'Chunk'] },
@@ -269,7 +275,7 @@ class ExpertTools:
         LIMIT $top_k
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             requesting_user_id=self.requesting_user_id,
@@ -318,7 +324,7 @@ class ExpertTools:
         """
         
         try:
-            v_res = self.driver.execute_query(
+            v_res = self._exec_query(
                 vector_query, 
                 embedding=embedding, 
                 top_k=top_k, 
@@ -326,7 +332,7 @@ class ExpertTools:
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id
             )
-            k_res = self.driver.execute_query(
+            k_res = self._exec_query(
                 keyword_query, 
                 question=question, 
                 top_k=top_k,
@@ -362,7 +368,7 @@ class ExpertTools:
                 RETURN ep.name AS episode_name, ep.number AS episode_number, ep.link AS episode_link
                 LIMIT 1
                 """
-                meta_res = self.driver.execute_query(
+                meta_res = self._exec_query(
                     meta_query, 
                     text=text, 
                     tenant_id=self.tenant_id,
@@ -400,7 +406,7 @@ class ExpertTools:
         LIMIT $top_k
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             requesting_user_id=self.requesting_user_id,
@@ -441,7 +447,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             question=question,
@@ -467,10 +473,10 @@ class ExpertTools:
         """
         if use_case:
             query = "MATCH (n:__MetaContext__ {useCase: $use_case}) WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n))) RETURN n.context AS context"
-            result = self.driver.execute_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, use_case=use_case)
+            result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, use_case=use_case)
         else:
             query = "MATCH (n:__MetaContext__) WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n))) RETURN n.context AS context"
-            result = self.driver.execute_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
+            result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
             
         if result.records:
             return "\n\n".join([r['context'] for r in result.records if r['context']])
@@ -494,7 +500,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             question=question,
@@ -538,7 +544,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             question=question,
@@ -577,7 +583,7 @@ class ExpertTools:
         LIMIT 10
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             question=question,
@@ -612,7 +618,7 @@ class ExpertTools:
                count(DISTINCT c) AS total_chunks
         """
         
-        result = self.driver.execute_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
+        result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
         record = result.records[0]
         
         stats = {
@@ -644,7 +650,7 @@ class ExpertTools:
         ORDER BY e.number DESC
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             reference_string=reference_string,
@@ -674,7 +680,7 @@ class ExpertTools:
         LIMIT 1
         """
         
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id,
             requesting_user_id=self.requesting_user_id
@@ -794,7 +800,7 @@ class ExpertTools:
                e.number AS episode_number
         LIMIT 20
         """
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id, 
             episode_name=episode_name,
@@ -828,7 +834,7 @@ class ExpertTools:
                collect({name: p.name, role: type(r)}) AS cast
         ORDER BY e.number DESC
         """
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id,
             requesting_user_id=self.requesting_user_id
@@ -882,7 +888,7 @@ class ExpertTools:
             """
             
             try:
-                result = self.driver.execute_query(
+                result = self._exec_query(
                     query, 
                     tenant_id=self.tenant_id, 
                     episode_name=episode_name,
@@ -952,7 +958,7 @@ class ExpertTools:
                     return json.dumps({"error": f"Query blocked by security policy: {reason}"})
 
         try:
-            result = self.driver.execute_query(
+            result = self._exec_query(
                 query, 
                 tenant_id=self.tenant_id,
                 requesting_user_id=requesting_user_id or self.requesting_user_id
@@ -990,7 +996,7 @@ class ExpertTools:
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
         """
-        result = self.driver.execute_query(
+        result = self._exec_query(
             query, 
             tenant_id=self.tenant_id,
             node_id=node_id,
@@ -1032,6 +1038,7 @@ class ExpertTools:
                 WHEN 'Role' IN labels(neighbor) THEN 'Role'
                 WHEN 'Hackathon' IN labels(neighbor) THEN 'Hackathon'
                 WHEN 'ThoughtLeadership' IN labels(neighbor) THEN 'ThoughtLeadership'
+                WHEN 'Startup' IN labels(neighbor) THEN 'Startup'
                 WHEN 'Company' IN labels(neighbor) THEN 'Company'
                 WHEN 'ProfessionalEducation' IN labels(neighbor) THEN 'ProfessionalEducation'
                 WHEN 'Certification' IN labels(neighbor) THEN 'Certification'
@@ -1044,7 +1051,7 @@ class ExpertTools:
         LIMIT 30
         """
         try:
-            result = self.driver.execute_query(
+            result = self._exec_query(
                 query,
                 node_id=node_id,
                 node_name=node_name,
@@ -1198,7 +1205,7 @@ class ExpertTools:
             allowed_labels = get_authorized_labels(domain_intent)
 
             print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id}")
-            result = self.driver.execute_query(
+            result = self._exec_query(
                 query, 
                 tenant_id=self.tenant_id,
                 requesting_user_id=requesting_user_id,
@@ -1224,7 +1231,7 @@ class ExpertTools:
                 ORDER BY score DESC
                 LIMIT 10
                 """
-                result = self.driver.execute_query(
+                result = self._exec_query(
                     fallback_query,
                     embedding=embedding,
                     requesting_user_id=requesting_user_id
@@ -1340,7 +1347,7 @@ class ExpertTools:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def get_cluster_context(self, node_name: str = None, depth: int = 1, backbone_only: bool = False, domain: str = "all", node_id: str = None) -> str:
+    def get_cluster_context(self, node_name: Optional[str] = None, depth: int = 1, backbone_only: bool = False, domain: str = "all", node_id: Optional[str] = None) -> str:
         """
         Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
         Uses Progressive Discovery (Backbone-First) and Domain Masking to maintain scalability and clarity.
@@ -1407,19 +1414,21 @@ class ExpertTools:
              collect(DISTINCT {
                 id: elementId(node),
                 name: node.name,
-                type: CASE 
+                type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
+                    WHEN 'Degree' IN labels(node) THEN 'Degree'
                     WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
                     WHEN 'Certification' IN labels(node) THEN 'Certification'
                     WHEN 'Project' IN labels(node) THEN 'Project'
                     WHEN 'Episode' IN labels(node) THEN 'Episode'
                     WHEN 'Technology' IN labels(node) THEN 'Technology'
                     WHEN 'Topic' IN labels(node) THEN 'Topic'
-                    ELSE labels(node)[0] 
+                    ELSE labels(node)[0]
                 END,
                 description: left(coalesce(node.description, node.text, ""), 150),
                 text: apoc.text.join(notes, "\n---\n"),
@@ -1470,7 +1479,7 @@ class ExpertTools:
         try:
             from domain_registry import get_backbone_labels
             backbone_labels_list = get_backbone_labels(domain)
-            result = self.driver.execute_query(
+            result = self._exec_query(
                 query, 
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id,
@@ -1598,7 +1607,7 @@ class ExpertTools:
         """
 
         try:
-            result = self.driver.execute_query(
+            result = self._exec_query(
                 query,
                 tenant_id=self.tenant_id,
                 requesting_user_id=self.requesting_user_id,
