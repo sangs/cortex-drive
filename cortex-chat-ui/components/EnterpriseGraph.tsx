@@ -398,6 +398,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                     'click': (p: any) => { if (p.dataType === 'node' && onNodeClick) onNodeClick(p.data); },
                     'dblclick': (p: any) => { if (p.dataType === 'node' && onNodeDoubleClick) onNodeDoubleClick(p.data); }
                 }}
+                key={data.nodes.length > 0 ? 'populated' : 'empty'}
                 notMerge={false}
                 lazyUpdate={true}
             />

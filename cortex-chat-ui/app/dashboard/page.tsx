@@ -198,6 +198,12 @@ export default function DashboardPage() {
                         node.isExpandable = hasLinks;
                         return;
                     }
+                    // Category nodes are structural groupers — expand-only, no bento detail panel.
+                    if (node.type === 'Category') {
+                        node.isBentoEligible = false;
+                        node.isExpandable = true;
+                        return;
+                    }
                     node.isBentoEligible = !!(node.name) && !node.isGrouper;
                     const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
                     node.isExpandable = node.isGrouper || ALWAYS_EXPANDABLE.has(node.type) || (HUB_TYPES.has(node.type) && hasLinks);

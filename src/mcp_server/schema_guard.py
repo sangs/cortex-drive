@@ -66,6 +66,8 @@ TRAVERSAL_RELATIONSHIPS = [
     'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL', 'CONTAINS',
     'HAS_REFERENCE', 'BUILT_DURING', 'FEATURE_GUEST',
     'AUTHORED', 'CO_AUTHORED', 'LEAD_BY', 'PUBLISHED_BY',
+    # Education relationships (used by seeder for Degree / Certification / ProfessionalEducation)
+    'GRADUATED_FROM', 'STUDIED_AT', 'CERTIFIED_BY',
     # Similarity / cross-domain
     'SIMILAR', 'IS_SIMILAR', 'DISCUSSES', 'MENTIONS', 'COVERS',
     # Podcast domain
