@@ -35,7 +35,12 @@ function buildLlmToolContent(toolName, toolContent) {
             const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
             const snapNodes = uniqueNodes.filter(n => n.description && n.description.length > 5).slice(0, 8);
             const snapText = snapNodes.length > 0
-                ? '\nNode context: ' + snapNodes.map(n => `${n.name}: ${n.description.slice(0, 100)}`).join(' | ')
+                ? '\nNode context: ' + snapNodes.map(n => {
+                    const linkStr = Array.isArray(n.links) && n.links.length > 0
+                        ? ` [Links: ${n.links.slice(0, 2).join(', ')}]`
+                        : (n.url ? ` [Link: ${n.url}]` : '');
+                    return `${n.name}: ${n.description.slice(0, 100)}${linkStr}`;
+                }).join(' | ')
                 : '';
             return `Graph tool returned ${nodes.length} node(s): ${nodeList}${extra}.${vl}${bs}${snapText} Full graph data accumulated for visualization.`;
         } catch (e) {

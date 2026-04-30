@@ -63,6 +63,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             label: url.includes('github.com') ? 'GitHub Repository' :
                    url.includes('linkedin.com') || url.includes('lnkd.in') ? 'LinkedIn Profile' :
                    url.includes('infoq.com') ? 'InfoQ Publication' :
+                   url.includes('jpmorganchase.com') ? 'JPMorgan Chase Tech Blog' :
                    url.includes('aws.amazon.com') ? 'AWS Case Study' :
                    url.includes('medium.com') ? 'Engineering Blog' :
                    url.includes('drive.proton.me') ? 'Secure Document (Proton)' :
@@ -223,7 +224,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: '100%', opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-900/60 backdrop-blur-3xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
+                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950/95 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
             >
                 {header}
 
@@ -239,7 +240,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         {node.type === 'Podcast' ? 'About This Podcast' : 'Episode Summary'}
                                     </span>
                                 </div>
-                                <p className="text-sm font-medium leading-relaxed text-slate-200">
+                                <p className="text-sm font-medium leading-relaxed text-slate-100 max-h-36 overflow-y-auto pr-1">
                                     {node.description || 'No summary available.'}
                                 </p>
                             </div>
@@ -257,13 +258,16 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         <div className="flex flex-col gap-2">
                                             {podcastPeople.map((p, i) => (
                                                 <div key={i} className="flex items-center justify-between">
-                                                    <span className="text-xs text-slate-200">{p.name}</span>
+                                                    <span className="text-xs text-slate-100">{p.name}</span>
                                                     <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wider">{p.role}</span>
                                                 </div>
                                             ))}
                                         </div>
                                     ) : (
-                                        <span className="text-slate-500 text-[10px] italic">Expand node to load guests</span>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-slate-300 text-xs font-medium">Not yet loaded</span>
+                                            <span className="text-slate-400 text-[10px]">Double-click the episode node in the graph to expand guests</span>
+                                        </div>
                                     )}
                                 </div>
 
@@ -281,9 +285,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                             </div>
                                         )}
                                         <span className="text-xl font-bold text-amber-200">
-                                            {node.published_date || node.aired_date || '—'}
+                                            {node.published_date || node.aired_date || node.published_at || '—'}
                                         </span>
-                                        {!node.published_date && !node.aired_date && (
+                                        {!node.published_date && !node.aired_date && !node.published_at && (
                                             <span className="text-[10px] text-slate-500 italic">Date unavailable</span>
                                         )}
                                     </div>
@@ -343,7 +347,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         <Target className="w-4 h-4" />
                                         <span className="text-xs font-semibold uppercase tracking-wider">Impact Context</span>
                                     </div>
-                                    <p className="text-sm font-medium leading-relaxed text-slate-200">
+                                    <p className="text-sm font-medium leading-relaxed text-slate-100">
                                         {node.description || 'Metadata pending...'}
                                     </p>
                                 </div>
@@ -375,10 +379,10 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     </div>
                                     <div className="flex flex-col">
                                         <span className="text-xl font-bold text-amber-200">
-                                            {node.aired_date || node.displayDate || node.year || 'Active'}
+                                            {node.displayDate || node.year || 'Active'}
                                         </span>
                                         <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
-                                            {node.aired_date ? 'Aired Date' : node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : 'Active Context'}
+                                            {node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : 'Active Context'}
                                         </span>
                                     </div>
                                 </div>
@@ -411,7 +415,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     <MessageSquare className="w-4 h-4" />
                                     <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
                                 </div>
-                                <div className="text-slate-300 text-sm leading-relaxed space-y-3">
+                                <div className="text-slate-100 text-sm leading-relaxed space-y-3">
                                     {node.text ? (
                                         node.text.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
                                     ) : (

@@ -150,9 +150,14 @@ class ExpertTools:
                 link: node.link,
                 number: node.number,
                 aired_date: node.aired_date,
+                published_date: node.published_date,
                 year: node.year,
                 startDate: node.startDate,
                 endDate: node.endDate,
+                displayDate: node.displayDate,
+                startYear: node.startYear,
+                endYear: node.endYear,
+                isPresent: node.isPresent,
                 element_id: elementId(node),
                 labels: labels(node),
                 display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
@@ -1434,9 +1439,11 @@ class ExpertTools:
                 text: apoc.text.join(notes, "\n---\n"),
                 url: node.url,
                 link: node.link,
+                aired_date: node.aired_date,
                 links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
                 technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],
-                display_date: coalesce(
+                displayDate: coalesce(
+                    node.displayDate,
                     roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),
                     node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),
                     roleRel.date,
@@ -1445,16 +1452,19 @@ class ExpertTools:
                     node.published_at,
                     "Active"
                 ),
+                startYear: coalesce(node.startYear, right(roleRel.start, 4), toString(node.year)),
+                endYear: coalesce(node.endYear, right(roleRel.end, 4), toString(node.year)),
+                isPresent: coalesce(node.isPresent, roleRel.end = "Present", false),
                 year: coalesce(
                     toString(node.year),
+                    right(roleRel.end, 4),
                     right(roleRel.start, 4),
-                    right(node.startDate, 4),
                     right(roleRel.date, 4),
                     right(node.date, 4),
                     left(node.published_at, 4),
                     "2026"
                 )
-             }) AS allNodes, 
+             }) AS allNodes,
              collect(DISTINCT rel) AS allRels
              
         // Hard node limit for Progressive Discovery
@@ -1639,7 +1649,6 @@ class ExpertTools:
                 target_name = record["target_name"]
                 target_type = record["target_type"]
                 shared_anchors = record["sharedAnchors"]
-                shared_count = record["sharedCount"]
 
                 # Add target node
                 if target_eid not in seen_node_ids:

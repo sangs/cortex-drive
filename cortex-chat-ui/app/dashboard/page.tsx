@@ -34,86 +34,24 @@ import { useMCP } from "@/hooks/use-mcp";
 const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
-
-// Progressive Discovery: Domain-specific backbone node sets.
-const CAREER_BACKBONE = new Set([
-    'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership',
-    'Institution', 'Degree', 'Certification', 'Publication', 'Role', 'Year', 'Person'
-]);
-
-const PODCAST_BACKBONE = new Set([
-    'Podcast', 'Episode', 'Year'
-]);
-
-// Infer the right backbone set from the raw response content.
-// Retained as fallback only — called when domain_signal is absent or "unknown".
-const inferBackbone = (raw: any): Set<string> => {
-    try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        const nodes = parsed.nodes || (Array.isArray(parsed) ? parsed : [parsed]);
-        const types = new Set(nodes.map((n: any) => n.type || '').filter(Boolean));
-        if (types.has('Company') || types.has('Role') || types.has('Institution')) return CAREER_BACKBONE;
-        if (types.has('Episode') || types.has('Topic')) return PODCAST_BACKBONE;
-    } catch {}
-    return new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]);
-};
-
-// Select backbone from gateway-declared domain_signal.
-// backboneOnly: false for cross_domain — all node types pass through (bridge nodes span domains).
-const domainToBackbone = (signal: string | undefined, rawData: any): { backbone: Set<string>, backboneOnly: boolean } => {
-    if (signal === 'podcast')      return { backbone: PODCAST_BACKBONE, backboneOnly: true };
-    if (signal === 'career')       return { backbone: CAREER_BACKBONE,  backboneOnly: true };
-    if (signal === 'cross_domain') return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]), backboneOnly: false };
-    return { backbone: inferBackbone(rawData), backboneOnly: true };
-};
-
-// Fix #2: Virtual Grouper Collapse — collapses ≥3 instances of the same type into one representative node.
-// On double-click, the grouper blooms its children directly in the graph without an API call.
-const GROUPER_LABELS: Record<string, string> = {
-    Company: 'Companies', ThoughtLeadership: 'Thought Leadership', Hackathon: 'Hackathons',
-    Institution: 'Institutions', Certification: 'Certifications', Publication: 'Publications',
-    Startup: 'Startups', Degree: 'Education'
-};
-const GROUPABLE_TYPES = new Set(Object.keys(GROUPER_LABELS));
-const GROUPER_MIN_COUNT = 2;
-
-const collapseToGroupers = (nodes: any[], links: any[]): { nodes: any[], links: any[] } => {
-    const byType = new Map<string, any[]>();
-    const ungrouped: any[] = [];
-    nodes.forEach(n => {
-        if (GROUPABLE_TYPES.has(n.type)) {
-            if (!byType.has(n.type)) byType.set(n.type, []);
-            byType.get(n.type)!.push(n);
-        } else {
-            ungrouped.push(n);
-        }
-    });
-    const outNodes: any[] = [...ungrouped];
-    const idRemap = new Map<string, string>();
-    byType.forEach((instances, type) => {
-        if (instances.length < GROUPER_MIN_COUNT) {
-            outNodes.push(...instances);
-        } else {
-            const grouperId = `group-${type}`;
-            outNodes.push({
-                id: grouperId, name: `${GROUPER_LABELS[type]} (${instances.length})`,
-                type, isGrouper: true, groupCount: instances.length,
-                children: instances, isExpandable: true, isBentoEligible: false, val: 18
-            });
-            instances.forEach(n => idRemap.set(n.id, grouperId));
-        }
-    });
-    const seenLinks = new Set<string>();
-    const outLinks: any[] = [];
-    links.forEach(l => {
-        const src = idRemap.get(l.source) || l.source;
-        const tgt = idRemap.get(l.target) || l.target;
-        if (src === tgt) return;
-        const key = `${src}→${tgt}`;
-        if (!seenLinks.has(key)) { seenLinks.add(key); outLinks.push({ ...l, source: src, target: tgt }); }
-    });
-    return { nodes: outNodes, links: outLinks };
-};
+import {
+    CAREER_BACKBONE,
+    PODCAST_BACKBONE,
+    GRAPH_VISUAL_EXCLUDE,
+    TAG_LEAF_TYPES,
+    ALWAYS_EXPANDABLE,
+    HUB_TYPES,
+    CATEGORY_CHILD_TYPES,
+    GROUPER_LABELS,
+    GROUPABLE_TYPES,
+    GROUPER_MIN_COUNT,
+    PROFESSIONAL_EXPERIENCE_CATEGORY,
+    collapseToGroupers,
+    buildCompanyGroupers,
+    deduplicateNodes,
+    inferBackbone,
+    domainToBackbone,
+} from "@/utils/graphConstants";
 
 export default function DashboardPage() {
     const { user } = useUser();
@@ -174,17 +112,7 @@ export default function DashboardPage() {
                 return allowedSet.has(nodeType);
             };
 
-            // Interaction affordance constants — hoisted so both code paths can use them.
-            const TAG_LEAF_TYPES = new Set(['Technology', 'Concept', 'Chunk', 'ReferenceLink', 'Source']);
-            // Nodes that must never appear as canvas nodes (visual noise or privacy).
-            const GRAPH_VISUAL_EXCLUDE = new Set(['Chunk', 'Source', 'ReferenceLink', 'PreparatoryNote', '__MetaContext__']);
-            const ALWAYS_EXPANDABLE = new Set([
-                'Episode', 'Podcast', 'Category', 'Person',
-                'Company', 'Startup', 'Hackathon', 'ThoughtLeadership'
-            ]);
-            const HUB_TYPES = new Set([
-                'Role', 'Topic', 'Institution', 'Degree', 'Project', 'Certification'
-            ]);
+            // Affordance constants are imported from graphConstants — not re-declared here.
             const applyAffordanceFlags = (nodeList: any[], linkList: any[]) => {
                 nodeList.forEach(node => {
                     if (TAG_LEAF_TYPES.has(node.type)) {
@@ -266,10 +194,6 @@ export default function DashboardPage() {
                 if (backboneOnly && backboneSet === CAREER_BACKBONE) {
                     const hasCategoryNodes = nodes.some(n => n.type === 'Category');
                     if (hasCategoryNodes) {
-                        const CATEGORY_CHILD_TYPES = new Set([
-                            'ThoughtLeadership', 'Degree', 'Certification', 'Hackathon',
-                            'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project'
-                        ]);
                         const filteredNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
                         const filteredLinks = links.filter(l =>
                             filteredNodes.some(n => n.id === l.source) &&
@@ -634,12 +558,16 @@ export default function DashboardPage() {
                             const description = narratives.length > 0 ? narratives.join('\n\n') : (p.description || prev.description);
                             const tech = p.technologies || p.tech_stack || p.tools || prev.technologies;
                             const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
+                            // Also collect direct link/url properties from Neo4j so Resource Gallery
+                            // appears for nodes whose links are stored as scalar properties, not
+                            // only via HAS_REFERENCE → ReferenceLink relationships.
+                            const directLinks = [p.link, p.url].filter(Boolean);
                             return {
                                 ...prev, ...p,
                                 description,
                                 text: description,
                                 technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
-                                links: Array.from(new Set([...(prev.links || []), ...refLinks]))
+                                links: Array.from(new Set([...(prev.links || []), ...refLinks, ...directLinks]))
                             };
                         });
                     }
@@ -669,7 +597,9 @@ export default function DashboardPage() {
         // Grouper expansion is client-side — bloom children without an API call.
         // Rewires both physical links and virtual_links (gold dashed VIRTUAL_BRIDGE)
         // so Q3 bridge lines survive after the ThoughtLeadership grouper is expanded.
-        if (freshNode.isGrouper && freshNode.children) {
+        // Guard: if children is empty fall through to server expansion so the node
+        // doesn't vanish with nothing replacing it (Q2a fix).
+        if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
             setGraphData(prev => {
                 const newNodes = prev.nodes.filter(n => n.id !== freshNode.id).concat(freshNode.children);
 
@@ -691,6 +621,17 @@ export default function DashboardPage() {
 
                 return { ...prev, nodes: newNodes, links: expandedLinks };
             });
+
+            // Replace the bloomed grouper ID with its children IDs in every contribution
+            // set that referenced it. This keeps computeFocusedIds() accurate so children
+            // are in focusedNodeIds and not dimmed (Q2b fix).
+            expansionContributions.current.forEach(contributed => {
+                if (contributed.has(freshNode.id)) {
+                    contributed.delete(freshNode.id);
+                    freshNode.children.forEach((child: any) => { if (child.id) contributed.add(child.id); });
+                }
+            });
+            setFocusedNodeIds(() => computeFocusedIds());
             return;
         }
 
@@ -732,6 +673,51 @@ export default function DashboardPage() {
                 return newGraph;
             });
             setFocusedNodeIds(() => computeFocusedIds());
+            return;
+        }
+
+        // PROFESSIONAL EXPERIENCE: two-level bloom — first click shows Companies,
+        // second click (on Company) blooms Projects/Roles at that company via grouper logic.
+        if (freshNode.type === 'Category' && freshNode.name === PROFESSIONAL_EXPERIENCE_CATEGORY) {
+            try {
+                setIsProcessing(true);
+                const toolResponse = await callTool("get_cluster_context", {
+                    node_name: PROFESSIONAL_EXPERIENCE_CATEGORY,
+                    depth: 2,
+                    backbone_only: false
+                });
+                if (toolResponse?.content?.[0]) {
+                    const results = JSON.parse(toolResponse.content[0].text);
+                    const enrichedCompanies = buildCompanyGroupers(
+                        results.nodes || [],
+                        results.links || []
+                    );
+                    if (enrichedCompanies.length > 0) {
+                        setGraphData(prev => {
+                            const existingIds  = new Set(prev.nodes.map((n: any) => n.id as string));
+                            const existingNames = new Set(prev.nodes.map((n: any) => n.name as string));
+                            const addedCompanies = enrichedCompanies.filter((c: any) =>
+                                !existingIds.has(c.id) && !existingNames.has(c.name)
+                            );
+                            const newLinks = [...prev.links];
+                            enrichedCompanies.forEach((c: any) => {
+                                if (!newLinks.some(l => (l.source === freshNode.id && l.target === c.id) || (l.source === c.id && l.target === freshNode.id))) {
+                                    newLinks.push({ source: freshNode.id, target: c.id, type: 'CONTAINS' });
+                                }
+                            });
+                            const contributed = new Set<string>(addedCompanies.map((c: any) => c.id as string));
+                            expansionContributions.current.set(nodeKey, contributed);
+                            expandedNodes.current.add(nodeKey);
+                            return { nodes: [...prev.nodes, ...addedCompanies], links: newLinks };
+                        });
+                        setFocusedNodeIds(() => computeFocusedIds());
+                    }
+                }
+            } catch (e) {
+                console.error("Professional Experience expansion failed:", e);
+            } finally {
+                setIsProcessing(false);
+            }
             return;
         }
 

@@ -201,7 +201,8 @@ RESUME_CYPHER_QUERIES = [
     SET t1.type = "ThoughtLeadership",
         t1.description = "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering.",
         t1.links = ["https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"]
-    MERGE (p)-[:AUTHORED {start: "11/2025", end: "01/2026"}]->(t1)
+    MERGE (p)-[tl1_rel:AUTHORED]->(t1)
+    SET tl1_rel.start = "11/2025", tl1_rel.end = "01/2026"
     MERGE (cat)-[:CONTAINS]->(t1)
     
     MERGE (star_t1:PreparatoryNote {name: "Core Detail: InfoQ Publication"})
@@ -218,7 +219,8 @@ RESUME_CYPHER_QUERIES = [
     SET t2.type = "ThoughtLeadership",
         t2.description = "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impact of social learning in enterprise tech.",
         t2.links = ["https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"]
-    MERGE (p)-[:FEATURE_GUEST {role: "Lead & Featured Guest", start: "06/2021", end: "07/2025"}]->(t2)
+    MERGE (p)-[tl2_rel:FEATURE_GUEST]->(t2)
+    SET tl2_rel.role = "Lead & Featured Guest", tl2_rel.start = "06/2021", tl2_rel.end = "07/2025"
     MERGE (cat)-[:CONTAINS]->(t2)
     
     MERGE (star_t2:PreparatoryNote {name: "Core Detail: Ignite Community"})
@@ -234,7 +236,8 @@ RESUME_CYPHER_QUERIES = [
     MERGE (t3:ThoughtLeadership:Project {name: "Open-Source AI Agents Contribution @ JPMC"})
     SET t3.type = "ThoughtLeadership",
         t3.description = "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns."
-    MERGE (p)-[:CONTRIBUTED_TO {start: "05/2025", end: "07/2025"}]->(t3)
+    MERGE (p)-[tl3_rel:CONTRIBUTED_TO]->(t3)
+    SET tl3_rel.start = "05/2025", tl3_rel.end = "07/2025"
     MERGE (cat)-[:CONTAINS]->(t3)
 
     MERGE (star_t3:PreparatoryNote {name: "Core Detail: Open-Source AI Agents"})
@@ -732,11 +735,14 @@ def seed_resume_graph():
             print("  -> Stamping graph with Zero-Trust identity tier (SYSTEM / PUBLIC / PRIVATE).")
 
             # Tier 1: SYSTEM — globally visible structural landmarks
+            # Technology, Concept, Year are semantic primitives shared across all tenants —
+            # they must be SYSTEM tier so virtual bridge discovery can traverse them globally.
             session.run(
                 """
                 MATCH (n)
                 WHERE any(label IN labels(n) WHERE label IN [
-                    'Company', 'Institution', 'Degree', 'Category'
+                    'Company', 'Institution', 'Degree', 'Category',
+                    'Technology', 'Concept', 'Year'
                 ])
                 SET n.tenant_id = 'SYSTEM', n.owner_id = 'user_SYSTEM_ADMIN'
                 """
@@ -799,6 +805,19 @@ def seed_resume_graph():
                 MATCH (a)-[rel:CONTRIBUTED_TO]->(n)
                 WHERE n.name CONTAINS 'Open-Source AI Agents'
                   AND rel.start = '06/2021'
+                DELETE rel
+                """
+            )
+
+            # Guard: Remove stale AUTHORED relationships for the InfoQ ThoughtLeadership node
+            # that may survive from earlier seed runs with different date values (e.g. "02/2024").
+            # The step-3a year-only cleanup only removes year-format rels; mm/yyyy stale rels
+            # must be explicitly deleted here so the coalesce year chain returns 2025, not 2024.
+            session.run(
+                """
+                MATCH (p:Person {name: "Sangeetha Ramadurai"})-[rel:AUTHORED]->(t:ThoughtLeadership)
+                WHERE t.name CONTAINS "InfoQ"
+                  AND NOT (rel.start = "11/2025" AND rel.end = "01/2026")
                 DELETE rel
                 """
             )

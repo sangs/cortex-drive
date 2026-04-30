@@ -3,6 +3,7 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { getThemeForType } from '@/utils/GraphTheme';
+import { deduplicateNodes } from '@/utils/graphConstants';
 
 const BACKBONE_LANDMARKS = [
     'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership',
@@ -32,13 +33,14 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
     data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId, focusedNodeIds, expandedNodeKeys
 }) => {
     const chartRef = useRef<any>(null);
-    const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map()); 
+    const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map());
     const pinnedRef = useRef<Map<string, {x: number, y: number}>>(new Map());
+    const graphZoomRef = useRef(1);
 
     // 1. Initial Processing: Inject Temporal Spine & Year Anchors
     const processed = useMemo(() => {
-        const nodes = [...data.nodes];
-        const links = [...data.links];
+        // Deduplicate before ECharts sees the data — it rejects duplicate id OR name in graph series.
+        const { nodes, links } = deduplicateNodes(data.nodes, data.links);
 
         if (viewMode === 'spine') {
             // Generate limited spine backbone based on focusYear (3-year sliding window)
@@ -164,6 +166,15 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             padding: [8, 12],
             textStyle: { color: '#1e293b', fontSize: 12 },
             formatter: (params: any) => {
+                if (params.dataType === 'edge') {
+                    const raw = params.data.link_label || params.data.discovery_reason || '';
+                    if (!raw) return '';
+                    const isVirtual = params.data.isVirtual || params.data.hasFederatedBridge;
+                    const color = isVirtual ? '#b45309' : '#4338ca';
+                    const label = raw.length > 80 ? raw.slice(0, 78) + '…' : raw;
+                    return `<div style="max-width:240px;font-size:11px;font-weight:bold;color:${color};line-height:1.4">${label}</div>
+                            <div style="font-size:10px;color:#94a3b8;margin-top:3px;text-transform:uppercase">${params.data.type || ''}</div>`;
+                }
                 if (params.dataType !== 'node') return '';
                 const name = params.data.name || String(params.data.id || '');
                 const type = params.data.type || '';
@@ -189,6 +200,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             type: 'graph',
             coordinateSystem: viewMode === 'spine' ? 'cartesian2d' : undefined,
             layout: viewMode === 'spine' ? 'none' : 'force',
+            zoom: graphZoomRef.current,
             force: {
                 repulsion: 3500,
                 gravity: 0.05,
@@ -320,13 +332,16 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 edgeSymbolSize: [0, 8],
                 label: {
                     show: false,
-                    formatter: (p: any) => p.data.link_label || p.data.discovery_reason || p.data.title || p.data.role || '',
+                    formatter: (p: any) => {
+                        const raw = p.data.link_label || p.data.discovery_reason || p.data.title || p.data.role || '';
+                        return raw.length > 40 ? raw.slice(0, 38) + '…' : raw;
+                    },
                     fontSize: 10,
                     fontWeight: 'bold',
                     color: '#6366f1'
                 },
                 emphasis: {
-                    label: { show: true },
+                    label: { show: false },
                     lineStyle: { width: 6, opacity: 1 }
                 },
                 lineStyle: {
@@ -343,6 +358,25 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             }))
         }]
     });
+    };
+
+    const handleZoomIn = () => {
+        const e = chartRef.current?.getEchartsInstance();
+        if (!e) return;
+        graphZoomRef.current = Math.min(graphZoomRef.current * 1.3, 6);
+        e.setOption({ series: [{ zoom: graphZoomRef.current }] });
+    };
+    const handleZoomOut = () => {
+        const e = chartRef.current?.getEchartsInstance();
+        if (!e) return;
+        graphZoomRef.current = Math.max(graphZoomRef.current / 1.3, 0.15);
+        e.setOption({ series: [{ zoom: graphZoomRef.current }] });
+    };
+    const handleZoomReset = () => {
+        const e = chartRef.current?.getEchartsInstance();
+        if (!e) return;
+        graphZoomRef.current = 1;
+        e.setOption({ series: [{ zoom: 1 }] });
     };
 
     useEffect(() => {
@@ -390,9 +424,9 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
 
     return (
         <div className="w-full h-full relative">
-            <ReactECharts 
-                ref={chartRef} 
-                option={getOption()} 
+            <ReactECharts
+                ref={chartRef}
+                option={getOption()}
                 style={{ height: '100%', width: '100%' }}
                 onEvents={{
                     'click': (p: any) => { if (p.dataType === 'node' && onNodeClick) onNodeClick(p.data); },
@@ -402,6 +436,24 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 notMerge={false}
                 lazyUpdate={true}
             />
+            {/* Zoom Controls */}
+            <div className="absolute top-3 right-3 z-20 flex flex-col gap-1">
+                <button
+                    onClick={handleZoomIn}
+                    className="w-8 h-8 rounded-lg bg-slate-800/90 border border-slate-700 text-white font-bold text-lg hover:bg-indigo-600 hover:border-indigo-500 transition-colors flex items-center justify-center shadow-lg"
+                    title="Zoom in"
+                >+</button>
+                <button
+                    onClick={handleZoomOut}
+                    className="w-8 h-8 rounded-lg bg-slate-800/90 border border-slate-700 text-white font-bold text-lg hover:bg-indigo-600 hover:border-indigo-500 transition-colors flex items-center justify-center shadow-lg"
+                    title="Zoom out"
+                >−</button>
+                <button
+                    onClick={handleZoomReset}
+                    className="w-8 h-8 rounded-lg bg-slate-800/90 border border-slate-700 text-slate-400 font-bold text-xs hover:bg-slate-700 hover:text-white hover:border-slate-500 transition-colors flex items-center justify-center shadow-lg"
+                    title="Reset zoom"
+                >⊡</button>
+            </div>
             {viewMode === 'spine' && (
                 <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-30 w-[85%] max-w-[1000px]">
                     <div className="relative flex items-center justify-between p-5 bg-white/60 backdrop-blur-3xl border border-white/40 rounded-[32px] shadow-2xl">

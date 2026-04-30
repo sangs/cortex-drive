@@ -58,14 +58,18 @@ CYPHER_QUERIES = [
     """, "Person → Project relationship"),
 
     # 3. Technology anchor nodes (shared with ThoughtLeadership articles for Q3 bridge)
+    # CRITICAL: Do NOT include tenant_id in the MERGE key. Technology nodes are SYSTEM-tier
+    # semantic primitives — they must match the globally-visible SYSTEM nodes seeded by
+    # seed_resume_graph.py. Adding tenant_id creates org-tenant duplicates that break
+    # connect_knowledge_on_demand bridge discovery (sharedAnchor comparison fails).
     ("""
     UNWIND [
         "Neo4j", "Graph Databases", "LLM", "MCP", "Vector Search",
         "AI Agent", "FastAPI", "TypeScript", "Zero Trust Architecture",
         "Knowledge Graph", "Retrieval-Augmented Generation"
     ] AS tech
-    MERGE (t:Technology {name: tech, tenant_id: $tenant_id})
-    ON CREATE SET t.type = "Technology"
+    MERGE (t:Technology {name: tech})
+    ON CREATE SET t.type = "Technology", t.tenant_id = 'SYSTEM', t.owner_id = 'user_SYSTEM_ADMIN'
     WITH t, tech
     MATCH (p:Project {name: "Cortex-Drive", tenant_id: $tenant_id})
     MERGE (p)-[:USES_TOOL]->(t)
@@ -73,14 +77,15 @@ CYPHER_QUERIES = [
     """, "Technology anchor links"),
 
     # 4. Concept anchor nodes (broader concepts that bridge to InfoQ/ThoughtLeadership content)
+    # Same SYSTEM-tier rule as Technology nodes above — name-only MERGE key.
     ("""
     UNWIND [
         "AI Architecture", "Graph UX", "Metadata Orchestration",
         "Enterprise Knowledge Management", "Federated Identity",
         "Progressive Disclosure", "Semantic Search"
     ] AS concept
-    MERGE (c:Concept {name: concept, tenant_id: $tenant_id})
-    ON CREATE SET c.type = "Concept"
+    MERGE (c:Concept {name: concept})
+    ON CREATE SET c.type = "Concept", c.tenant_id = 'SYSTEM', c.owner_id = 'user_SYSTEM_ADMIN'
     WITH c, concept
     MATCH (p:Project {name: "Cortex-Drive", tenant_id: $tenant_id})
     MERGE (p)-[:DISCUSSES]->(c)
@@ -98,9 +103,10 @@ CYPHER_QUERIES = [
         {child: "Semantic Search", parent: "Vector Search"},
         {child: "Federated Identity", parent: "Zero Trust Architecture"}
     ] AS rel
-    MERGE (child:Concept {name: rel.child, tenant_id: $tenant_id})
-    MERGE (parent:Concept {name: rel.parent, tenant_id: $tenant_id})
-    ON CREATE SET parent.type = "Concept"
+    MERGE (child:Concept {name: rel.child})
+    ON CREATE SET child.type = "Concept", child.tenant_id = 'SYSTEM', child.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (parent:Concept {name: rel.parent})
+    ON CREATE SET parent.type = "Concept", parent.tenant_id = 'SYSTEM', parent.owner_id = 'user_SYSTEM_ADMIN'
     MERGE (child)-[:IS_A]->(parent)
     RETURN count(*) AS taxonomy_edges_created
     """, "IS_A taxonomy expansion edges"),
