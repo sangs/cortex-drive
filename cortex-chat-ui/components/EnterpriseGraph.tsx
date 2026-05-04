@@ -35,7 +35,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
     const chartRef = useRef<any>(null);
     const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map());
     const pinnedRef = useRef<Map<string, {x: number, y: number}>>(new Map());
-    const graphZoomRef = useRef(1);
+    const graphZoomRef = useRef(0.55);
 
     // 1. Initial Processing: Inject Temporal Spine & Year Anchors
     const processed = useMemo(() => {
@@ -202,11 +202,11 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             layout: viewMode === 'spine' ? 'none' : 'force',
             zoom: graphZoomRef.current,
             force: {
-                repulsion: 3500,
-                gravity: 0.05,
-                edgeLength: [160, 320],
+                repulsion: 1400,
+                gravity: 0.12,
+                edgeLength: [80, 180],
                 layoutAnimation: true,
-                friction: 0.25
+                friction: 0.4
             },
             symbol: (val: any, params: any) => params.data.type === 'Year' ? 'diamond' : 'circle',
             symbolSize: (val: any, params: any) => {
@@ -376,13 +376,32 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
         graphZoomRef.current = 1;
-        e.setOption({ series: [{ zoom: 1 }] });
+        e.setOption({ series: [{ zoom: 1, center: ['50%', '50%'] }] });
     };
+
+    // Auto-fit: after each bloom (node count changes), wait for force to settle then re-center
+    const prevNodeCountRef = useRef(0);
+    useEffect(() => {
+        if (viewMode !== 'brain') return;
+        const currentCount = data.nodes.length;
+        if (currentCount > 0 && currentCount !== prevNodeCountRef.current) {
+            prevNodeCountRef.current = currentCount;
+            const timer = setTimeout(() => {
+                const e = chartRef.current?.getEchartsInstance();
+                if (!e || e.isDisposed()) return;
+                // Scale zoom inversely with node count so all nodes remain visible after bloom
+                const targetZoom = Math.max(0.35, 1 / Math.sqrt(Math.max(currentCount, 1) / 3));
+                graphZoomRef.current = targetZoom;
+                e.setOption({ series: [{ zoom: targetZoom }] }, false);
+            }, 900);
+            return () => clearTimeout(timer);
+        }
+    }, [data.nodes.length, viewMode]);
 
     useEffect(() => {
         if (!chartRef.current) return;
         const e = chartRef.current.getEchartsInstance();
-        
+
         // Handle Mouseup for Pinning: High-Fidelity Capture from Model
         const handleMouseUp = (params: any) => {
             if (params.dataType === 'node' && viewMode === 'brain') {

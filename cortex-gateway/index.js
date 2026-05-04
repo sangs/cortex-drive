@@ -29,17 +29,42 @@ function buildLlmToolContent(toolName, toolContent) {
                 if (!seenKeys.has(key) || (!seenKeys.get(key).description && n.description)) seenKeys.set(key, n);
             });
             const uniqueNodes = Array.from(seenKeys.values());
-            const nodeList = uniqueNodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join('; ');
+            // Sort by temporal_boost DESC (Cypher-computed field; preserves the ordering already
+            // established by the query — re-sorting by isPresent/endYear scrambles it).
+            uniqueNodes.sort((a, b) => (b.temporal_boost || 0) - (a.temporal_boost || 0));
             const extra = uniqueNodes.length > 20 ? ` … and ${uniqueNodes.length - 20} more` : '';
             const vl = parsed.virtual_links ? ` ${parsed.virtual_links.length} virtual bridge(s).` : '';
             const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
+
+            // For search_enterprise_graph: emit explicit numbered rank list so LLM cannot reorganize.
+            if (toolName === 'search_enterprise_graph') {
+                const rankedList = uniqueNodes.slice(0, 20).map((n, i) => {
+                    const linkStr = Array.isArray(n.links) && n.links.length > 0
+                        ? ` [Links: ${n.links.slice(0, 2).map((url, idx) => {
+                            const title = Array.isArray(n.link_titles) && n.link_titles[idx] ? n.link_titles[idx] : null;
+                            return title ? `${title} (${url})` : url;
+                          }).join(', ')}]`
+                        : (n.url ? ` [Link: ${n.url}]` : '');
+                    const statusStr = n.isPresent ? ' [PRESENT — CURRENT WORK]' : (n.displayDate ? ` [${n.displayDate}]` : '');
+                    const desc = n.description && n.description.length > 5 ? `: ${n.description.slice(0, 150)}` : '';
+                    return `#${i + 1}${statusStr} ${n.name} (${n.type})${desc}${linkStr}`;
+                }).join('\n');
+                return `RANKED RESULT — CHAT MUST FOLLOW THIS ORDER EXACTLY (item #1 is always first in your response):\n${rankedList}${extra}\n${vl}${bs}Full graph data accumulated for visualization.`;
+            }
+
+            const nodeList = uniqueNodes.slice(0, 20).map(n => `${n.name} (${n.type})`).join('; ');
             const snapNodes = uniqueNodes.filter(n => n.description && n.description.length > 5).slice(0, 8);
             const snapText = snapNodes.length > 0
                 ? '\nNode context: ' + snapNodes.map(n => {
                     const linkStr = Array.isArray(n.links) && n.links.length > 0
-                        ? ` [Links: ${n.links.slice(0, 2).join(', ')}]`
+                        ? ` [Links: ${n.links.slice(0, 2).map((url, i) => {
+                            const title = Array.isArray(n.link_titles) && n.link_titles[i] ? n.link_titles[i] : null;
+                            return title ? `${title} (${url})` : url;
+                          }).join(', ')}]`
                         : (n.url ? ` [Link: ${n.url}]` : '');
-                    return `${n.name}: ${n.description.slice(0, 100)}${linkStr}`;
+                    const roleStr = n.role ? ` — ${n.role}` : '';
+                    const statusStr = n.isPresent ? ' [Currently Active]' : (n.displayDate && n.displayDate !== 'Active' ? ` [${n.displayDate}]` : '');
+                    return `${n.name}${roleStr}${statusStr}: ${n.description.slice(0, 100)}${linkStr}`;
                 }).join(' | ')
                 : '';
             return `Graph tool returned ${nodes.length} node(s): ${nodeList}${extra}.${vl}${bs}${snapText} Full graph data accumulated for visualization.`;
@@ -51,6 +76,260 @@ function buildLlmToolContent(toolName, toolContent) {
         return toolContent.slice(0, MAX_KNOWLEDGE_CONTENT_CHARS) + `\n[Truncated — ${toolContent.length} chars total]`;
     }
     return toolContent;
+}
+
+/**
+ * Build the set of URLs that appeared in tool results for this turn.
+ * Used by auditResponseUrls to strip hallucinated links before sending to the UI.
+ */
+function extractToolUrls(parsed) {
+    const urls = new Set();
+    if (!parsed || typeof parsed !== 'object') return urls;
+    const nodes = parsed.nodes || [];
+    nodes.forEach(n => {
+        if (n.url) urls.add(n.url);
+        if (n.link) urls.add(n.link);
+        if (Array.isArray(n.links)) n.links.forEach(u => u && urls.add(u));
+    });
+    const refUrls = parsed.ref_urls || parsed.reference_links || [];
+    if (Array.isArray(refUrls)) refUrls.forEach(u => u && urls.add(u));
+    return urls;
+}
+
+/**
+ * Strip any URLs in the LLM response that were not present in tool results.
+ * - Markdown links [text](url): removes the link wrapper, keeps the display text.
+ * - Bare URLs: replaces with [source not in graph].
+ * This is the gateway-side grounding enforcement layer — deterministic, cannot be
+ * overridden by prompt injection.
+ */
+function auditResponseUrls(content, seenUrls) {
+    if (!content || seenUrls.size === 0) return content;
+    // Normalize: strip trailing slash so url and url/ match the same entry.
+    const normalize = (u) => u.replace(/[.,;:!?]+$/, '').replace(/\/$/, '');
+    const normalizedSeen = new Set([...seenUrls].map(normalize));
+    // Strip markdown links whose URL wasn't in tool results — keep display text.
+    let audited = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, text, url) => {
+        if (normalizedSeen.has(normalize(url))) return match;
+        console.warn(`[GROUNDING] Removing hallucinated link: ${normalize(url)}`);
+        return text;
+    });
+    // Replace bare URLs not from tool results.
+    audited = audited.replace(/https?:\/\/[^\s)\]"'<]+/g, (url) => {
+        if (normalizedSeen.has(normalize(url))) return url;
+        console.warn(`[GROUNDING] Replacing hallucinated bare URL: ${normalize(url)}`);
+        return '[source not in graph]';
+    });
+    return audited;
+}
+
+// Node types eligible to appear in a Q2 (career map) chat response.
+// Excludes structural nodes (Category, Person, Year, Technology, Skill) and
+// granular project-breakdown types that add noise rather than career narrative.
+const CAREER_CHAT_NODE_TYPES = new Set([
+    'Project', 'Role', 'Company', 'Startup', 'Hackathon',
+    'ThoughtLeadership', 'Certification', 'Degree',
+    'Institution', 'ProfessionalEducation', 'Publication'
+]);
+
+// Types that receive writer prose (focused single-item narrative exists).
+// Defensive: also checks n.labels for 'Project' to catch Startup:Project multi-label nodes
+// that the Cypher type resolver may still return as 'Startup' on cached data.
+function isWriterEligible(n) {
+    if (['Project', 'ThoughtLeadership', 'Publication'].includes(n.type)) return true;
+    if (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project')) return true;
+    return false;
+}
+
+// Timeline string for a node.
+function nodeTimeline(n) {
+    return n.displayDate ||
+        (n.startYear && n.endYear ? `${n.startYear}–${n.endYear}` :
+         n.startYear ? n.startYear : n.endYear ? n.endYear : '');
+}
+
+// All URL links for a node.
+function nodeLinks(n) {
+    if (Array.isArray(n.links) && n.links.length > 0) return n.links.filter(Boolean);
+    if (n.url) return [n.url];
+    return [];
+}
+
+// Splits contentNodes into the six Q2 display sections.
+function groupNodesForQ2(contentNodes) {
+    const isCurrentProject = n =>
+        (n.type === 'Project' || (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project'))) &&
+        (n.isPresent === true || n.isPresent === 'true' || n.endDate === 'Present' || n.endYear === 'Present' || n.displayDate?.includes('Present'));
+
+    const currentlyBuilding = contentNodes.filter(isCurrentProject);
+    const currentNames = new Set(currentlyBuilding.map(n => n.name));
+
+    const companies    = contentNodes.filter(n => (n.type === 'Company' || n.type === 'Startup') && !currentNames.has(n.name));
+    const projects     = contentNodes.filter(n =>
+        (n.type === 'Project' || (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project'))) &&
+        !currentNames.has(n.name)
+    );
+    const thoughtLeadership = contentNodes.filter(n => n.type === 'ThoughtLeadership' || n.type === 'Publication');
+    const hackathons   = contentNodes.filter(n => n.type === 'Hackathon');
+    const education    = contentNodes.filter(n => ['Degree', 'Certification', 'ProfessionalEducation', 'Institution'].includes(n.type));
+
+    return { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education };
+}
+
+/**
+ * Strips STAR-framework and preparatory-note markup from narrative text so the
+ * Q2 response reads as seamless professional experience (per system prompt PRIVACY rule).
+ */
+function sanitizeNarrative(text) {
+    if (!text) return '';
+    return text
+        .replace(/^(Situation|Task|Action|Result|Preparatory Note|STAR Framework)[:\s]*/gim, '')
+        .replace(/\n---\n/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * Option B — section-based Q2 career map (no writer calls, uses node description only).
+ * Used as fallback when Option A writer calls fail, and as the static buildLlmToolContent
+ * ranked summary sent to the LLM. Six sections: Currently Building / Career Timeline /
+ * What She Built / Thought Leadership / Hackathons / Education.
+ */
+function buildCareerMapResponse(rankedNodes) {
+    const contentNodes = rankedNodes.filter(n => CAREER_CHAT_NODE_TYPES.has(n.type));
+    if (contentNodes.length === 0) return null;
+
+    const { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education } = groupNodesForQ2(contentNodes);
+    const lines = ['## Institutional Memory Map'];
+
+    if (currentlyBuilding.length > 0) {
+        lines.push('', '### Currently Building');
+        currentlyBuilding.forEach(n => {
+            const tl = nodeTimeline(n);
+            const role = n.role ? ` · ${n.role}` : '';
+            lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
+            const desc = sanitizeNarrative(n.text) || (n.description?.length > 10 ? n.description : '');
+            if (desc) lines.push(desc.slice(0, 400));
+            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+            lines.push('');
+        });
+    }
+
+    if (companies.length > 0) {
+        lines.push('', '---', '', '### Career Timeline');
+        companies.forEach(n => {
+            const tl = nodeTimeline(n);
+            const role = n.role ? ` · ${n.role}` : '';
+            lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
+            lines.push('');
+        });
+    }
+
+    if (projects.length > 0) {
+        lines.push('', '---', '', '### What She Built');
+        projects.forEach((n, i) => {
+            const tl = nodeTimeline(n);
+            lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
+            if (i < 3 && n.description?.length > 10) lines.push(n.description);
+            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+            lines.push('');
+        });
+    }
+
+    if (thoughtLeadership.length > 0) {
+        lines.push('', '---', '', '### Thought Leadership & Publications');
+        thoughtLeadership.forEach(n => {
+            const tl = nodeTimeline(n);
+            lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
+            if (n.description?.length > 10) lines.push(n.description);
+            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+            lines.push('');
+        });
+    }
+
+    if (hackathons.length > 0) {
+        lines.push('', '---', '', '### Hackathons & Contributions');
+        hackathons.forEach(n => {
+            const tl = nodeTimeline(n);
+            lines.push(`- **${n.name}**${tl ? ` [${tl}]` : ''}`);
+        });
+    }
+
+    if (education.length > 0) {
+        lines.push('', '---', '', '### Education & Certifications');
+        education.forEach(n => {
+            const yr = n.year || n.endYear || n.startYear || '';
+            lines.push(`- ${yr ? `[${yr}] ` : ''}**${n.name}**`);
+        });
+    }
+
+    return lines.join('\n');
+}
+
+/**
+ * Option A — focused single-task GPT-4o writer call for one Q2 career item.
+ * The writer sees only the node's name, timeline, and sanitized narrative — no
+ * career map structure, so the organizational prior cannot corrupt the output.
+ * Returns synthesized prose (3–4 sentences) or null on failure.
+ */
+async function buildQ2WriterCall(node, openaiClient) {
+    const narrative = sanitizeNarrative(node.text) || (node.description && node.description.length > 20 ? node.description : '');
+    if (!narrative) return null;
+
+    const timelineStr = node.displayDate ||
+        (node.startYear && node.endYear ? `${node.startYear}–${node.endYear}` :
+         node.startYear || node.endYear || '');
+
+    const response = await openaiClient.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+            {
+                role: "system",
+                content: "You are a professional biographer writing for a career portfolio. Write 3–4 concise sentences describing this work item using ONLY the narrative provided. Do not add any information not present in the narrative. Do not generate URLs. Present as seamless professional experience — no STAR headers, no framework labels. Plain prose only, no markdown."
+            },
+            {
+                role: "user",
+                content: `Work item: ${node.name}\nType: ${node.type}\nTimeline: ${timelineStr}\n\nNarrative:\n${narrative.slice(0, 1500)}`
+            }
+        ],
+        max_tokens: 200,
+        temperature: 0.3
+    });
+    return response.choices[0].message.content?.trim() || null;
+}
+
+/**
+ * Fetches PreparatoryNote narratives from the bento server for a given node.
+ * Returns the joined narrative string, or '' if the bento server is unavailable.
+ * Used to enrich top-2 Q2 nodes before writer calls, since search_enterprise_graph
+ * only surfaces Note nodes (HAS_NOTE), not PreparatoryNote (HAS_PRIVATE_NOTE).
+ */
+async function fetchNodeNarratives(node, tenantId, userId) {
+    const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+    try {
+        const res = await fetch(`${bentoBase}/get_node_details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+                'x-user-id': userId || ''
+            },
+            body: JSON.stringify({ node_name: node.name }),
+            signal: AbortSignal.timeout(8000)
+        });
+        if (!res.ok) return '';
+        const raw = await res.json();
+        // get_node_details returns [record] (list); unwrap to the first element.
+        const record = Array.isArray(raw) ? raw[0] : raw;
+        if (!record || record.error) return '';
+        const joined = Array.isArray(record.narratives) && record.narratives.length > 0
+            ? record.narratives.join('\n---\n')
+            : (record.properties?.text || '');
+        return sanitizeNarrative(joined);
+    } catch (e) {
+        console.warn(`[Q2] fetchNodeNarratives failed for "${node.name}":`, e.message);
+        return '';
+    }
 }
 
 // Load externalized prompts into memory on startup
@@ -672,9 +951,14 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
     };
 
     let isAborted = false;
-    req.on('close', () => {
-        console.log(`[SSE] Client disconnected. Aborting orchestration...`);
-        isAborted = true;
+    res.on('close', () => {
+        // Only abort if the response hasn't been written yet — req.on('close') fires
+        // prematurely when the HTTP client half-closes (sends FIN after request body)
+        // while still waiting for the response. This guard prevents false aborts.
+        if (!res.writableEnded) {
+            console.log(`[SSE] Client disconnected before response. Aborting orchestration...`);
+            isAborted = true;
+        }
     });
 
     try {
@@ -690,10 +974,11 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
         const MAX_LOOPS = 5;
         let graphNodes = [];
         let graphLinks = [];
+        const sseSeenUrls = new Set(); // accumulate tool-result URLs for grounding audit
 
         while (loopCount < MAX_LOOPS && !isAborted) {
             loopCount++;
-            
+
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: messages,
@@ -705,7 +990,8 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
             messages.push(assistantMessage);
 
             if (assistantMessage.content) {
-                sendEvent('chat_response', { content: assistantMessage.content });
+                const audited = auditResponseUrls(assistantMessage.content, sseSeenUrls);
+                sendEvent('chat_response', { content: audited });
             }
 
             if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
@@ -727,6 +1013,8 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                         // GRAPH UPDATE LOGIC: If the tool returned nodes, update the UI
                         try {
                             const parsed = JSON.parse(toolContent);
+                            // Accumulate tool-result URLs for grounding audit (AP-15).
+                            extractToolUrls(parsed).forEach(u => sseSeenUrls.add(u));
                             let newNodesRaw = [];
                             let newLinksRaw = [];
 
@@ -814,13 +1102,30 @@ app.post('/query', authMiddleware, async (req, res) => {
     if (!question) return res.status(400).send({ error: "Missing 'question' in body" });
 
     let isAborted = false;
-    req.on('close', () => {
-        console.log(`[QUERY] Client disconnected. Aborting orchestration...`);
-        isAborted = true;
+    res.on('close', () => {
+        // Only abort if the response hasn't been written yet — req.on('close') fires
+        // prematurely when the HTTP client half-closes (sends FIN after request body)
+        // while still waiting for the response. This guard prevents false aborts.
+        if (!res.writableEnded) {
+            console.log(`[QUERY] Client disconnected before response. Aborting orchestration...`);
+            isAborted = true;
+        }
     });
 
     try {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
+
+        // Cache lookup — keyed per tenant so tenants never share cached responses.
+        const cacheKey = crypto.createHash('sha256')
+            .update(`${tenantId}:${question.toLowerCase().trim()}`)
+            .digest('hex');
+        if (!forceRefresh) {
+            const cached = semanticCache.get(cacheKey);
+            if (cached) {
+                console.log(`[QUERY] Cache hit — key ${cacheKey.slice(0, 8)}…`);
+                return res.send(cached);
+            }
+        }
 
         const domainSignal = classifyDomain(question);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
@@ -828,7 +1133,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         const domainInstruction = `\n\nCURRENT QUERY DOMAIN CONTEXT: ${domainSignal}\n` +
             `Respect this classification. ` +
             `For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. ` +
-            `For 'career': get_cluster_context is appropriate. ` +
+            `For 'career': call ONLY search_enterprise_graph(domain_intent="professional") — do NOT call get_cluster_context. The backbone graph is auto-injected. ` +
             `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node. ` +
             `For 'unknown': use your judgment.`;
 
@@ -847,6 +1152,8 @@ app.post('/query', authMiddleware, async (req, res) => {
         const accumulatedGraph = { nodes: [], links: [], virtual_links: [] };
         const seenNodeIds = new Set();
         const seenLinkKeys = new Set();
+        const querySeenUrls = new Set(); // accumulate tool-result URLs for grounding audit (AP-15)
+        let q2RankedNodes = null; // ranked node list captured from search_enterprise_graph for Q2 override
 
         const mergeGraphData = (parsed) => {
             if (!parsed || typeof parsed !== 'object') return;
@@ -906,6 +1213,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                         try {
                             const parsed = JSON.parse(toolContent);
                             mergeGraphData(parsed);
+                            // Accumulate tool-result URLs for grounding audit (AP-15).
+                            extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
                             // AP-3: manifest-driven, not exclusion lists. cross_domain passes all through.
                             const _allowedForDomain = DOMAIN_ALLOWED_TYPES[domainSignal];
@@ -918,6 +1227,16 @@ app.post('/query', authMiddleware, async (req, res) => {
                                     parsed.nodes = parsed.nodes.filter(n => _allowedForDomain.has(n.type));
                                     toolContent = JSON.stringify(parsed);
                                 }
+                            }
+                            // Capture ranked nodes for Q2 gateway response override.
+                            // Must be captured AFTER domain filter so only career nodes are included.
+                            if (toolName === 'search_enterprise_graph' && domainSignal === 'career' && parsed.nodes) {
+                                const seenK = new Map();
+                                parsed.nodes.forEach(n => {
+                                    const key = `${n.name}::${n.type}`;
+                                    if (!seenK.has(key) || (!seenK.get(key).description && n.description)) seenK.set(key, n);
+                                });
+                                q2RankedNodes = Array.from(seenK.values()).sort((a, b) => (b.temporal_boost || 0) - (a.temporal_boost || 0));
                             }
                         } catch (e) { /* non-graph tool result, skip */ }
 
@@ -939,13 +1258,159 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 continue;
             } else {
-                // No more tool calls — return final answer with merged graph from all tools
+                // For career queries: auto-inject the backbone from get_cluster_context so the
+                // graph visualizer still shows Sangeetha + Category backbone even though the LLM
+                // didn't call the tool (per Q2 instructions to call only search_enterprise_graph).
+                if (domainSignal === 'career' && accumulatedGraph.nodes.length > 0) {
+                    try {
+                        const backboneMcp = await callMcpTool(tenantId, 'get_cluster_context', {
+                            node_name: 'Sangeetha Ramadurai',
+                            backbone_only: true,
+                            depth: 1,
+                            domain: 'professional'
+                        }, userId);
+                        const backboneText = backboneMcp?.result?.content?.[0]?.text;
+                        if (backboneText) {
+                            const backboneParsed = JSON.parse(backboneText);
+                            mergeGraphData(backboneParsed);
+                            console.log('[QUERY] Auto-injected career backbone nodes:', backboneParsed.nodes?.length);
+                        }
+                    } catch (e) {
+                        console.warn('[QUERY] Career backbone auto-inject failed (non-fatal):', e.message);
+                    }
+                }
+                // Q2 Option A: section-based assembly. Gateway owns structure; writer calls own prose.
+                // Six sections: Currently Building / Career Timeline / What She Built /
+                // Thought Leadership / Hackathons / Education.
+                // Writer calls: currently building items + top-1 past project (max 3 parallel).
+                // Falls back to Option B (buildCareerMapResponse) if writer calls fail.
+                let finalAnswer = assistantMessage.content;
+                if (domainSignal === 'career' && q2RankedNodes && q2RankedNodes.length > 0) {
+                    const contentNodes = q2RankedNodes.filter(n => CAREER_CHAT_NODE_TYPES.has(n.type));
+                    if (contentNodes.length > 0) {
+                        try {
+                            const { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education } = groupNodesForQ2(contentNodes);
+
+                            // Writer targets: all currently-building items + top-1 past project (capped at 3).
+                            const writerTargets = [
+                                ...currentlyBuilding,
+                                ...(projects.length > 0 ? [projects[0]] : [])
+                            ].filter(isWriterEligible).slice(0, 3);
+
+                            // Pre-fetch PreparatoryNote narratives in parallel, then run writer calls.
+                            const enriched = await Promise.all(writerTargets.map(async n => {
+                                const bentoNarrative = await fetchNodeNarratives(n, tenantId, userId);
+                                return bentoNarrative ? { ...n, text: bentoNarrative } : n;
+                            }));
+                            const writerResults = await Promise.all(enriched.map(n => buildQ2WriterCall(n, openai)));
+                            const writerMap = new Map(enriched.map((n, i) => [n.name, writerResults[i]]));
+                            console.log('[QUERY] Q2 Option A writer calls completed:', writerTargets.length, 'items total:', contentNodes.length);
+
+                            const lines = ['## Institutional Memory Map'];
+
+                            // --- Currently Building ---
+                            if (currentlyBuilding.length > 0) {
+                                lines.push('', '### Currently Building');
+                                currentlyBuilding.forEach(n => {
+                                    const tl = nodeTimeline(n);
+                                    const role = n.role ? ` · ${n.role}` : '';
+                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}${role}`);
+                                    const enrichedNode = enriched.find(e => e.name === n.name) || n;
+                                    const rawNarrative = sanitizeNarrative(enrichedNode.text);
+                                    // Guard: reject bento narratives that are structured docs (contain ### headers)
+                                    // to prevent embedded TL/section headings from leaking into prose output.
+                                    const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
+                                    const prose = writerMap.get(n.name) || safeNarrative || n.description || '';
+                                    if (prose) lines.push(prose);
+                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+                                    lines.push('');
+                                });
+                            }
+
+                            // --- Career Timeline ---
+                            if (companies.length > 0) {
+                                lines.push('', '---', '', '### Career Timeline');
+                                companies.forEach(n => {
+                                    const tl = nodeTimeline(n);
+                                    const role = n.role ? ` · ${n.role}` : '';
+                                    lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
+                                    lines.push('');
+                                });
+                            }
+
+                            // --- What She Built ---
+                            if (projects.length > 0) {
+                                lines.push('', '---', '', '### What She Built');
+                                projects.forEach((n, i) => {
+                                    const tl = nodeTimeline(n);
+                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
+                                    if (i === 0) {
+                                        const enrichedNode = enriched.find(e => e.name === n.name) || n;
+                                        const rawNarrative = sanitizeNarrative(enrichedNode.text);
+                                        const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
+                                        const prose = writerMap.get(n.name) || safeNarrative || '';
+                                        const desc = prose || (n.description?.length > 10 ? n.description : '');
+                                        if (desc) lines.push(desc);
+                                    } else if (n.description?.length > 10) {
+                                        lines.push(n.description);
+                                    }
+                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+                                    lines.push('');
+                                });
+                            }
+
+                            // --- Thought Leadership & Publications ---
+                            if (thoughtLeadership.length > 0) {
+                                lines.push('', '---', '', '### Thought Leadership & Publications');
+                                thoughtLeadership.forEach(n => {
+                                    const tl = nodeTimeline(n);
+                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
+                                    if (n.description?.length > 10) lines.push(n.description);
+                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+                                    lines.push('');
+                                });
+                            }
+
+                            // --- Hackathons & Contributions ---
+                            if (hackathons.length > 0) {
+                                lines.push('', '---', '', '### Hackathons & Contributions');
+                                hackathons.forEach(n => {
+                                    const tl = nodeTimeline(n);
+                                    lines.push(`- **${n.name}**${tl ? ` [${tl}]` : ''}`);
+                                });
+                            }
+
+                            // --- Education & Certifications ---
+                            if (education.length > 0) {
+                                lines.push('', '---', '', '### Education & Certifications');
+                                education.forEach(n => {
+                                    const yr = n.year || n.endYear || n.startYear || '';
+                                    lines.push(`- ${yr ? `[${yr}] ` : ''}**${n.name}**`);
+                                });
+                            }
+
+                            finalAnswer = lines.join('\n');
+                        } catch (e) {
+                            console.warn('[QUERY] Q2 Option A failed, falling back to Option B:', e.message);
+                            const fallback = buildCareerMapResponse(q2RankedNodes);
+                            if (fallback) finalAnswer = fallback;
+                        }
+                    }
+                }
+                // Audit response for hallucinated URLs before sending.
+                const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
                 const hasGraph = accumulatedGraph.nodes.length > 0;
-                return res.send({
-                    answer: assistantMessage.content,
+                const responsePayload = {
+                    answer: auditedAnswer,
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
                     domain_signal: domainSignal
-                });
+                };
+                // Cache the response for repeated identical questions (per-tenant, 24h TTL).
+                if (auditedAnswer) {
+                    semanticCache.set(cacheKey, responsePayload);
+                    console.log(`[QUERY] Response cached — key ${cacheKey.slice(0, 8)}…`);
+                }
+                return res.send(responsePayload);
             }
         }
 

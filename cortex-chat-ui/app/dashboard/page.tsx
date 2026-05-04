@@ -89,6 +89,9 @@ export default function DashboardPage() {
         return ids;
     };
     const singleClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const bentoAbortController = useRef<AbortController | null>(null);
+    const bentoCache = useRef<Map<string, any>>(new Map());
+    const [isBentoHydrating, setIsBentoHydrating] = useState(false);
     const [legendOpen, setLegendOpen] = useState(false);
 
     useEffect(() => {
@@ -530,7 +533,22 @@ export default function DashboardPage() {
             // Always resolve affordance flags from React graphData — it is the source of truth.
             const freshNode = graphData.nodes.find(n => n.id === node.id) ?? node;
             if (!freshNode.isBentoEligible) return;
+
+            // Cancel any in-flight hydration from a previous click (AbortController pattern).
+            bentoAbortController.current?.abort();
+            bentoAbortController.current = new AbortController();
+
+            // Stale-While-Revalidate: show cached full data immediately if available.
+            const cacheKey = freshNode.element_id || freshNode.id || freshNode.name;
+            if (bentoCache.current.has(cacheKey)) {
+                setSelectedNode({ ...freshNode, ...bentoCache.current.get(cacheKey) });
+                return;
+            }
+
+            // Show the partial graph node immediately; hydration will replace description.
             setSelectedNode(freshNode);
+            setIsBentoHydrating(true);
+
             try {
                 console.log("Hydrating node (High-Speed Path via Gateway):", freshNode.id || freshNode.name);
                 const token = await getToken();
@@ -543,7 +561,8 @@ export default function DashboardPage() {
                     body: JSON.stringify({
                         node_name: freshNode.name,
                         node_id: freshNode.element_id || freshNode.id
-                    })
+                    }),
+                    signal: bentoAbortController.current.signal
                 });
 
                 if (response.ok) {
@@ -551,29 +570,35 @@ export default function DashboardPage() {
                     const payload = Array.isArray(results) ? results[0] : (results.result?.content ? JSON.parse(results.result.content[0].text)[0] : results);
 
                     if (payload && !payload.error) {
+                        const p = payload.properties || payload;
+                        const narratives = payload.narratives || (p.text ? [p.text] : (p.description ? [p.description] : []));
+                        // Only use hydrated description if it is richer than what we already have.
+                        const hydratedDesc = narratives.length > 0
+                            ? narratives.join('\n\n')
+                            : (p.description && p.description.length > (freshNode.description?.length ?? 0)
+                                ? p.description
+                                : undefined);
+                        const tech = p.technologies || p.tech_stack || p.tools || freshNode.technologies;
+                        const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
+                        const directLinks = [p.link, p.url].filter(Boolean);
+                        const hydratedFields = {
+                            ...p,
+                            ...(hydratedDesc ? { description: hydratedDesc, text: hydratedDesc } : {}),
+                            technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
+                            links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks]))
+                        };
+                        // Cache the enriched fields for instant display on revisit.
+                        bentoCache.current.set(cacheKey, hydratedFields);
                         setSelectedNode((prev: any) => {
                             if (!prev || prev.id !== freshNode.id) return prev;
-                            const p = payload.properties || payload;
-                            const narratives = payload.narratives || (p.text ? [p.text] : (p.description ? [p.description] : []));
-                            const description = narratives.length > 0 ? narratives.join('\n\n') : (p.description || prev.description);
-                            const tech = p.technologies || p.tech_stack || p.tools || prev.technologies;
-                            const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
-                            // Also collect direct link/url properties from Neo4j so Resource Gallery
-                            // appears for nodes whose links are stored as scalar properties, not
-                            // only via HAS_REFERENCE → ReferenceLink relationships.
-                            const directLinks = [p.link, p.url].filter(Boolean);
-                            return {
-                                ...prev, ...p,
-                                description,
-                                text: description,
-                                technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
-                                links: Array.from(new Set([...(prev.links || []), ...refLinks, ...directLinks]))
-                            };
+                            return { ...prev, ...hydratedFields };
                         });
                     }
                 }
-            } catch (e) {
-                console.error("Progressive hydration failed:", e);
+            } catch (e: any) {
+                if (e?.name !== 'AbortError') console.error("Progressive hydration failed:", e);
+            } finally {
+                setIsBentoHydrating(false);
             }
         }, 250);
     };
@@ -594,48 +619,71 @@ export default function DashboardPage() {
             return;
         }
 
-        // Grouper expansion is client-side — bloom children without an API call.
-        // Rewires both physical links and virtual_links (gold dashed VIRTUAL_BRIDGE)
-        // so Q3 bridge lines survive after the ThoughtLeadership grouper is expanded.
-        // Guard: if children is empty fall through to server expansion so the node
-        // doesn't vanish with nothing replacing it (Q2a fix).
-        if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
-            setGraphData(prev => {
-                const newNodes = prev.nodes.filter(n => n.id !== freshNode.id).concat(freshNode.children);
+        const nodeKey = freshNode.id || freshNode.name;
 
-                // Rewire all links (physical and virtual) from the grouper to each child.
-                // Use { ...gl, source, target } spread to preserve isVirtual, label, and
-                // other link properties so gold dashed VIRTUAL_BRIDGE lines survive expansion.
-                const grouperLinks = prev.links.filter(l => l.source === freshNode.id || l.target === freshNode.id);
-                const remainingLinks = prev.links.filter(l => l.source !== freshNode.id && l.target !== freshNode.id);
-                const expandedLinks = [...remainingLinks];
-                freshNode.children.forEach((child: any) => {
-                    grouperLinks.forEach((gl: any) => {
-                        const src = gl.source === freshNode.id ? child.id : gl.source;
-                        const tgt = gl.target === freshNode.id ? child.id : gl.target;
-                        if (!expandedLinks.some(el => el.source === src && el.target === tgt)) {
-                            expandedLinks.push({ ...gl, source: src, target: tgt });
+        // Grouper expansion is client-side — bloom children without an API call.
+        // Company groupers: keep the company node visible and link children TO it.
+        // Other groupers (ThoughtLeadership, Hackathon, etc.): replace grouper with
+        // children and rewire parent links, preserving VIRTUAL_BRIDGE gold lines.
+        // Guard: if children is empty fall through to server expansion.
+        if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
+            const isCompanyGrouper = freshNode.type === 'Company' || freshNode.type === 'Startup';
+
+            if (isCompanyGrouper) {
+                // Keep the company node; add children linked TO the company (not to its parent).
+                setGraphData(prev => {
+                    const expandedCompany = { ...freshNode, isGrouper: false, isExpanded: true, isExpandable: false };
+                    const existingIds = new Set(prev.nodes.map((n: any) => n.id));
+                    const newChildren = freshNode.children.filter((c: any) => !existingIds.has(c.id));
+                    const newNodes = prev.nodes
+                        .filter((n: any) => n.id !== freshNode.id)
+                        .concat(expandedCompany)
+                        .concat(newChildren);
+                    const newLinks = [...prev.links];
+                    freshNode.children.forEach((child: any) => {
+                        if (!newLinks.some((l: any) =>
+                            (l.source === freshNode.id && l.target === child.id) ||
+                            (l.source === child.id && l.target === freshNode.id)
+                        )) {
+                            newLinks.push({ source: freshNode.id, target: child.id, type: 'AT' });
                         }
                     });
+                    return { ...prev, nodes: newNodes, links: newLinks };
                 });
+                const contributed = new Set<string>(freshNode.children.map((c: any) => c.id as string));
+                expansionContributions.current.set(nodeKey, contributed);
+            } else {
+                // Non-company groupers: replace grouper with children, rewire parent links.
+                // Preserves VIRTUAL_BRIDGE gold lines via spread.
+                setGraphData(prev => {
+                    const newNodes = prev.nodes.filter((n: any) => n.id !== freshNode.id).concat(freshNode.children);
+                    const grouperLinks = prev.links.filter(l => l.source === freshNode.id || l.target === freshNode.id);
+                    const remainingLinks = prev.links.filter(l => l.source !== freshNode.id && l.target !== freshNode.id);
+                    const expandedLinks = [...remainingLinks];
+                    freshNode.children.forEach((child: any) => {
+                        grouperLinks.forEach((gl: any) => {
+                            const src = gl.source === freshNode.id ? child.id : gl.source;
+                            const tgt = gl.target === freshNode.id ? child.id : gl.target;
+                            if (!expandedLinks.some(el => el.source === src && el.target === tgt)) {
+                                expandedLinks.push({ ...gl, source: src, target: tgt });
+                            }
+                        });
+                    });
+                    return { ...prev, nodes: newNodes, links: expandedLinks };
+                });
+                // Replace grouper with children in contribution tracking.
+                expansionContributions.current.forEach(contributed => {
+                    if (contributed.has(freshNode.id)) {
+                        contributed.delete(freshNode.id);
+                        freshNode.children.forEach((child: any) => { if (child.id) contributed.add(child.id); });
+                    }
+                });
+            }
 
-                return { ...prev, nodes: newNodes, links: expandedLinks };
-            });
-
-            // Replace the bloomed grouper ID with its children IDs in every contribution
-            // set that referenced it. This keeps computeFocusedIds() accurate so children
-            // are in focusedNodeIds and not dimmed (Q2b fix).
-            expansionContributions.current.forEach(contributed => {
-                if (contributed.has(freshNode.id)) {
-                    contributed.delete(freshNode.id);
-                    freshNode.children.forEach((child: any) => { if (child.id) contributed.add(child.id); });
-                }
-            });
+            expandedNodes.current.add(nodeKey);
             setFocusedNodeIds(() => computeFocusedIds());
             return;
         }
-
-        const nodeKey = freshNode.id || freshNode.name;
 
         // TOGGLE COLLAPSE: node already expanded → remove its contributed nodes
         if (expandedNodes.current.has(nodeKey)) {
@@ -1153,6 +1201,7 @@ export default function DashboardPage() {
                                         onClose={() => setSelectedNode(null)}
                                         onDiscoverBridge={(nodeId) => handleDiscoverBridge(nodeId, selectedNode)}
                                         domainSignal={domainSignal}
+                                        isBentoHydrating={isBentoHydrating}
                                     />
                                 </div>
                             )}

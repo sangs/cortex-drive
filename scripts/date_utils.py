@@ -7,6 +7,11 @@ strings from categories_and_projects.md into structured properties that
 are written to both relationship edges (source of truth) and project nodes
 (denormalized cache for efficient querying).
 
+Episode nodes use aired_date only — never call parse_date_range or
+parse_single_date for Episode node properties. The fields produced here
+(displayDate, startYear, endYear) are career-node concepts and must not
+be written to Episode nodes.
+
 Supported formats:
   - "mm/yyyy"             : e.g., "02/2024"
   - "mm/yyyy-mm/yyyy"     : e.g., "02/2024-07/2025"

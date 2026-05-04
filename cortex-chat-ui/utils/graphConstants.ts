@@ -29,7 +29,7 @@ export const PODCAST_BACKBONE = new Set([
 
 /** Node types that are never rendered on the canvas (noise / privacy). */
 export const GRAPH_VISUAL_EXCLUDE = new Set([
-    'Chunk', 'Source', 'ReferenceLink', 'PreparatoryNote', '__MetaContext__'
+    'Chunk', 'Source', 'PreparatoryNote', '__MetaContext__'
 ]);
 
 /** Node types that carry no semantic content — show as leaves only. */
@@ -184,7 +184,7 @@ export function collapseToGroupers(
                 groupCount: instances.length,
                 children: instances,
                 isExpandable: true,
-                isBentoEligible: false,
+                isBentoEligible: true,
                 val: 18,
             });
             instances.forEach(n => idRemap.set(n.id, grouperId));
@@ -264,7 +264,7 @@ export function buildCompanyGroupers(
         ...c,
         isGrouper: true,
         isExpandable: true,
-        isBentoEligible: false,
+        isBentoEligible: true,
         children: companyChildren.get(c.id) ?? [],
     }));
 }

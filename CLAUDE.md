@@ -83,6 +83,24 @@ After any commit touching `expert_tools.py`, `index.js`, `dashboard/page.tsx`, o
 (single-domain retrieval, identity map, cross-domain bridge) and verify correctness
 before pushing. This is not optional.
 
+### 11. LLM Responses Must Be Grounded in Tool Results Only
+
+Every fact, entity name, date, role title, and URL in an LLM response must be
+traceable to a node, chunk, or field returned by a tool call in that turn. The LLM
+must not generate, infer, or construct URLs from training data. If no data exists for
+a question, the response must say "No data found in Cortex-Drive for X" — not a
+training-data answer.
+
+Enforcement is three-layer:
+1. **System prompt** (`prompts/gateway_system_assistant.md`) — primary gate; REFERENCE
+   LINKS rule requires verbatim tool-result URLs only; ZERO HALLUCINATION covers all
+   tool results.
+2. **Gateway post-response audit** (`cortex-gateway/index.js` `auditResponseUrls()`) —
+   deterministic backstop; strips any URL not in the per-turn `seenUrls` set; logs
+   every stripped URL as `[GROUNDING]`; cannot be overridden by prompt injection.
+3. **This invariant** — code review gate; any PR weakening layers 1 or 2 must be
+   rejected.
+
 ---
 
 ## File Ownership Map
@@ -155,12 +173,16 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-12** — Post-commit: run one query per domain pattern before pushing; this is a hard gate
 - **AP-13** — Before running any seeder, query the live graph for name collisions: `MATCH (n {name: "<target>"}) RETURN labels(n), n.tenant_id`
 - **AP-14** — SYSTEM tier is ontological primitives only; career nodes (Company/Project/Role/Startup) are always org-tenant; `buildLlmToolContent` deduplicates by `name::type` as permanent contract
+- **AP-15** — Every URL in a response must appear verbatim in a tool result from that turn; `auditResponseUrls()` strips violations; `[GROUNDING]` in gateway console = hallucinated URL
+- **AP-16** — Tool shortcuts that return backbone-only results must be gated on an explicit signal (`wants_visual_map=True`), never on keyword content; keyword content is unpredictable and will eventually match the wrong condition
+- **AP-17** — Use `res.on('close')` with `!res.writableEnded` to detect client disconnect; `req.on('close')` fires on TCP half-close (client done sending) and is a false positive during long-running async handlers
 
 ---
 
 ## Key Architecture Documents
 
-- `documents/architecture/anti-pattern-catalog.md` — full AP incident records
+- `documents/architecture/anti-pattern-catalog.md` — full AP incident records (AP-1 through AP-17)
+- `documents/architecture/orchestration-loop-incident-2026-05-04.md` — deep-dive: 4-bug chain that caused "Maximum orchestration loops reached"; diagnostic checklist for future loop errors
 - `documents/architecture/query-behavior-specification.md` — query pattern logic walkthrough, virtual_links pipeline
 - `documents/architecture/intent-classification-research-2026-04-25.md` — intent classifier design
 - `documents/architecture/ontology-persistence-vs-virtual-bridges.md` — zero-write rule rationale
