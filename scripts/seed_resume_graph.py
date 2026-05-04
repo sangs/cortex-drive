@@ -72,30 +72,8 @@ RESUME_CYPHER_QUERIES = [
     SET star_founder.text = "Situation: Institutional memory is often lost across siloed tools and turnover. Task: Build a context-aware intelligent layer ('Cortex-Drive') to recover decision provenance. Action: Architected high-fidelity MCP server, Neo4j graphRAG, and Zero-Trust ABAC governance. Result: Enabled stable, traceable institutional memory across federated contexts."
     MERGE (r1)-[:HAS_PRIVATE_NOTE]->(star_founder)
 
-    // JPMC Hackathon: Humanless Autocode (02/2025)
-    MERGE (h1:Hackathon {name: "Humanless Autocode at Scale for SRE"})
-    SET h1.description = "Automated, context-aware IaC code review using Cody AI Agent, tailored for enterprise guardrails and multi-repo dependency analysis.",
-        h1.status = "Winner/Demonstrated",
-        h1.location = "JPMorgan Chase"
-    MERGE (p)-[:PARTICIPATED_IN {start: "02/2025", end: "03/2025"}]->(h1)
-    MERGE (cat5:Category {name: "Thought Leadership & Community"})
-    MERGE (cat5)-[:CONTAINS]->(h1)
-    
-    MERGE (star_h1:PreparatoryNote {name: "STAR: Humanless Autocode"})
-    SET star_h1.text = "Situation: IaC reviews were time-consuming and inconsistent. Task: Showcase automated code review at scale using Sourcegraph Cody. Action: Led hackathon project for context-aware IaC review, identifying module misuse and downstream API breaks. Result: Successfully demonstrated automated review at scale, reducing turnaround time and improving safety."
-    MERGE (h1)-[:HAS_PRIVATE_NOTE]->(star_h1)
-
-    // IBM Hackathon: Valorisation Engine (01/2026)
-    MERGE (h2:Hackathon {name: "Valorisation Engine"})
-    SET h2.description = "Explainable, agentic AI for patent research and life-sciences commercialization support, built on IBM Watsonx.",
-        h2.status = "PoC Demonstrated",
-        h2.location = "IBM Dev Day 2026"
-    MERGE (p)-[:PARTICIPATED_IN {start: "01/2026", end: "01/2026"}]->(h2)
-    MERGE (cat5)-[:CONTAINS]->(h2)
-    
-    MERGE (star_h2:PreparatoryNote {name: "STAR: Valorisation Engine"})
-    SET star_h2.text = "Situation: Early-stage patent triage is manual and opaque. Task: Formalize patent research into a transparent, logic-first workflow. Action: Built explainable agentic AI decision-support system using IBM Watsonx. Result: Showcased proof-of-concept for accelerated life-sciences commercialization with auditable insights."
-    MERGE (h2)-[:HAS_PRIVATE_NOTE]->(star_h2)
+    // NOTE: Hackathon nodes are seeded canonically in block #4 under the "Hackathons" category.
+    // Do NOT create hackathon nodes here — doing so puts them under "Thought Leadership & Community".
 
     // JPMC
     MERGE (c2:Company {name: "JPMorgan Chase", location: "Jersey City, NJ"})
@@ -130,19 +108,21 @@ RESUME_CYPHER_QUERIES = [
     MERGE (pj:Startup:Project {name: "Cortex-Drive"})
     SET pj.status = "Active",
         pj.description = "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
-        pj.links = ["https://github.com/sangs/cortex-drive"]
-    
+        pj.links = ["https://github.com/sangs/cortex-drive"],
+        pj.link_titles = ["Cortex-Drive on GitHub"]
+
     WITH pj
     MATCH (p:Person {name: "Sangeetha Ramadurai"})-[:CURRENTLY_BUILDING {role: "Founder & Sr. Software Engineer"}]->(pj)
     MATCH (catIndependent:Category {name: "Open Source & Independent Ventures"})
     MATCH (catProfessional:Category {name: "Professional Experience"})
-    
+
     MERGE (catIndependent)-[:CONTAINS]->(pj)
     MERGE (catProfessional)-[:CONTAINS]->(pj)
 
     WITH pj
-    UNWIND pj.links AS link_url
-    MERGE (l:ReferenceLink {url: link_url})
+    UNWIND range(0, size(pj.links)-1) AS idx
+    MERGE (l:ReferenceLink {url: pj.links[idx]})
+    SET l.name = pj.link_titles[idx]
     MERGE (pj)-[:HAS_REFERENCE]->(l)
     """,
 
@@ -166,7 +146,8 @@ RESUME_CYPHER_QUERIES = [
     MERGE (h2:Hackathon:Project {name: "Volarisation Engine @ IBM Dev Day 2026"})
     SET h2.type = "Hackathon",
         h2.description = "Innovation Leadership: Explainable, agentic AI decision-support system built with IBM Watsonx Orchestrate to accelerate life-sciences patent research.",
-        h2.links = ["https://lnkd.in/dcSmQS4n", "https://sites.google.com/view/valorisationengine/valorisation", "https://drive.proton.me/urls/NYB1KQ7QNC#HueGJ6Nq7AAl"]
+        h2.links = ["https://lnkd.in/dcSmQS4n", "https://sites.google.com/view/valorisationengine/valorisation", "https://drive.proton.me/urls/NYB1KQ7QNC#HueGJ6Nq7AAl"],
+        h2.link_titles = ["Volarisation Engine @ LinkedIn", "Volarisation Engine Website", "Volarisation Engine Demo (Proton)"]
     MERGE (p)-[:PARTICIPATED_IN {role: "Lead Developer", start: "01/2026", end: "01/2026"}]->(h2)
     MERGE (cat)-[:CONTAINS]->(h2)
 
@@ -175,8 +156,9 @@ RESUME_CYPHER_QUERIES = [
     MERGE (h2)-[:HAS_PRIVATE_NOTE]->(star2)
 
     WITH h2, cat, p
-    UNWIND h2.links AS link_url
-    MERGE (l:ReferenceLink {url: link_url})
+    UNWIND range(0, size(h2.links)-1) AS idx
+    MERGE (l:ReferenceLink {url: h2.links[idx]})
+    SET l.name = h2.link_titles[idx]
     MERGE (h2)-[:HAS_REFERENCE]->(l)
 
     // Hackathon 3: Global Hackathons @ JPMC (07/2025-07/2025)
@@ -200,41 +182,48 @@ RESUME_CYPHER_QUERIES = [
     MERGE (t1:ThoughtLeadership:Publication {name: "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"})
     SET t1.type = "ThoughtLeadership",
         t1.description = "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering.",
-        t1.links = ["https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"]
-    MERGE (p)-[:AUTHORED {start: "11/2025", end: "01/2026"}]->(t1)
+        t1.links = ["https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"],
+        t1.link_titles = ["InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"]
+    MERGE (p)-[tl1_rel:AUTHORED]->(t1)
+    SET tl1_rel.start = "11/2025", tl1_rel.end = "01/2026"
     MERGE (cat)-[:CONTAINS]->(t1)
-    
+
     MERGE (star_t1:PreparatoryNote {name: "Core Detail: InfoQ Publication"})
     SET star_t1.text = "Situation: Blind automation in AI often leads to governance failures... Task: Define safe human-in-the-loop engineering guardrails... Action: Co-authored article in InfoQArchitecture Cohort... Result: Established workflow/alignment patterns adopted by platform teams."
     MERGE (t1)-[:HAS_PRIVATE_NOTE]->(star_t1)
 
     WITH t1, cat, p
-    UNWIND t1.links AS link_url
-    MERGE (l:ReferenceLink {url: link_url})
+    UNWIND range(0, size(t1.links)-1) AS idx
+    MERGE (l:ReferenceLink {url: t1.links[idx]})
+    SET l.name = t1.link_titles[idx]
     MERGE (t1)-[:HAS_REFERENCE]->(l)
 
     // Ignite
     MERGE (t2:ThoughtLeadership:Community {name: "Ignite Social Learning Community @ JPMC"})
     SET t2.type = "ThoughtLeadership",
         t2.description = "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impact of social learning in enterprise tech.",
-        t2.links = ["https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"]
-    MERGE (p)-[:FEATURE_GUEST {role: "Lead & Featured Guest", start: "06/2021", end: "07/2025"}]->(t2)
+        t2.links = ["https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"],
+        t2.link_titles = ["Ignite Takes New York City by Storm"]
+    MERGE (p)-[tl2_rel:FEATURE_GUEST]->(t2)
+    SET tl2_rel.role = "Lead & Featured Guest", tl2_rel.start = "06/2021", tl2_rel.end = "07/2025"
     MERGE (cat)-[:CONTAINS]->(t2)
-    
+
     MERGE (star_t2:PreparatoryNote {name: "Core Detail: Ignite Community"})
     SET star_t2.text = "Situation: Employees lacked structured opportunities for skills-dev outside day-jobs... Task: Run ecosystem for organic learning and innovation... Action: Organized monthly sessions, mentored leadership potential, and represented the community in high-profile internal/external interviews... Result: Community grew organically, leading to internal mobility and collaboration across JPMC, while establishing a model for social learning."
     MERGE (t2)-[:HAS_PRIVATE_NOTE]->(star_t2)
 
     WITH t2, cat, p
-    UNWIND t2.links AS link_url
-    MERGE (l2:ReferenceLink {url: link_url})
+    UNWIND range(0, size(t2.links)-1) AS idx
+    MERGE (l2:ReferenceLink {url: t2.links[idx]})
+    SET l2.name = t2.link_titles[idx]
     MERGE (t2)-[:HAS_REFERENCE]->(l2)
 
     // Open-Source AI Agents Contribution @ JPMC (05/2025-07/2025)
     MERGE (t3:ThoughtLeadership:Project {name: "Open-Source AI Agents Contribution @ JPMC"})
     SET t3.type = "ThoughtLeadership",
         t3.description = "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns."
-    MERGE (p)-[:CONTRIBUTED_TO {start: "05/2025", end: "07/2025"}]->(t3)
+    MERGE (p)-[tl3_rel:CONTRIBUTED_TO]->(t3)
+    SET tl3_rel.start = "05/2025", tl3_rel.end = "07/2025"
     MERGE (cat)-[:CONTAINS]->(t3)
 
     MERGE (star_t3:PreparatoryNote {name: "Core Detail: Open-Source AI Agents"})
@@ -305,7 +294,8 @@ RESUME_CYPHER_QUERIES = [
     // DataMesh Publishing
     MERGE (p2:Project {name: "Instrument Data on DataMesh"})
     SET p2.description = "DataMesh Publishing: Standardized enterprise reference data for AWM by building automated publishing pipelines across the JPMC DataMesh using AWS Glue/Step Functions."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p2)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p2)
+    MERGE (c)-[:CONTAINS]->(p2)
     MERGE (cat)-[:CONTAINS]->(p2)
     MERGE (n2:PreparatoryNote {name: "STAR: DataMesh Publishing"})
     SET n2.text = "Situation: Bespoke integrations created a fragmented data landscape. Task: Publish Instrument Reference Data on DataMesh. Action: Implemented automated pipeline using AWS Lambda/Step Functions/Glue. Result: Established single standardized source for enterprise reference data."
@@ -314,7 +304,8 @@ RESUME_CYPHER_QUERIES = [
     // DataMesh Infrastructure
     MERGE (p3:Project {name: "Infrastructure for Instrument Data on DataMesh"})
     SET p3.description = "DataMesh Infrastructure: Resolved critical architecture blockers by collaborating on enterprise-approved Terraform modules for Lake Formation and S3 Access Points."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p3)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "02/2024", end: "07/2025"}]->(p3)
+    MERGE (c)-[:CONTAINS]->(p3)
     MERGE (cat)-[:CONTAINS]->(p3)
     MERGE (n3:PreparatoryNote {name: "STAR: DataMesh Infrastructure"})
     SET n3.text = "Situation: Lacked approved Terraform modules for Lake Formation. Task: Resolve architecture blockers. Action: Collaborated with platform teams to create enterprise Terraform modules. Result: Removed critical blockers and established reusable infrastructure patterns."
@@ -340,7 +331,8 @@ RESUME_CYPHER_QUERIES = [
     // Short Orders
     MERGE (p5:Project {name: "Start of Day Open Short Orders Microservice"})
     SET p5.description = "Cloud Transformation: Modernized start-of-day business processing by migrating legacy vendor products to a scalable, cloud-native microservice architecture."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p5)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p5)
+    MERGE (c)-[:CONTAINS]->(p5)
     MERGE (cat)-[:CONTAINS]->(p5)
     MERGE (n5:PreparatoryNote {name: "STAR: Short Orders MS"})
     SET n5.text = "Situation: Vendor dependency for locating daily open short orders. Task: Implement cloud-native MS to improve integration. Action: Used AWS MSK, CloudWatch, and Datadog for monitoring/alerting. Result: Eliminated licensing costs and gained full control over daily operations."
@@ -349,7 +341,8 @@ RESUME_CYPHER_QUERIES = [
     // Corporate Action
     MERGE (p6:Project {name: "Corporate Action Report Automation"})
     SET p6.description = "Corporate Action Automation: Eliminated manual report delays by implementing an automation microservice integrated with upstream data sources, improving stakeholder delivery consistency."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p6)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p6)
+    MERGE (c)-[:CONTAINS]->(p6)
     MERGE (cat)-[:CONTAINS]->(p6)
     MERGE (n6:PreparatoryNote {name: "STAR: Corp Action Automation"})
     SET n6.text = "Situation: Manual report generation was time-consuming and prone to delays. Task: Automate Corporate Action reports. Action: Designed/implemented automation microservice integrated with data sources. Result: Improved stakeholder satisfaction through timely and consistent delivery."
@@ -358,7 +351,8 @@ RESUME_CYPHER_QUERIES = [
     // Settlement Verification
     MERGE (p7:Project {name: "Settlement Setup Instruction Verification System"})
     SET p7.description = "Settlement Verification: Led brownfield migration off Sybase dependency, maintaining settlement instruction verification integrity without disruption to order-raising workflows."
-    MERGE (r)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p7)
+    MERGE (p)-[:CONTRIBUTED_TO {start: "06/2021", end: "01/2024"}]->(p7)
+    MERGE (c)-[:CONTAINS]->(p7)
     MERGE (cat)-[:CONTAINS]->(p7)
     MERGE (n7:PreparatoryNote {name: "STAR: Settlement Verification"})
     SET n7.text = "Situation: Sybase dependency for settlement verification needed strategic exit. Task: Maintain functionality during migration. Action: Led brownfield enhancements, worked with stakeholders on business criteria. Result: Successfully replaced Sybase without disruption to order-raising."
@@ -608,8 +602,8 @@ TOOL USAGE:
         valorisation: ["Python", "Langflow", "IBM Watson", "AI Agent", "Decision Support"],
         global_hacks: ["Neo4j", "MongoDB", "Python", "ML", "AI Agent", "MCP"]
     } as tech_map
-    MATCH (h1:Hackathon {name: "Humanless Autocode at Scale for SRE"})
-    MATCH (h2:Hackathon {name: "Valorisation Engine"})
+    MATCH (h1:Hackathon {name: "Humanless Autocode at Scale for SRE @ JPMorgan Chase"})
+    MATCH (h2:Hackathon {name: "Volarisation Engine @ IBM Dev Day 2026"})
     MATCH (h3:Hackathon {name: "Global Hackathons @ JPMorgan Chase"})
     
     UNWIND tech_map.autocode as t1
@@ -732,11 +726,14 @@ def seed_resume_graph():
             print("  -> Stamping graph with Zero-Trust identity tier (SYSTEM / PUBLIC / PRIVATE).")
 
             # Tier 1: SYSTEM — globally visible structural landmarks
+            # Technology, Concept, Year are semantic primitives shared across all tenants —
+            # they must be SYSTEM tier so virtual bridge discovery can traverse them globally.
             session.run(
                 """
                 MATCH (n)
                 WHERE any(label IN labels(n) WHERE label IN [
-                    'Company', 'Institution', 'Degree', 'Category'
+                    'Company', 'Institution', 'Degree', 'Category',
+                    'Technology', 'Concept', 'Year'
                 ])
                 SET n.tenant_id = 'SYSTEM', n.owner_id = 'user_SYSTEM_ADMIN'
                 """
@@ -799,6 +796,19 @@ def seed_resume_graph():
                 MATCH (a)-[rel:CONTRIBUTED_TO]->(n)
                 WHERE n.name CONTAINS 'Open-Source AI Agents'
                   AND rel.start = '06/2021'
+                DELETE rel
+                """
+            )
+
+            # Guard: Remove stale AUTHORED relationships for the InfoQ ThoughtLeadership node
+            # that may survive from earlier seed runs with different date values (e.g. "02/2024").
+            # The step-3a year-only cleanup only removes year-format rels; mm/yyyy stale rels
+            # must be explicitly deleted here so the coalesce year chain returns 2025, not 2024.
+            session.run(
+                """
+                MATCH (p:Person {name: "Sangeetha Ramadurai"})-[rel:AUTHORED]->(t:ThoughtLeadership)
+                WHERE t.name CONTAINS "InfoQ"
+                  AND NOT (rel.start = "11/2025" AND rel.end = "01/2026")
                 DELETE rel
                 """
             )

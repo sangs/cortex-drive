@@ -20,9 +20,10 @@ interface BentoDetailPanelProps {
     onClose: () => void;
     onDiscoverBridge?: (nodeId: string) => void;
     domainSignal?: string;
+    isBentoHydrating?: boolean;
 }
 
-const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal }) => {
+const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal, isBentoHydrating = false }) => {
     const [shareStatus, setShareStatus] = React.useState<'idle' | 'loading' | 'success'>('idle');
 
     const handleShare = async () => {
@@ -45,10 +46,14 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
 
     // --- Shared derived data ---
     const displayLinks = React.useMemo(() => {
-        const links = new Set<string>();
-        if (node && Array.isArray(node.links)) node.links.forEach((l: string) => { if (l) links.add(l); });
-        if (node?.link) links.add(node.link);
-        if (node?.url) links.add(node.url);
+        // Build a url→title map from node.link_titles (parallel to node.links).
+        const titleMap = new Map<string, string>();
+        if (node && Array.isArray(node.links) && Array.isArray(node.link_titles)) {
+            node.links.forEach((url: string, i: number) => {
+                if (url && node.link_titles[i]) titleMap.set(url, node.link_titles[i]);
+            });
+        }
+        // Also pick up titles from connected ReferenceLink nodes (name = title set by seeder).
         if (node && allNodes.length && allLinks.length) {
             const nodeId = node.id || node.name;
             const relatedIds = allLinks
@@ -56,19 +61,32 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 .map(l => l.source === nodeId ? l.target : l.source);
             allNodes
                 .filter(n => relatedIds.includes(n.id) && (n.type === 'ReferenceLink' || n.labels?.includes('ReferenceLink')))
-                .forEach(n => { const url = n.url || n.link; if (url) links.add(url); });
+                .forEach(n => {
+                    const url = n.url || n.link;
+                    if (url && n.name && n.name !== url) titleMap.set(url, n.name);
+                });
         }
-        return Array.from(links).map(url => ({
+
+        const urls = new Set<string>();
+        if (node && Array.isArray(node.links)) node.links.forEach((l: string) => { if (l) urls.add(l); });
+        if (node?.link) urls.add(node.link);
+        if (node?.url) urls.add(node.url);
+
+        const fallbackLabel = (url: string) =>
+            url.includes('github.com') ? 'GitHub Repository' :
+            url.includes('linkedin.com') || url.includes('lnkd.in') ? 'LinkedIn' :
+            url.includes('infoq.com') ? 'InfoQ Publication' :
+            url.includes('jpmorganchase.com') ? 'JPMorgan Chase Tech Blog' :
+            url.includes('aws.amazon.com') ? 'AWS Case Study' :
+            url.includes('medium.com') ? 'Engineering Blog' :
+            url.includes('drive.proton.me') ? 'Secure Document (Proton)' :
+            url.includes('sites.google.com') ? 'Project Website' :
+            url.match(/\.(pdf|doc|docx)$/i) ? 'Whitepaper / Doc' :
+            'External Resource';
+
+        return Array.from(urls).map(url => ({
             url,
-            label: url.includes('github.com') ? 'GitHub Repository' :
-                   url.includes('linkedin.com') || url.includes('lnkd.in') ? 'LinkedIn Profile' :
-                   url.includes('infoq.com') ? 'InfoQ Publication' :
-                   url.includes('aws.amazon.com') ? 'AWS Case Study' :
-                   url.includes('medium.com') ? 'Engineering Blog' :
-                   url.includes('drive.proton.me') ? 'Secure Document (Proton)' :
-                   url.includes('sites.google.com') ? 'Project Website' :
-                   url.match(/\.(pdf|doc|docx)$/i) ? 'Whitepaper / Doc' :
-                   'External Resource'
+            label: titleMap.get(url) || fallbackLabel(url)
         }));
     }, [node, allNodes, allLinks]);
 
@@ -223,7 +241,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: '100%', opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-900/60 backdrop-blur-3xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
+                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950/95 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
             >
                 {header}
 
@@ -238,10 +256,21 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     <span className="text-xs font-semibold uppercase tracking-wider">
                                         {node.type === 'Podcast' ? 'About This Podcast' : 'Episode Summary'}
                                     </span>
+                                    {isBentoHydrating && (
+                                        <span className="ml-auto text-[9px] text-indigo-400/60 animate-pulse uppercase tracking-widest">loading…</span>
+                                    )}
                                 </div>
-                                <p className="text-sm font-medium leading-relaxed text-slate-200">
-                                    {node.description || 'No summary available.'}
-                                </p>
+                                {isBentoHydrating ? (
+                                    <div className="flex flex-col gap-2">
+                                        <div className="animate-pulse h-3 rounded bg-white/10 w-full" />
+                                        <div className="animate-pulse h-3 rounded bg-white/10 w-5/6" />
+                                        <div className="animate-pulse h-3 rounded bg-white/10 w-4/6" />
+                                    </div>
+                                ) : (
+                                    <p className="text-sm font-medium leading-relaxed text-slate-100 pr-1 max-h-48 overflow-y-auto">
+                                        {node.description || 'No summary available.'}
+                                    </p>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
@@ -257,13 +286,16 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         <div className="flex flex-col gap-2">
                                             {podcastPeople.map((p, i) => (
                                                 <div key={i} className="flex items-center justify-between">
-                                                    <span className="text-xs text-slate-200">{p.name}</span>
+                                                    <span className="text-xs text-slate-100">{p.name}</span>
                                                     <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wider">{p.role}</span>
                                                 </div>
                                             ))}
                                         </div>
                                     ) : (
-                                        <span className="text-slate-500 text-[10px] italic">Expand node to load guests</span>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-slate-300 text-xs font-medium">Not yet loaded</span>
+                                            <span className="text-slate-400 text-[10px]">Double-click the episode node in the graph to expand guests</span>
+                                        </div>
                                     )}
                                 </div>
 
@@ -281,9 +313,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                             </div>
                                         )}
                                         <span className="text-xl font-bold text-amber-200">
-                                            {node.published_date || node.aired_date || '—'}
+                                            {node.published_date || node.aired_date || node.published_at || '—'}
                                         </span>
-                                        {!node.published_date && !node.aired_date && (
+                                        {!node.published_date && !node.aired_date && !node.published_at && (
                                             <span className="text-[10px] text-slate-500 italic">Date unavailable</span>
                                         )}
                                     </div>
@@ -343,7 +375,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         <Target className="w-4 h-4" />
                                         <span className="text-xs font-semibold uppercase tracking-wider">Impact Context</span>
                                     </div>
-                                    <p className="text-sm font-medium leading-relaxed text-slate-200">
+                                    <p className="text-sm font-medium leading-relaxed text-slate-100">
                                         {node.description || 'Metadata pending...'}
                                     </p>
                                 </div>
@@ -375,10 +407,10 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     </div>
                                     <div className="flex flex-col">
                                         <span className="text-xl font-bold text-amber-200">
-                                            {node.aired_date || node.displayDate || node.year || 'Active'}
+                                            {node.type === 'Episode' ? node.aired_date || node.year || '—' : node.displayDate || node.year || 'Active'}
                                         </span>
                                         <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
-                                            {node.aired_date ? 'Aired Date' : node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : 'Active Context'}
+                                            {node.type === 'Episode' ? 'Aired' : node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : 'Active Context'}
                                         </span>
                                     </div>
                                 </div>
@@ -411,7 +443,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     <MessageSquare className="w-4 h-4" />
                                     <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
                                 </div>
-                                <div className="text-slate-300 text-sm leading-relaxed space-y-3">
+                                <div className="text-slate-100 text-sm leading-relaxed space-y-3">
                                     {node.text ? (
                                         node.text.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
                                     ) : (

@@ -16,7 +16,7 @@ const INTENT_PATTERNS = [
     },
     {
         domain_signal: 'cross_domain',
-        pattern: /influenc|how\s+did.*affect|how\s+did.*shape|bridge|connects?\s+.*to|relation.*between|impact.*on.*design/i
+        pattern: /influenc|how\s+did.*affect|how\s+did.*shape|bridge|connects?\s+.*to|relation.*between|impact.*on.*design|decision\s+trace|trace.*from|from.*to.*(?:architecture|security|design|system|platform)|led\s+to|drove.*(?:architecture|design|security)|shaped.*(?:architecture|design|security)/i
     },
     {
         domain_signal: 'career',

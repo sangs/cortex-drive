@@ -38,7 +38,7 @@ DOMAIN_MANIFESTS = {
         },
         "node_set": PROJECT_GRAPH_NODES + ["Publication", "ThoughtLeadership", "Certification", "Person"],
         "anchor_labels": ["Project", "Company", "Skill", "Certification", "Industry", "ThoughtLeadership"],
-        "backbone_labels": ["Company", "Startup", "Institution", "Project", "ThoughtLeadership", "Certification", "Person", "CaseStudy", "Department", "Role", "Category", "Industry", "Degree", "ProfessionalEducation"],
+        "backbone_labels": ["Person", "Category"],
         "realm": "INTERNAL"
     },
     "podcast": {

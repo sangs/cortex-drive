@@ -1,40 +1,5 @@
-[dotenv@17.3.1] injecting env (11) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
-Cortex Gateway listening at http://localhost:3000
-Proxying to MCP Server at http://localhost:8080
-Orchestration endpoint available at POST /query
-JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> run_cypher_query with args: { query: 'MATCH (e:Episode) RETURN e.name' }
-[GATEWAY] Calling MCP tool run_cypher_query for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=34ed32c99c5f4f2ab59e70ccc3a5f543. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: run_cypher_query
-[GATEWAY] SUCCESS: Received tool result for run_cypher_query
-JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> run_cypher_query with args: { query: 'MATCH (e:Episode) RETURN e.name' }
-[GATEWAY] Calling MCP tool run_cypher_query for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=91910c8585d548058e69efaf54e45b40. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: run_cypher_query
-[GATEWAY] SUCCESS: Received tool result for run_cypher_query
-JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> hybrid_discovery_tool with args: { question: 'BAML episode first 30 minutes discussion', k: 5 }
-[GATEWAY] Calling MCP tool hybrid_discovery_tool for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=8ad7d18246e2441fa48a8f6302d87d35. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: hybrid_discovery_tool
-[GATEWAY] SUCCESS: Received tool result for hybrid_discovery_tool
-JWT Auth verified for tenant: org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[LOOP 1] calling 1 tools
-  -> find_episodes_by_people with args: { question: 'sangeetha' }
-[GATEWAY] Calling MCP tool find_episodes_by_people for tenant org_3AacpFBbt39hPmDKyZyNBQuuM6t
-[GATEWAY] SSE Connection established.
-[GATEWAY] Discovered endpoint: http://localhost:8080/messages/?session_id=24078422fdcd4f469d9a05a4fe02dd01. Initializing...
-[GATEWAY] MCP Initialized response received. Sending notification.
-[GATEWAY] Handshake complete. Calling tool: find_episodes_by_people
-[GATEWAY] SUCCESS: Received tool result for find_episodes_by_people
+[dotenv@17.3.1] injecting env (11) from .env -- tip: ⚙️  override existing env vars with { override: true }
+Cortex Gateway listening at http://localhost:4000
+Smart Routing Active:
+  -> /api/get_node_details -> http://localhost:8000
+  -> /api/* -> http://localhost:8080

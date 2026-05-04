@@ -100,7 +100,7 @@ class ExpertTools:
                 target_id: elementId(neighbor)
              }) AS relationships,
              collect(DISTINCT tech.name) AS technologies,
-             collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date} ELSE null END)) AS relDates
+             collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date, rel_title: coalesce(r.title, r.role)} ELSE null END)) AS relDates
         """
         return query.replace("{whitelist}", whitelist).replace("{security_clause}", self._get_security_clause("neighbor")).replace("{bridge_labels}", bridge_labels)
 
@@ -150,9 +150,15 @@ class ExpertTools:
                 link: node.link,
                 number: node.number,
                 aired_date: node.aired_date,
+                published_date: node.published_date,
                 year: node.year,
                 startDate: node.startDate,
                 endDate: node.endDate,
+                displayDate: CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.displayDate END,
+                startYear:   CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.startYear END,
+                endYear:     CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.endYear END,
+                isPresent: coalesce(node.isPresent, bestDate.rel_end = 'Present', node.endDate = 'Present', false),
+                role: coalesce(bestDate.rel_title, node.role),
                 element_id: elementId(node),
                 labels: labels(node),
                 display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
@@ -161,6 +167,7 @@ class ExpertTools:
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Project'
                     WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
                     WHEN 'Degree' IN labels(node) THEN 'Degree'
@@ -174,13 +181,13 @@ class ExpertTools:
                 END,
                 is_bento_eligible: is_bento_eligible,
                 is_expandable: EXISTS { (node)-[]-(n2) WHERE NOT labels(n2)[0] IN ['ReferenceLink', 'Chunk'] },
-                temporal_boost: (CASE 
+                temporal_boost: (CASE
                     WHEN bestDate.rel_end = 'Present' OR node.endDate = 'Present' THEN 150 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
                     WHEN bestDate.rel_end IS NOT NULL OR node.endDate IS NOT NULL THEN 100 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
                     WHEN bestDate.rel_start IS NOT NULL OR node.startDate IS NOT NULL THEN 50 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
                     WHEN node:Episode THEN 300
                     ELSE 0
-                END) + range_boost + toInteger((semantic_score * 100)) + (CASE WHEN elementId(node) IN expanded_ids THEN 1000 ELSE 0 END),
+                END) + (CASE WHEN node.isPresent = true THEN 100 ELSE 0 END) + range_boost + toInteger((semantic_score * 100)) + (CASE WHEN elementId(node) IN expanded_ids THEN 1000 ELSE 0 END),
 
                 year: coalesce(
                     (CASE WHEN node:Project AND bestDate.rel_end = 'Present' THEN '2026'
@@ -1084,14 +1091,15 @@ class ExpertTools:
         """
         Search for entities across the Universal Enterprise Graph dynamically, explicitly crossing boundaries between domains (Podcast/Resume/Federated).
         """
-        # If the user explicitly wants a visual map, or if the keyword implies a discovery/overview request
-        discovery_synonyms = ["portfolio", "overview", "background", "experience", "career", "map"]
-        is_discovery_request = wants_visual_map or any(s in keyword.lower() for s in discovery_synonyms)
-        
-        # Career cluster shortcut — only for professional/all domain intent, never for podcast.
-        # wants_visual_map=True alone must not trigger this for podcast queries.
-        if domain_intent in ("professional", "all") and is_discovery_request and ("career" in keyword.lower() or "overview" in keyword.lower() or wants_visual_map):
+        # Career cluster shortcut: only fire when the LLM explicitly signals wants_visual_map=True.
+        # Keyword-based triggering (checking for "career", "map", etc.) is suppressed because it
+        # intercepts Q2 career map queries, returning backbone-only nodes that fail the
+        # CAREER_CHAT_NODE_TYPES filter in the gateway and produce ungrounded LLM responses.
+        if wants_visual_map and domain_intent in ("professional", "all"):
             return self.get_cluster_context("Sangeetha Ramadurai", depth=1, backbone_only=True, domain="professional")
+
+        discovery_synonyms = ["portfolio", "overview", "background", "experience", "career", "map"]
+        is_discovery_request = any(s in keyword.lower() for s in discovery_synonyms)
 
         stop_words = {"show", "me", "how", "did", "she", "what", "is", "the", "and", "a", "an", "at", "in", "of", "for", "with", "on", "to", "from", "by"}
         clean_keyword = keyword.lower().replace(".", "").replace(",", "").replace("?", "").replace("!", "")
@@ -1223,16 +1231,18 @@ class ExpertTools:
                 print(f"[SEARCH] No results for '{keyword}'. Attempting broader semantic fallback...")
                 fallback_query = f"""
                 MATCH (node)
-                WHERE node.embedding IS NOT NULL 
+                WHERE node.embedding IS NOT NULL
                   AND ({self._get_security_clause("node")})
                 WITH node, vector.similarity.cosine($embedding, node.embedding) AS score
                 WHERE score > 0.7
-                RETURN node {{ .*, element_id: elementId(node), labels: labels(node), temporal_boost: score * 100 }} AS details
+                WITH node, score
                 ORDER BY score DESC
                 LIMIT 10
+                RETURN collect(node {{ .*, element_id: elementId(node), labels: labels(node), temporal_boost: score * 100 }}) AS nodes, [] AS links
                 """
                 result = self._exec_query(
                     fallback_query,
+                    tenant_id=self.tenant_id,
                     embedding=embedding,
                     requesting_user_id=requesting_user_id
                 )
@@ -1419,6 +1429,7 @@ class ExpertTools:
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Project'
                     WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
                     WHEN 'Degree' IN labels(node) THEN 'Degree'
@@ -1434,9 +1445,11 @@ class ExpertTools:
                 text: apoc.text.join(notes, "\n---\n"),
                 url: node.url,
                 link: node.link,
+                aired_date: node.aired_date,
                 links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
                 technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],
-                display_date: coalesce(
+                displayDate: coalesce(
+                    node.displayDate,
                     roleRel.start + (CASE WHEN roleRel.end IS NOT NULL THEN "-" + roleRel.end ELSE "" END),
                     node.startDate + (CASE WHEN node.endDate IS NOT NULL THEN "-" + node.endDate ELSE "" END),
                     roleRel.date,
@@ -1445,16 +1458,20 @@ class ExpertTools:
                     node.published_at,
                     "Active"
                 ),
+                startYear: coalesce(node.startYear, right(roleRel.start, 4), toString(node.year)),
+                endYear: coalesce(node.endYear, right(roleRel.end, 4), toString(node.year)),
+                isPresent: coalesce(node.isPresent, roleRel.end = "Present", false),
+                role: roleRel.role,
                 year: coalesce(
                     toString(node.year),
+                    right(roleRel.end, 4),
                     right(roleRel.start, 4),
-                    right(node.startDate, 4),
                     right(roleRel.date, 4),
                     right(node.date, 4),
                     left(node.published_at, 4),
                     "2026"
                 )
-             }) AS allNodes, 
+             }) AS allNodes,
              collect(DISTINCT rel) AS allRels
              
         // Hard node limit for Progressive Discovery
@@ -1639,7 +1656,6 @@ class ExpertTools:
                 target_name = record["target_name"]
                 target_type = record["target_type"]
                 shared_anchors = record["sharedAnchors"]
-                shared_count = record["sharedCount"]
 
                 # Add target node
                 if target_eid not in seen_node_ids:
