@@ -59,11 +59,9 @@ RESUME_CYPHER_QUERIES = [
     MATCH (cat2:Category {name: "Open Source & Independent Ventures"})
     MATCH (p:Person {name: "Sangeetha Ramadurai"})
 
-    // Cortex-Drive (Independent Venture)
-    MERGE (c1:Company {name: "Independent Ventures"})
-    MERGE (r1:Project {name: "Cortex-Drive"})
-    MERGE (p)-[:CURRENTLY_BUILDING {role: "Founder & Sr. Software Engineer", start: "08/2025", end: "Present"}]->(r1)
-    MERGE (r1)-[:AT]->(c1)
+    // Cortex-Drive — the company IS the product; no "Independent Ventures" indirection
+    MERGE (r1:Startup {name: "Cortex-Drive"})
+    MERGE (p)-[:CURRENTLY_BUILDING {role: "Founder & Lead Engineer", start: "08/2025", end: "Present"}]->(r1)
     MERGE (cat1)-[:CONTAINS]->(r1)
     MERGE (cat2)-[:CONTAINS]->(r1)
     SET r1.status = "Active", r1.type = "Independent Venture"
@@ -104,18 +102,25 @@ RESUME_CYPHER_QUERIES = [
     """,
 
     # 3. PROJECTS: OPEN SOURCE & VENTURES
+    # MERGE on single label first to avoid the multi-label duplicate trap (AP-13).
+    # SET pj:Project adds the second label idempotently on both CREATE and MATCH.
     """
-    MERGE (pj:Startup:Project {name: "Cortex-Drive"})
-    SET pj.status = "Active",
+    MERGE (pj:Startup {name: "Cortex-Drive"})
+    SET pj:Project,
+        pj.status = "Active",
+        pj.isPresent = true,
+        pj.endDate = "Present",
+        pj.endYear = "Present",
         pj.description = "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
         pj.links = ["https://github.com/sangs/cortex-drive"],
         pj.link_titles = ["Cortex-Drive on GitHub"]
 
     WITH pj
-    MATCH (p:Person {name: "Sangeetha Ramadurai"})-[:CURRENTLY_BUILDING {role: "Founder & Sr. Software Engineer"}]->(pj)
+    MATCH (p:Person {name: "Sangeetha Ramadurai"})
     MATCH (catIndependent:Category {name: "Open Source & Independent Ventures"})
     MATCH (catProfessional:Category {name: "Professional Experience"})
 
+    MERGE (p)-[:CURRENTLY_BUILDING {role: "Founder & Lead Engineer", start: "08/2025", end: "Present"}]->(pj)
     MERGE (catIndependent)-[:CONTAINS]->(pj)
     MERGE (catProfessional)-[:CONTAINS]->(pj)
 

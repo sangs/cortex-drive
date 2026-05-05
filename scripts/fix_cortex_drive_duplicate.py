@@ -103,6 +103,25 @@ def fix(driver):
     moved = r[0]['moved'] if r else 0
     print(f"  ✓ HAS_PRIVATE_NOTE re-pointed: {moved}")
 
+    print("\n── Step 3.5: re-point CONTAINS from categories to correct node ──")
+    r = run(driver, f"""
+        MATCH (a:{bad_label_match} {{name: "Cortex-Drive"}}) {bad_label_filter}
+        MATCH (b:Startup:Project {{name: "Cortex-Drive"}})
+        MATCH (cat)-[r:CONTAINS]->(a)
+        MERGE (cat)-[:CONTAINS]->(b)
+        DELETE r
+        RETURN count(r) AS moved
+    """)
+    moved = r[0]['moved'] if r else 0
+    print(f"  ✓ CONTAINS re-pointed: {moved} category links")
+
+    print("\n── Step 3.6: set isPresent / endDate / endYear on correct node ──")
+    run(driver, """
+        MATCH (b:Startup:Project {name: "Cortex-Drive"})
+        SET b.isPresent = true, b.endDate = "Present", b.endYear = "Present"
+    """)
+    print("  ✓ isPresent=true, endDate='Present', endYear='Present' set")
+
     print("\n── Step 4: report remaining relationships before delete ──")
     r = run(driver, f"""
         MATCH (a:{bad_label_match} {{name: "Cortex-Drive"}}) {bad_label_filter}

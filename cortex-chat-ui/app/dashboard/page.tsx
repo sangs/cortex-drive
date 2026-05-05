@@ -24,7 +24,8 @@ import {
     SendHorizontal,
     GripVertical,
     Square,
-    X
+    X,
+    RefreshCw
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -61,6 +62,7 @@ export default function DashboardPage() {
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [input, setInput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    const [forceRefreshNext, setForceRefreshNext] = useState(false);
     
     // Layout State
     const [chatWidth, setChatWidth] = useState(40); // percentage
@@ -447,8 +449,9 @@ export default function DashboardPage() {
                 .filter(m => typeof m.content === 'string')
                 .map(m => ({ role: m.role, content: m.content }));
 
-            // Check for force-refresh flag (per-message)
-            const forceRefresh = userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
+            // Check for force-refresh flag (per-message) — set by button toggle or inline text command
+            const forceRefresh = forceRefreshNext || userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
+            setForceRefreshNext(false);
 
             const result = await query(userMsg, history, forceRefresh);
             
@@ -1076,7 +1079,7 @@ export default function DashboardPage() {
                                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                                 disabled={!isConnected || isProcessing}
                                 placeholder="Command your Cognitive Graph..."
-                                className="w-full bg-white border-0 p-5 pr-16 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground font-medium"
+                                className="w-full bg-white border-0 p-5 pr-28 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground font-medium"
                             />
                             {isProcessing ? (
                                 <button
@@ -1086,13 +1089,23 @@ export default function DashboardPage() {
                                     <Square className="w-5 h-5 fill-white" />
                                 </button>
                             ) : (
-                                <button
-                                    onClick={handleSend}
-                                    disabled={!isConnected || !input.trim()}
-                                    className="absolute right-3 top-3 p-2 bg-primary hover:bg-primary/90 text-white rounded-xl transition-all shadow-lg disabled:opacity-50"
-                                >
-                                    <SendHorizontal className="w-5 h-5" />
-                                </button>
+                                <div className="absolute right-3 top-3 flex gap-2">
+                                    <button
+                                        onClick={() => setForceRefreshNext(v => !v)}
+                                        title={forceRefreshNext ? "Cache bypass ON — next query will skip cache" : "Bypass cache for next query"}
+                                        disabled={!isConnected}
+                                        className={`p-2 rounded-xl transition-all shadow-lg disabled:opacity-50 ${forceRefreshNext ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+                                    >
+                                        <RefreshCw className={`w-5 h-5 ${forceRefreshNext ? 'animate-spin' : ''}`} />
+                                    </button>
+                                    <button
+                                        onClick={handleSend}
+                                        disabled={!isConnected || !input.trim()}
+                                        className="p-2 bg-primary hover:bg-primary/90 text-white rounded-xl transition-all shadow-lg disabled:opacity-50"
+                                    >
+                                        <SendHorizontal className="w-5 h-5" />
+                                    </button>
+                                </div>
                             )}
                         </div>
                     </div>

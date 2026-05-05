@@ -167,7 +167,7 @@ class ExpertTools:
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
-                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Project'
+                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Startup'
                     WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
                     WHEN 'Degree' IN labels(node) THEN 'Degree'
@@ -1173,23 +1173,27 @@ class ExpertTools:
              collect(DISTINCT {{
                 id: elementId(node),
                 name: node.name,
-                type: CASE 
+                type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
+                    WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
                     WHEN 'Project' IN labels(node) THEN 'Project'
                     WHEN 'Episode' IN labels(node) THEN 'Episode'
                     WHEN 'Technology' IN labels(node) THEN 'Technology'
                     WHEN 'Topic' IN labels(node) THEN 'Topic'
-                    ELSE labels(node)[0] 
+                    ELSE labels(node)[0]
                 END,
-                description: left(coalesce(node.description, node.text, ""), 150),
+                description: left(coalesce(node.description, node.text, ""), 500),
                 text: apoc.text.join(notes, "\n---\n"),
                 url: node.url,
                 link: node.link,
                 links: [l IN apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) WHERE l IS NOT NULL AND l <> ""],
-                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""]
+                technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],
+                isPresent: node.isPresent,
+                endDate: node.endDate,
+                endYear: node.endYear
              }}) AS uiNodes
 
         RETURN uiNodes AS nodes,
@@ -1429,7 +1433,7 @@ class ExpertTools:
                     WHEN 'Role' IN labels(node) THEN 'Role'
                     WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
                     WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
-                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Project'
+                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Startup'
                     WHEN 'Startup' IN labels(node) THEN 'Startup'
                     WHEN 'Company' IN labels(node) THEN 'Company'
                     WHEN 'Degree' IN labels(node) THEN 'Degree'
@@ -1441,7 +1445,7 @@ class ExpertTools:
                     WHEN 'Topic' IN labels(node) THEN 'Topic'
                     ELSE labels(node)[0]
                 END,
-                description: left(coalesce(node.description, node.text, ""), 150),
+                description: left(coalesce(node.description, node.text, ""), 500),
                 text: apoc.text.join(notes, "\n---\n"),
                 url: node.url,
                 link: node.link,

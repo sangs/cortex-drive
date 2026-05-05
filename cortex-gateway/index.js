@@ -133,11 +133,9 @@ const CAREER_CHAT_NODE_TYPES = new Set([
 ]);
 
 // Types that receive writer prose (focused single-item narrative exists).
-// Defensive: also checks n.labels for 'Project' to catch Startup:Project multi-label nodes
-// that the Cypher type resolver may still return as 'Startup' on cached data.
+// Startup is included because Cortex-Drive resolves to type 'Startup' (Startup:Project → 'Startup').
 function isWriterEligible(n) {
-    if (['Project', 'ThoughtLeadership', 'Publication'].includes(n.type)) return true;
-    if (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project')) return true;
+    if (['Project', 'Startup', 'ThoughtLeadership', 'Publication'].includes(n.type)) return true;
     return false;
 }
 
@@ -148,27 +146,35 @@ function nodeTimeline(n) {
          n.startYear ? n.startYear : n.endYear ? n.endYear : '');
 }
 
-// All URL links for a node.
+// All URL links for a node — returns only http/https items to avoid article titles
+// stored as link entries in Neo4j appearing as duplicate text lines.
 function nodeLinks(n) {
-    if (Array.isArray(n.links) && n.links.length > 0) return n.links.filter(Boolean);
-    if (n.url) return [n.url];
-    return [];
+    const isUrl = l => l && (l.startsWith('http://') || l.startsWith('https://'));
+    const allLinks = Array.isArray(n.links) && n.links.length > 0 ? n.links : (n.url ? [n.url] : []);
+    return allLinks.filter(isUrl);
 }
 
-// Splits contentNodes into the six Q2 display sections.
+// Splits contentNodes into the Q2 display sections.
+// Cortex-Drive resolves to type 'Startup' (Startup:Project → 'Startup' in type CASE).
+// isCurrentProject covers both pure Project nodes and Startup nodes that are active ventures.
 function groupNodesForQ2(contentNodes) {
     const isCurrentProject = n =>
-        (n.type === 'Project' || (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project'))) &&
+        (n.type === 'Project' || n.type === 'Startup') &&
         (n.isPresent === true || n.isPresent === 'true' || n.endDate === 'Present' || n.endYear === 'Present' || n.displayDate?.includes('Present'));
 
+    // currentlyBuilding: active ventures/projects — shown at the top of Career Timeline
     const currentlyBuilding = contentNodes.filter(isCurrentProject);
     const currentNames = new Set(currentlyBuilding.map(n => n.name));
 
-    const companies    = contentNodes.filter(n => (n.type === 'Company' || n.type === 'Startup') && !currentNames.has(n.name));
-    const projects     = contentNodes.filter(n =>
-        (n.type === 'Project' || (n.type === 'Startup' && Array.isArray(n.labels) && n.labels.includes('Project'))) &&
-        !currentNames.has(n.name)
+    // companies: past employers — shown below currently-building entries in Career Timeline
+    const companies = contentNodes.filter(n => n.type === 'Company' && !currentNames.has(n.name));
+
+    // projects: all Project nodes + currently-building Startup nodes (for description in What She Built)
+    const projects = contentNodes.filter(n =>
+        n.type === 'Project' ||
+        (n.type === 'Startup' && (n.isPresent === true || n.isPresent === 'true' || n.endDate === 'Present' || n.endYear === 'Present'))
     );
+
     const thoughtLeadership = contentNodes.filter(n => n.type === 'ThoughtLeadership' || n.type === 'Publication');
     const hackathons   = contentNodes.filter(n => n.type === 'Hackathon');
     const education    = contentNodes.filter(n => ['Degree', 'Certification', 'ProfessionalEducation', 'Institution'].includes(n.type));
@@ -192,8 +198,9 @@ function sanitizeNarrative(text) {
 /**
  * Option B — section-based Q2 career map (no writer calls, uses node description only).
  * Used as fallback when Option A writer calls fail, and as the static buildLlmToolContent
- * ranked summary sent to the LLM. Six sections: Currently Building / Career Timeline /
- * What She Built / Thought Leadership / Hackathons / Education.
+ * ranked summary sent to the LLM. Sections: Career Timeline / What She Built /
+ * Thought Leadership / Hackathons / Education.
+ * Currently-building ventures appear at the top of Career Timeline (not a separate section).
  */
 function buildCareerMapResponse(rankedNodes) {
     const contentNodes = rankedNodes.filter(n => CAREER_CHAT_NODE_TYPES.has(n.type));
@@ -202,25 +209,19 @@ function buildCareerMapResponse(rankedNodes) {
     const { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education } = groupNodesForQ2(contentNodes);
     const lines = ['## Institutional Memory Map'];
 
-    if (currentlyBuilding.length > 0) {
-        lines.push('', '### Currently Building');
+    // Career Timeline: active ventures at top, then past employers chronologically.
+    if (currentlyBuilding.length > 0 || companies.length > 0) {
+        lines.push('', '---', '', '### Career Timeline');
         currentlyBuilding.forEach(n => {
             const tl = nodeTimeline(n);
             const role = n.role ? ` · ${n.role}` : '';
-            lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
-            const desc = sanitizeNarrative(n.text) || (n.description?.length > 10 ? n.description : '');
-            if (desc) lines.push(desc.slice(0, 400));
-            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+            lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
             lines.push('');
         });
-    }
-
-    if (companies.length > 0) {
-        lines.push('', '---', '', '### Career Timeline');
         companies.forEach(n => {
             const tl = nodeTimeline(n);
             const role = n.role ? ` · ${n.role}` : '';
-            lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
+            lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
             lines.push('');
         });
     }
@@ -229,8 +230,8 @@ function buildCareerMapResponse(rankedNodes) {
         lines.push('', '---', '', '### What She Built');
         projects.forEach((n, i) => {
             const tl = nodeTimeline(n);
-            lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
-            if (i < 3 && n.description?.length > 10) lines.push(n.description);
+            lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
+            if (i < 3 && n.description?.length > 10) { lines.push(''); lines.push(n.description); }
             nodeLinks(n).forEach(url => lines.push(`- ${url}`));
             lines.push('');
         });
@@ -240,8 +241,8 @@ function buildCareerMapResponse(rankedNodes) {
         lines.push('', '---', '', '### Thought Leadership & Publications');
         thoughtLeadership.forEach(n => {
             const tl = nodeTimeline(n);
-            lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
-            if (n.description?.length > 10) lines.push(n.description);
+            lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
+            if (n.description?.length > 10) { lines.push(''); lines.push(n.description); }
             nodeLinks(n).forEach(url => lines.push(`- ${url}`));
             lines.push('');
         });
@@ -1308,32 +1309,19 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                             const lines = ['## Institutional Memory Map'];
 
-                            // --- Currently Building ---
-                            if (currentlyBuilding.length > 0) {
-                                lines.push('', '### Currently Building');
+                            // --- Career Timeline: active ventures first, then past employers ---
+                            if (currentlyBuilding.length > 0 || companies.length > 0) {
+                                lines.push('', '---', '', '### Career Timeline');
                                 currentlyBuilding.forEach(n => {
                                     const tl = nodeTimeline(n);
                                     const role = n.role ? ` · ${n.role}` : '';
-                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}${role}`);
-                                    const enrichedNode = enriched.find(e => e.name === n.name) || n;
-                                    const rawNarrative = sanitizeNarrative(enrichedNode.text);
-                                    // Guard: reject bento narratives that are structured docs (contain ### headers)
-                                    // to prevent embedded TL/section headings from leaking into prose output.
-                                    const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
-                                    const prose = writerMap.get(n.name) || safeNarrative || n.description || '';
-                                    if (prose) lines.push(prose);
-                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
+                                    lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
                                     lines.push('');
                                 });
-                            }
-
-                            // --- Career Timeline ---
-                            if (companies.length > 0) {
-                                lines.push('', '---', '', '### Career Timeline');
                                 companies.forEach(n => {
                                     const tl = nodeTimeline(n);
                                     const role = n.role ? ` · ${n.role}` : '';
-                                    lines.push(`**${n.name}**${role}${tl ? ` [${tl}]` : ''}`);
+                                    lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
                                     lines.push('');
                                 });
                             }
@@ -1343,16 +1331,18 @@ app.post('/query', authMiddleware, async (req, res) => {
                                 lines.push('', '---', '', '### What She Built');
                                 projects.forEach((n, i) => {
                                     const tl = nodeTimeline(n);
-                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
+                                    lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
                                     if (i === 0) {
                                         const enrichedNode = enriched.find(e => e.name === n.name) || n;
                                         const rawNarrative = sanitizeNarrative(enrichedNode.text);
+                                        // Guard: reject bento narratives that contain ### headers (structured docs)
+                                        // to prevent section headings from leaking into prose output.
                                         const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
                                         const prose = writerMap.get(n.name) || safeNarrative || '';
                                         const desc = prose || (n.description?.length > 10 ? n.description : '');
-                                        if (desc) lines.push(desc);
+                                        if (desc) { lines.push(''); lines.push(desc); }
                                     } else if (n.description?.length > 10) {
-                                        lines.push(n.description);
+                                        lines.push(''); lines.push(n.description);
                                     }
                                     nodeLinks(n).forEach(url => lines.push(`- ${url}`));
                                     lines.push('');
@@ -1364,8 +1354,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                                 lines.push('', '---', '', '### Thought Leadership & Publications');
                                 thoughtLeadership.forEach(n => {
                                     const tl = nodeTimeline(n);
-                                    lines.push(`**${n.name}**${tl ? ` [${tl}]` : ''}`);
-                                    if (n.description?.length > 10) lines.push(n.description);
+                                    lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
+                                    if (n.description?.length > 10) { lines.push(''); lines.push(n.description); }
                                     nodeLinks(n).forEach(url => lines.push(`- ${url}`));
                                     lines.push('');
                                 });
