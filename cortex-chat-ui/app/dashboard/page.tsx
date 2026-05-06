@@ -1162,17 +1162,23 @@ export default function DashboardPage() {
                                         <BrainCircuit className="w-4 h-4" />
                                         The Brain
                                     </button>
-                                    <button 
+                                    {/* THE SPINE — hidden 2026-05-06, not ready for demo.
+                                        To re-enable: uncomment this button.
+                                        All spine logic (EnterpriseGraph.tsx lines 45-99, 104-113,
+                                        130-133, 201-202, 214-278, 356, 476-493) is fully intact
+                                        and gated on viewMode==='spine'. No code was removed.
+                                    <button
                                         onClick={() => setViewMode('spine')}
                                         className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all gap-2 flex items-center ${
-                                            viewMode === 'spine' 
-                                            ? 'bg-primary text-white shadow-lg shadow-primary/20' 
+                                            viewMode === 'spine'
+                                            ? 'bg-primary text-white shadow-lg shadow-primary/20'
                                             : 'text-slate-400 hover:text-primary hover:bg-primary/5'
                                         }`}
                                     >
                                         <Activity className="w-4 h-4" />
                                         The Spine
                                     </button>
+                                    */}
                                 </div>
 
                                 {graphData.nodes.length > 0 && (
