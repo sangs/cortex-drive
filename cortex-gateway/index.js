@@ -1231,7 +1231,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                             }
                             // Capture ranked nodes for Q2 gateway response override.
                             // Must be captured AFTER domain filter so only career nodes are included.
-                            if (toolName === 'search_enterprise_graph' && domainSignal === 'career' && parsed.nodes) {
+                            // Backstop: also capture from get_cluster_context in case the LLM ignores
+                            // the Q2 instruction and calls the wrong tool — prevents silent fallback to
+                            // generic hallucinated answer.
+                            const isQ2Tool = (toolName === 'search_enterprise_graph' || toolName === 'get_cluster_context');
+                            if (isQ2Tool && domainSignal === 'career' && parsed.nodes) {
                                 const seenK = new Map();
                                 parsed.nodes.forEach(n => {
                                     const key = `${n.name}::${n.type}`;
@@ -1389,6 +1393,25 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 // Audit response for hallucinated URLs before sending.
                 const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
+
+                // cross_domain regression fix (1af57ec): accumulatedGraph now includes ALL tool nodes,
+                // but for cross_domain only bridge participants should reach the frontend.
+                // Prune to nodes/links that appear in virtual_links before sending.
+                if (domainSignal === 'cross_domain' && accumulatedGraph.virtual_links.length > 0) {
+                    const bridgeIds = new Set();
+                    accumulatedGraph.virtual_links.forEach(l => {
+                        if (l.source) bridgeIds.add(l.source);
+                        if (l.target) bridgeIds.add(l.target);
+                    });
+                    accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => {
+                        const id = n.element_id || n.id || n.name;
+                        return bridgeIds.has(id);
+                    });
+                    accumulatedGraph.links = accumulatedGraph.links.filter(l =>
+                        bridgeIds.has(l.source) && bridgeIds.has(l.target)
+                    );
+                }
+
                 const hasGraph = accumulatedGraph.nodes.length > 0;
                 const responsePayload = {
                     answer: auditedAnswer,

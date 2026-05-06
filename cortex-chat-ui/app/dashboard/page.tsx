@@ -581,7 +581,7 @@ export default function DashboardPage() {
                             : (p.description && p.description.length > (freshNode.description?.length ?? 0)
                                 ? p.description
                                 : undefined);
-                        const tech = p.technologies || p.tech_stack || p.tools || freshNode.technologies;
+                        const tech = payload.technologies || p.technologies || p.tech_stack || p.tools || freshNode.technologies;
                         const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
                         const directLinks = [p.link, p.url].filter(Boolean);
                         const hydratedFields = {
@@ -1096,7 +1096,7 @@ export default function DashboardPage() {
                                         disabled={!isConnected}
                                         className={`p-2 rounded-xl transition-all shadow-lg disabled:opacity-50 ${forceRefreshNext ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
                                     >
-                                        <RefreshCw className={`w-5 h-5 ${forceRefreshNext ? 'animate-spin' : ''}`} />
+                                        <RefreshCw className="w-5 h-5" />
                                     </button>
                                     <button
                                         onClick={handleSend}
