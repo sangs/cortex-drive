@@ -51,18 +51,18 @@ export default function Home() {
           <div className="lg:col-span-7 flex flex-col items-start gap-8">
             <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/5 border border-primary/10 text-primary text-[10px] font-black uppercase tracking-[0.2em]">
               <Activity className="w-3 h-3 animate-pulse" />
-              <span>THE INTELLIGENCE LAYER FOR INSTITUTIONAL MEMORY</span>
+              <span>RE-HYDRATE YOUR ENTERPRISE LLM WITH LIVE INSTITUTIONAL CONTEXT</span>
             </div>
             
             <h1 className="text-6xl md:text-8xl font-black font-display tracking-tighter leading-[0.9] text-slate-900">
-              Build a <span className="text-transparent bg-clip-text bg-gradient-to-br from-primary to-indigo-400">Mind</span>,<br />
-              <span className="opacity-40 italic">not just a database.</span>
+              Your LLM <span className="text-transparent bg-clip-text bg-gradient-to-br from-primary to-indigo-400">knows the world.</span><br />
+              <span className="opacity-40 italic">It doesn&apos;t know your organization.</span>
             </h1>
             
             <p className="max-w-xl text-lg md:text-xl text-muted-foreground leading-relaxed font-medium">
-              We are drowning in data but starving for context. CortexDrive maps the 
-              <span className="text-foreground font-bold"> "Decision Trace"</span>—capturing the strategic "why" behind your 
-              <span className="text-primary font-bold"> institutional intent</span> to bridge the gap between fragmented data and human intuition.
+              Every enterprise LLM is reasoning against frozen data. It cannot know what your organization decided, who made the call, or why.{" "}
+              <span className="text-primary font-bold">CortexDrive re-hydrates LLM reasoning</span> with live institutional context —{" "}
+              <span className="text-foreground font-bold">verified, grounded, and always current.</span>
             </p>
 
             <div className="flex flex-col sm:flex-row gap-5 mt-4">
@@ -71,25 +71,18 @@ export default function Home() {
                   href="/dashboard" 
                   className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group"
                 >
-                  Enter Your Mental Model
+                  Ask CortexDrive
                   <ArrowRight className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </Link>
               </SignedIn>
               <SignedOut>
                 <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
                   <button className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group">
-                    Enter Your Mental Model
+                    Ask CortexDrive
                     <ArrowRight className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
                 </SignInButton>
               </SignedOut>
-              <button 
-                onClick={() => { setShowDemo(true); setDemoStep(1); }}
-                className="h-16 px-12 rounded-2xl bg-white border border-border text-foreground font-black text-lg flex items-center justify-center hover:bg-slate-50 transition-all active:scale-95 gap-3"
-              >
-                <UserSearch className="w-5 h-5 text-primary" />
-                Meet the Architect
-              </button>
             </div>
           </div>
 
@@ -120,8 +113,7 @@ export default function Home() {
              </div>
              <h3 className="text-xl font-black font-display tracking-tightest text-slate-800">Explainable Memory</h3>
              <p className="text-muted-foreground text-sm leading-relaxed font-medium">
-               Trace the evolution of intent. Beyond retrieval, CortexDrive traverses the "why"—tracing 
-               strategic ripples forward into impact and backward to their original institutional context.
+               Every fact in an LLM answer is traceable to a specific node, chunk, or field returned by a tool call in that turn. The graph on screen is the citation map for the answer.
              </p>
           </div>
           <div className="flex flex-col gap-4">
@@ -130,8 +122,7 @@ export default function Home() {
              </div>
              <h3 className="text-xl font-black font-display tracking-tightest text-slate-800">Infrastructure-Grade Intelligence</h3>
              <p className="text-muted-foreground text-sm leading-relaxed font-medium">
-                Built on Neo4j and MCP. A virtualized intelligence layer that scales across federated 
-                institutional data silos without duplicating the underlying records.
+                Built on Neo4j and MCP. A zero-write virtualized layer — session bridges exist only in memory, never persisted to the database. The knowledge base stays clean.
              </p>
           </div>
           <div className="flex flex-col gap-4">
@@ -140,10 +131,23 @@ export default function Home() {
              </div>
              <h3 className="text-xl font-black font-display tracking-tightest text-slate-800">Sovereign Graph Security</h3>
              <p className="text-muted-foreground text-sm leading-relaxed font-medium">
-                Engineered for trust. Identity-anchored G-ACL masking and zero-knowledge traversal ensure 
-                that private silos remain strictly invisible during executive discovery sessions.
+                Security is a topological property, not a filter. An LLM cannot be prompted into revealing data the graph cannot physically traverse to. Identity-anchored access, bounded by geometry.
              </p>
           </div>
+        </section>
+
+        {/* Discovery Strip */}
+        <section className="mt-24 flex items-center justify-center gap-4 py-8 border-t border-slate-100">
+          <UserSearch className="w-5 h-5 text-slate-400 shrink-0" />
+          <p className="text-sm font-medium text-slate-500">
+            See 26 years of institutional memory navigated in real time.{" "}
+            <button
+              onClick={() => { setShowDemo(true); setDemoStep(1); }}
+              className="text-primary font-bold underline underline-offset-2 hover:opacity-70 transition-opacity"
+            >
+              Explore the demo →
+            </button>
+          </p>
         </section>
       </main>
 
@@ -319,7 +323,7 @@ export default function Home() {
                 <BrainCircuit className="w-5 h-5 text-primary" />
                 <span className="font-black text-lg tracking-tighter">CortexDrive Engine</span>
              </div>
-             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Bridging Data & Intuition Since 2025</p>
+             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">The reasoning layer your enterprise AI was missing.</p>
           </div>
           <div className="flex items-center gap-10 text-[10px] font-black uppercase tracking-widest text-slate-500">
             <button className="hover:text-primary transition-colors opacity-40">Architecture</button>
