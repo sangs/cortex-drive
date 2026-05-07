@@ -50,6 +50,7 @@ import {
     collapseToGroupers,
     buildCompanyGroupers,
     deduplicateNodes,
+    isBentoEligible,
     inferBackbone,
     domainToBackbone,
 } from "@/utils/graphConstants";
@@ -137,7 +138,7 @@ export default function DashboardPage() {
                         node.isExpandable = true;
                         return;
                     }
-                    node.isBentoEligible = !!(node.name) && !node.isGrouper;
+                    node.isBentoEligible = isBentoEligible(node);
                     const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
                     node.isExpandable = node.isGrouper || ALWAYS_EXPANDABLE.has(node.type) || (HUB_TYPES.has(node.type) && hasLinks);
                 });
@@ -501,6 +502,7 @@ export default function DashboardPage() {
                 }
             }
         } catch (err: any) {
+            if (err?.name === 'AbortError') return;
             console.error("Orchestration failed", err);
             const errorMsg = err.response?.error || err.message || "I encountered an error communicating with your Knowledge Graph.";
             setMessages(prev => [...prev, {
@@ -555,7 +557,7 @@ export default function DashboardPage() {
             try {
                 console.log("Hydrating node (High-Speed Path via Gateway):", freshNode.id || freshNode.name);
                 const token = await getToken();
-                const response = await fetch('http://localhost:4000/api/get_node_details', {
+                const response = await fetch(`${process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000'}/api/get_node_details`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -588,7 +590,8 @@ export default function DashboardPage() {
                             ...p,
                             ...(hydratedDesc ? { description: hydratedDesc, text: hydratedDesc } : {}),
                             technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
-                            links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks]))
+                            links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
+                            guests: payload.guests || []
                         };
                         // Cache the enriched fields for instant display on revisit.
                         bentoCache.current.set(cacheKey, hydratedFields);
@@ -596,6 +599,10 @@ export default function DashboardPage() {
                             if (!prev || prev.id !== freshNode.id) return prev;
                             return { ...prev, ...hydratedFields };
                         });
+                    } else if (payload?.error) {
+                        console.warn('[BENTO] Hydration rejected for', freshNode.name,
+                                     '| node_id:', freshNode.element_id || freshNode.id,
+                                     '| error:', payload.error);
                     }
                 }
             } catch (e: any) {
@@ -624,71 +631,9 @@ export default function DashboardPage() {
 
         const nodeKey = freshNode.id || freshNode.name;
 
-        // Grouper expansion is client-side — bloom children without an API call.
-        // Company groupers: keep the company node visible and link children TO it.
-        // Other groupers (ThoughtLeadership, Hackathon, etc.): replace grouper with
-        // children and rewire parent links, preserving VIRTUAL_BRIDGE gold lines.
-        // Guard: if children is empty fall through to server expansion.
-        if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
-            const isCompanyGrouper = freshNode.type === 'Company' || freshNode.type === 'Startup';
-
-            if (isCompanyGrouper) {
-                // Keep the company node; add children linked TO the company (not to its parent).
-                setGraphData(prev => {
-                    const expandedCompany = { ...freshNode, isGrouper: false, isExpanded: true, isExpandable: false };
-                    const existingIds = new Set(prev.nodes.map((n: any) => n.id));
-                    const newChildren = freshNode.children.filter((c: any) => !existingIds.has(c.id));
-                    const newNodes = prev.nodes
-                        .filter((n: any) => n.id !== freshNode.id)
-                        .concat(expandedCompany)
-                        .concat(newChildren);
-                    const newLinks = [...prev.links];
-                    freshNode.children.forEach((child: any) => {
-                        if (!newLinks.some((l: any) =>
-                            (l.source === freshNode.id && l.target === child.id) ||
-                            (l.source === child.id && l.target === freshNode.id)
-                        )) {
-                            newLinks.push({ source: freshNode.id, target: child.id, type: 'AT' });
-                        }
-                    });
-                    return { ...prev, nodes: newNodes, links: newLinks };
-                });
-                const contributed = new Set<string>(freshNode.children.map((c: any) => c.id as string));
-                expansionContributions.current.set(nodeKey, contributed);
-            } else {
-                // Non-company groupers: replace grouper with children, rewire parent links.
-                // Preserves VIRTUAL_BRIDGE gold lines via spread.
-                setGraphData(prev => {
-                    const newNodes = prev.nodes.filter((n: any) => n.id !== freshNode.id).concat(freshNode.children);
-                    const grouperLinks = prev.links.filter(l => l.source === freshNode.id || l.target === freshNode.id);
-                    const remainingLinks = prev.links.filter(l => l.source !== freshNode.id && l.target !== freshNode.id);
-                    const expandedLinks = [...remainingLinks];
-                    freshNode.children.forEach((child: any) => {
-                        grouperLinks.forEach((gl: any) => {
-                            const src = gl.source === freshNode.id ? child.id : gl.source;
-                            const tgt = gl.target === freshNode.id ? child.id : gl.target;
-                            if (!expandedLinks.some(el => el.source === src && el.target === tgt)) {
-                                expandedLinks.push({ ...gl, source: src, target: tgt });
-                            }
-                        });
-                    });
-                    return { ...prev, nodes: newNodes, links: expandedLinks };
-                });
-                // Replace grouper with children in contribution tracking.
-                expansionContributions.current.forEach(contributed => {
-                    if (contributed.has(freshNode.id)) {
-                        contributed.delete(freshNode.id);
-                        freshNode.children.forEach((child: any) => { if (child.id) contributed.add(child.id); });
-                    }
-                });
-            }
-
-            expandedNodes.current.add(nodeKey);
-            setFocusedNodeIds(() => computeFocusedIds());
-            return;
-        }
-
-        // TOGGLE COLLAPSE: node already expanded → remove its contributed nodes
+        // TOGGLE COLLAPSE: node already expanded → remove contributed children, reset isExpanded.
+        // Checked FIRST so a second double-click on any expanded node (grouper or server-expanded)
+        // always collapses rather than re-entering the expansion path.
         if (expandedNodes.current.has(nodeKey)) {
             setGraphData(prev => {
                 const contributed = expansionContributions.current.get(nodeKey) || new Set<string>();
@@ -699,14 +644,49 @@ export default function DashboardPage() {
                     (expansionContributions.current.get(otherId) || new Set()).forEach(id => sharedIds.add(id));
                 });
                 const toRemove = new Set([...contributed].filter(id => !sharedIds.has(id)));
-                const newNodes = prev.nodes.filter(n => !toRemove.has(n.id));
-                const newLinks = prev.links.filter(l =>
-                    newNodes.some(n => n.id === l.source) && newNodes.some(n => n.id === l.target)
+                const newNodes = prev.nodes
+                    .filter((n: any) => !toRemove.has(n.id))
+                    .map((n: any) => n.id === nodeKey ? { ...n, isExpanded: false } : n);
+                const newLinks = prev.links.filter((l: any) =>
+                    newNodes.some((n: any) => n.id === l.source) && newNodes.some((n: any) => n.id === l.target)
                 );
                 return { nodes: newNodes, links: newLinks };
             });
             expandedNodes.current.delete(nodeKey);
             expansionContributions.current.delete(nodeKey);
+            setFocusedNodeIds(() => computeFocusedIds());
+            return;
+        }
+
+        // GROUPER EXPANSION: bloom children from the grouper node — node always stays in graph.
+        // All grouper types (Company, ThoughtLeadership, Hackathon, etc.) use the same path:
+        // keep the original node, add children linked TO it, track for collapse.
+        // Guard: if children is empty fall through to server expansion.
+        if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
+            setGraphData(prev => {
+                const expandedGrouper = { ...freshNode, isExpanded: true };
+                const existingIds = new Set(prev.nodes.map((n: any) => n.id));
+                const newChildren = freshNode.children
+                    .filter((c: any) => !existingIds.has(c.id))
+                    .map((c: any) => ({ ...c, isBentoEligible: isBentoEligible(c) }));
+                const newNodes = prev.nodes
+                    .filter((n: any) => n.id !== freshNode.id)
+                    .concat(expandedGrouper)
+                    .concat(newChildren);
+                const newLinks = [...prev.links];
+                freshNode.children.forEach((child: any) => {
+                    if (!newLinks.some((l: any) =>
+                        (l.source === freshNode.id && l.target === child.id) ||
+                        (l.source === child.id && l.target === freshNode.id)
+                    )) {
+                        newLinks.push({ source: freshNode.id, target: child.id, type: 'AT' });
+                    }
+                });
+                return { ...prev, nodes: newNodes, links: newLinks };
+            });
+            const contributed = new Set<string>(freshNode.children.map((c: any) => c.id as string));
+            expansionContributions.current.set(nodeKey, contributed);
+            expandedNodes.current.add(nodeKey);
             setFocusedNodeIds(() => computeFocusedIds());
             return;
         }

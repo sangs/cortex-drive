@@ -45,65 +45,66 @@ export default function Home() {
 
       {/* Main Hero: The Executive Archive */}
       <main className="flex-1 flex flex-col container mx-auto px-8 pt-24 pb-32">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
-          
-          {/* Left Column: Visionary Copy */}
-          <div className="lg:col-span-7 flex flex-col items-start gap-8">
-            <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/5 border border-primary/10 text-primary text-[10px] font-black uppercase tracking-[0.2em]">
-              <Activity className="w-3 h-3 animate-pulse" />
-              <span>RE-HYDRATE YOUR ENTERPRISE LLM WITH LIVE INSTITUTIONAL CONTEXT</span>
-            </div>
-            
-            <h1 className="text-6xl md:text-8xl font-black font-display tracking-tighter leading-[0.9] text-slate-900">
-              Your LLM <span className="text-transparent bg-clip-text bg-gradient-to-br from-primary to-indigo-400">knows the world.</span><br />
-              <span className="opacity-40 italic">It doesn&apos;t know your organization.</span>
-            </h1>
-            
-            <p className="max-w-xl text-lg md:text-xl text-muted-foreground leading-relaxed font-medium">
-              Every enterprise LLM is reasoning against frozen data. It cannot know what your organization decided, who made the call, or why.{" "}
-              <span className="text-primary font-bold">CortexDrive re-hydrates LLM reasoning</span> with live institutional context —{" "}
-              <span className="text-foreground font-bold">verified, grounded, and always current.</span>
-            </p>
+        {/* Hero */}
+        <div className="flex flex-col items-start gap-8">
+          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/5 border border-primary/10 text-primary text-[10px] font-black uppercase tracking-[0.2em]">
+            <Activity className="w-3 h-3 animate-pulse" />
+            <span>RE-HYDRATE YOUR ENTERPRISE LLM WITH LIVE INSTITUTIONAL CONTEXT</span>
+          </div>
 
-            <div className="flex flex-col sm:flex-row gap-5 mt-4">
-              <SignedIn>
-                <Link 
-                  href="/dashboard" 
-                  className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group"
-                >
+          <h1 className="text-6xl md:text-8xl font-black font-display tracking-tighter leading-[0.9] text-slate-900">
+            Your LLM <span className="text-transparent bg-clip-text bg-gradient-to-br from-primary to-indigo-400">knows the world.</span><br />
+            <span className="opacity-40 italic">It doesn&apos;t know your organization.</span>
+          </h1>
+
+          <p className="max-w-2xl text-lg md:text-xl text-muted-foreground leading-relaxed font-medium">
+            Every enterprise LLM is reasoning against frozen data. It cannot know what your organization decided, who made the call, or why.{" "}
+            <span className="text-primary font-bold">CortexDrive re-hydrates LLM reasoning</span> with live institutional context —{" "}
+            <span className="text-foreground font-bold">verified, grounded, and always current.</span>
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-5 mt-4">
+            <SignedIn>
+              <Link
+                href="/dashboard"
+                className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group"
+              >
+                Ask CortexDrive
+                <ArrowRight className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+            </SignedIn>
+            <SignedOut>
+              <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
+                <button className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group">
                   Ask CortexDrive
                   <ArrowRight className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </Link>
-              </SignedIn>
-              <SignedOut>
-                <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
-                  <button className="h-16 px-12 rounded-2xl bg-primary text-white font-black text-lg flex items-center justify-center hover:scale-[1.05] transition-all shadow-2xl shadow-primary/30 active:scale-95 group">
-                    Ask CortexDrive
-                    <ArrowRight className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </button>
-                </SignInButton>
-              </SignedOut>
-            </div>
-          </div>
-
-          {/* Right Column: Video Placeholder */}
-          <div className="lg:col-span-5 relative hidden lg:block">
-            <div className="relative z-10 p-2 bg-slate-900 rounded-[2.5rem] shadow-[0_40px_100px_-20px_rgba(2,6,23,0.4)] border border-slate-800 overflow-hidden group">
-               <div className="aspect-video bg-slate-950 rounded-[2rem] flex flex-col items-center justify-center relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-transparent pointer-events-none" />
-                  <div className="w-20 h-20 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 group-hover:scale-110 transition-transform cursor-not-allowed">
-                     <Play className="text-white fill-white w-8 h-8 ml-1 opacity-20" />
-                  </div>
-                  <div className="mt-6 text-center">
-                    <p className="text-xs font-black text-slate-500 uppercase tracking-[0.2em]">Watch the CortexDrive Demo</p>
-                    <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">3:00 • Coming Soon</p>
-                  </div>
-               </div>
-            </div>
-            {/* Decoy Background Plate */}
-            <div className="absolute -bottom-6 -right-6 w-full h-full bg-primary/5 rounded-[2.5rem] -z-10 rotate-2 border border-primary/10" />
+                </button>
+              </SignInButton>
+            </SignedOut>
           </div>
         </div>
+
+        {/* Full-Width Video Placeholder */}
+        <section className="mt-20 relative">
+          <button
+            onClick={() => { setShowDemo(true); setDemoStep(1); }}
+            className="w-full group relative block"
+          >
+            <div className="relative z-10 p-2 bg-slate-900 rounded-[2.5rem] shadow-[0_40px_100px_-20px_rgba(2,6,23,0.4)] border border-slate-800 overflow-hidden">
+              <div className="aspect-video bg-slate-950 rounded-[2rem] flex flex-col items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-transparent pointer-events-none" />
+                <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 group-hover:scale-110 group-hover:bg-white/20 transition-all duration-300">
+                  <Play className="text-white fill-white w-10 h-10 ml-1" />
+                </div>
+                <div className="mt-6 text-center">
+                  <p className="text-sm font-black text-white uppercase tracking-[0.2em]">Watch CortexDrive in Action</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-2">3 queries · live graph · no narration</p>
+                </div>
+              </div>
+            </div>
+            <div className="absolute -bottom-4 -right-4 w-full h-full bg-primary/5 rounded-[2.5rem] -z-10 rotate-1 border border-primary/10" />
+          </button>
+        </section>
 
         {/* Strategic Proof points */}
         <section className="mt-48 grid grid-cols-1 md:grid-cols-3 gap-12">
@@ -140,12 +141,12 @@ export default function Home() {
         <section className="mt-24 flex items-center justify-center gap-4 py-8 border-t border-slate-100">
           <UserSearch className="w-5 h-5 text-slate-400 shrink-0" />
           <p className="text-sm font-medium text-slate-500">
-            See 26 years of institutional memory navigated in real time.{" "}
+            Explore the career and philosophy of the architect behind CortexDrive.{" "}
             <button
               onClick={() => { setShowDemo(true); setDemoStep(1); }}
               className="text-primary font-bold underline underline-offset-2 hover:opacity-70 transition-opacity"
             >
-              Explore the demo →
+              Meet the Architect →
             </button>
           </p>
         </section>

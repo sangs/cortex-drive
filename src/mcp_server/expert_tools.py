@@ -12,6 +12,7 @@ import json
 import numpy as np
 import re
 from typing import List, Dict, Any, Optional, cast, LiteralString
+from neo4j_serialization import neo4j_default, neo4j_json_dumps
 
 
 class ExpertTools:
@@ -988,17 +989,20 @@ class ExpertTools:
         OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)
         WHERE (""" + self._get_security_clause("note") + """) AND NOT 'Category' IN labels(n)
+        OPTIONAL MATCH (person:Person)-[gRel:GUEST_ON|HOSTS|FEATURE_GUEST|INTERVIEWED_BY]->(n)
 
         WITH n, labels(n) AS labels,
              collect(DISTINCT coalesce(ref.url, ref.link)) AS ref_urls,
              collect(DISTINCT tech.name) AS technologies,
-             collect(DISTINCT note.text) AS narratives
+             collect(DISTINCT note.text) AS narratives,
+             collect(DISTINCT CASE WHEN person IS NOT NULL THEN {name: person.name, role: type(gRel)} END) AS guests
 
-        RETURN properties(n) AS properties, 
-               labels, 
-               ref_urls, 
-               technologies, 
+        RETURN properties(n) AS properties,
+               labels,
+               ref_urls,
+               technologies,
                narratives,
+               guests,
                elementId(n) AS element_id,
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
@@ -1019,7 +1023,7 @@ class ExpertTools:
         if data.get("narratives"):
             data["narratives"] = [self._sanitize_narrative(n) for n in data["narratives"] if n]
             
-        return json.dumps([data], indent=2)
+        return neo4j_json_dumps([data], indent=2)
 
     def expand_node_topology(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
@@ -1693,14 +1697,16 @@ class ExpertTools:
                             "has_federated_bridge": True,
                             "is_bento_eligible": False
                         })
-                        # Virtual link: source → anchor
+                        # Virtual link: source → anchor (once per unique anchor)
                         virtual_links.append({
                             "source": source_eid,
                             "target": anchor_eid,
                             "type": "VIRTUAL_BRIDGE",
                             "discovery_reason": f"Shared: {anchor_name}"
                         })
-                        # Virtual link: anchor → target
+                    # Virtual link: anchor → target (always — every target gets its own link
+                    # even when multiple targets share the same anchor node)
+                    if anchor_eid:
                         virtual_links.append({
                             "source": anchor_eid,
                             "target": target_eid,
