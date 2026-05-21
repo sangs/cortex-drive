@@ -308,12 +308,14 @@ async function buildQ2WriterCall(node, openaiClient) {
 async function fetchNodeNarratives(node, tenantId, userId) {
     const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     try {
+        const bentoOidcToken = await getCloudRunToken(bentoBase);
         const res = await fetch(`${bentoBase}/get_node_details`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId,
-                'x-user-id': userId || ''
+                'x-user-id': userId || '',
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify({ node_name: node.name }),
             signal: AbortSignal.timeout(8000)
@@ -350,6 +352,65 @@ const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
 // Ensure fetch is available globally (for orchestration)
 if (!global.fetch) {
     global.fetch = require('node-fetch');
+}
+
+// --- OpenFGA Authorization Client ---
+const { OpenFgaClient, CredentialsMethod } = require('@openfga/sdk');
+
+let _fgaClient = null;
+function getFgaClient() {
+    if (_fgaClient) return _fgaClient;
+    const storeId = process.env.OPENFGA_STORE_ID;
+    if (!storeId) return null; // OpenFGA not configured — legacy mode
+    _fgaClient = new OpenFgaClient({
+        apiUrl: process.env.OPENFGA_API_URL || 'http://localhost:8082',
+        storeId,
+        authorizationModelId: process.env.OPENFGA_MODEL_ID,
+    });
+    return _fgaClient;
+}
+
+/**
+ * Returns the list of node elementIds the user can see via OpenFGA.
+ * Returns null when OpenFGA is not configured (triggers legacy tenant_id mode in MCP).
+ */
+async function getAllowedNodeIds(userId, agentSessionId = null) {
+    const fga = getFgaClient();
+    if (!fga) return null; // legacy mode — MCP uses tenant_id fallback
+
+    const principal = agentSessionId ? `agent:${agentSessionId}` : `user:${userId}`;
+    try {
+        const resp = await fga.listObjects({
+            user: principal,
+            relation: 'can_view',
+            type: 'node',
+            context: { current_time: new Date().toISOString() },
+        });
+        // Decode OpenFGA object IDs back to Neo4j elementId format: '.' → ':'
+        const ids = (resp.objects || []).map(o => o.replace('node:', '').replace(/\./g, ':'));
+        console.log(`[FGA] ${principal} can_view ${ids.length} nodes`);
+        return ids;
+    } catch (err) {
+        console.warn('[FGA] listObjects failed (non-fatal):', err.message);
+        return null; // fall back to legacy mode on FGA errors
+    }
+}
+
+/**
+ * OIDC token for Cloud Run service-to-service auth.
+ * Returns null in local dev (NODE_ENV !== 'production').
+ */
+async function getCloudRunToken(targetUrl) {
+    if (process.env.NODE_ENV !== 'production') return null;
+    try {
+        const { GoogleAuth } = require('google-auth-library');
+        const client = await new GoogleAuth().getIdTokenClient(targetUrl);
+        const h = await client.getRequestHeaders(targetUrl);
+        return h.Authorization;
+    } catch (e) {
+        console.warn('[OIDC] token fetch failed:', e.message);
+        return null;
+    }
 }
 
 const app = express();
@@ -468,7 +529,8 @@ const authMiddleware = async (req, res, next) => {
 
         if (apiKey === PUBLIC_TRIAL_KEY) {
             req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
-            req.headers['x-user-id'] = 'trial-user';  // Trial users are never owners
+            // Use OWNER_USER_ID so OpenFGA lookups return the owner's allowed nodes
+            req.headers['x-user-id'] = process.env.OWNER_USER_ID || 'trial-user';
             console.log('Public Trial Access granted for tenant:', TRIAL_TENANT_ID);
             return next();
         } else {
@@ -499,22 +561,104 @@ app.get('/api/share', authMiddleware, (req, res) => {
     });
 });
 
+// --- OpenFGA Share Endpoints ---
+// These are no-ops when OpenFGA is not configured (OPENFGA_STORE_ID unset).
+
+app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
+    const { elementId } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    if (!elementId) return res.status(400).json({ error: 'elementId required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { makeNodeTenantWide } = require('./utils/openfga_gateway');
+        await makeNodeTenantWide(fga, elementId, tenantId);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/tenant-wide]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/share/user', authMiddleware, async (req, res) => {
+    const { elementId, targetSub, expiresAt } = req.body;
+    if (!elementId || !targetSub) return res.status(400).json({ error: 'elementId and targetSub required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { shareNodeWithUser } = require('./utils/openfga_gateway');
+        await shareNodeWithUser(fga, elementId, targetSub, expiresAt || null);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/user]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/share/group', authMiddleware, async (req, res) => {
+    const { elementId, groupId, expiresAt } = req.body;
+    if (!elementId || !groupId) return res.status(400).json({ error: 'elementId and groupId required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { shareNodeWithGroup } = require('./utils/openfga_gateway');
+        await shareNodeWithGroup(fga, elementId, groupId, expiresAt || null);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/group]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
+    const { elementId, subject, relation } = req.body;
+    if (!elementId || !subject || !relation) return res.status(400).json({ error: 'elementId, subject, relation required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { revokeNodeAccess } = require('./utils/openfga_gateway');
+        await revokeNodeAccess(fga, elementId, subject, relation);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/revoke]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/access/:elementId', authMiddleware, async (req, res) => {
+    const { elementId } = req.params;
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { listNodeAccess } = require('./utils/openfga_gateway');
+        const access = await listNodeAccess(fga, elementId);
+        res.json(access);
+    } catch (err) {
+        console.error('[/api/share/access]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- LLM Orchestration Section ---
 
-async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
+async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}, allowedIds = null) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
-    
+
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
-    
-    const sseResponse = await fetch(`${mcpServerUrl}/sse`, {
-        headers: { 
-            "x-tenant-id": tenantId, 
-            "x-user-id": userId,
-            "x-schema-readable": schemaReadable ? "true" : "false",
-            "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || ''
-        }
-    });
+
+    // Build shared MCP headers — include OIDC token and allowed_ids for production
+    const oidcToken = await getCloudRunToken(mcpServerUrl);
+    const mcpHeaders = {
+        "x-tenant-id": tenantId,
+        "x-user-id": userId,
+        "x-schema-readable": schemaReadable ? "true" : "false",
+        "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || '',
+        ...(allowedIds !== null ? { "x-allowed-ids": JSON.stringify(allowedIds) } : {}),
+        ...(oidcToken ? { "Authorization": oidcToken } : {}),
+    };
+
+    const sseResponse = await fetch(`${mcpServerUrl}/sse`, { headers: mcpHeaders });
 
     if (!sseResponse.ok) {
         throw new Error(`Failed to connect to SSE: ${sseResponse.statusText}`);
@@ -534,13 +678,7 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
         const postJson = async (url, body) => {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'x-tenant-id': tenantId, 
-                    'x-user-id': userId,
-                    'x-schema-readable': schemaReadable ? "true" : "false",
-                    'x-guest-share-anchor': reqHeaders['x-guest-share-anchor'] || ''
-                },
+                headers: { 'Content-Type': 'application/json', ...mcpHeaders },
                 body: JSON.stringify(body)
             });
             return res;
@@ -964,8 +1102,19 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 
     try {
         console.log(`[SSE] Starting orchestration for: ${query}`);
-        
-        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+
+        // OpenFGA: compute allowed node IDs before any MCP call
+        const allowedIds = await getAllowedNodeIds(userId);
+        const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
+        console.log(`[FGA/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
+
+        let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+        if (accessScope === 'restricted') {
+            baseSystemPrompt = 'NOTE: This query is executing with restricted node access. ' +
+                'If you cannot find data, explicitly state that access is unavailable. ' +
+                'Do not synthesize from prior knowledge.\n\n' + baseSystemPrompt;
+        }
+        const systemPrompt = baseSystemPrompt;
         let messages = [
             { role: "system", content: systemPrompt },
             { role: "user", content: query }
@@ -1003,8 +1152,8 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                     console.log(`[SSE LOOP ${loopCount}] Executing ${toolName}`);
                     
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
-                        
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers, allowedIds);
+
                         // Extract text for LLM
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
@@ -1128,6 +1277,11 @@ app.post('/query', authMiddleware, async (req, res) => {
             }
         }
 
+        // OpenFGA: compute allowed node IDs before any MCP call
+        const allowedIds = await getAllowedNodeIds(userId);
+        const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
+        console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
+
         const domainSignal = classifyDomain(question);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
 
@@ -1138,7 +1292,10 @@ app.post('/query', authMiddleware, async (req, res) => {
             `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node. ` +
             `For 'unknown': use your judgment.`;
 
-        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
+        const restrictionNote = accessScope === 'restricted'
+            ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
+            : '';
+        const systemPrompt = restrictionNote + gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
         let messages = [
             { role: "system", content: systemPrompt },
             ...(history || []),
@@ -1203,7 +1360,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));
 
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers, allowedIds);
 
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
@@ -1273,7 +1430,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                             backbone_only: true,
                             depth: 1,
                             domain: 'professional'
-                        }, userId);
+                        }, userId, false, {}, allowedIds);
                         const backboneText = backboneMcp?.result?.content?.[0]?.text;
                         if (backboneText) {
                             const backboneParsed = JSON.parse(backboneText);
@@ -1424,7 +1581,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                 const responsePayload = {
                     answer: auditedAnswer,
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
-                    domain_signal: domainSignal
+                    domain_signal: domainSignal,
+                    access_scope: accessScope
                 };
                 // Cache the response for repeated identical questions (per-tenant, 24h TTL).
                 if (auditedAnswer) {

@@ -25,6 +25,19 @@ user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", def
 schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
 # Contextvar to hold the authorized node ID for Guest Share Tokens
 guest_share_anchor_var: contextvars.ContextVar[str] = contextvars.ContextVar("guest_share_anchor", default="")
+# Contextvar to hold the OpenFGA-computed allowed node IDs (JSON string; None = legacy mode)
+allowed_ids_var: contextvars.ContextVar[str] = contextvars.ContextVar("allowed_ids", default="")
+
+
+def _parse_allowed_ids(header_value: str) -> list | None:
+    """Parse x-allowed-ids header. Returns None if absent (legacy tenant_id fallback mode)."""
+    if not header_value:
+        return None
+    try:
+        parsed = json.loads(header_value)
+        return parsed if isinstance(parsed, list) else None
+    except (ValueError, TypeError):
+        return None
 
 mcp = FastMCP("cortex-os-mentalmodel")
 
@@ -38,7 +51,8 @@ async def search_episodes_gds_by_question_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
     except Exception as e:
@@ -59,7 +73,8 @@ async def search_episodes_by_question_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_episodes_by_question(question, k=k)
     except Exception as e:
@@ -83,7 +98,8 @@ async def query_relevant_chunks_hybrid_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
     except Exception as e:
@@ -98,7 +114,8 @@ async def get_context() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_tool_context()
     except Exception as e:
@@ -116,7 +133,8 @@ async def get_tool_statistics() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_episode_statistics()
     except Exception as e:
@@ -135,7 +153,8 @@ async def find_episodes_by_people(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_people(question)
     except Exception as e:
@@ -152,7 +171,8 @@ async def get_episodes_with_cast() -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_episodes_with_cast()
     except Exception as e:
@@ -170,7 +190,8 @@ async def find_episodes_by_concept(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_concept(question)
     except Exception as e:
@@ -188,7 +209,8 @@ async def find_episodes_by_topic(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_topic(question)
     except Exception as e:
@@ -206,7 +228,8 @@ async def find_episodes_by_technology(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_technology(question)
     except Exception as e:
@@ -225,7 +248,8 @@ async def find_episodes_by_reference(reference_string: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_reference(reference_string)
     except Exception as e:
@@ -243,7 +267,8 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_mentions(search_terms)
     except Exception as e:
@@ -262,7 +287,8 @@ async def get_people_by_episode_tool(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_people_by_episode(episode_name)
     except Exception as e:
@@ -284,7 +310,8 @@ async def run_cypher_query(
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
     finally:
@@ -301,7 +328,8 @@ async def get_node_details(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_node_details(node_id=node_id, node_name=node_name)
     except Exception as e:
@@ -324,7 +352,8 @@ async def search_enterprise_graph(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or "trial-user"
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent)
     except Exception as e:
@@ -342,7 +371,8 @@ async def explore_graph_schema() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     schema_readable = schema_readable_var.get()
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.explore_graph_schema(schema_readable=schema_readable)
     except Exception as e:
@@ -365,7 +395,8 @@ async def hybrid_discovery_tool(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.hybrid_discovery(question, k=k)
     except Exception as e:
@@ -389,7 +420,8 @@ async def get_cluster_context(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_cluster_context(node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
     except Exception as e:
@@ -419,7 +451,8 @@ async def connect_knowledge_on_demand(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor)
+    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.connect_knowledge_on_demand(
             source_node_id=source_node_id,
@@ -477,10 +510,14 @@ class TenantASGIMiddleware:
             query_params.get("share_anchor")
         )
 
+        # Extract OpenFGA allowed node IDs (JSON list; absent = legacy tenant_id mode)
+        allowed_ids_header = headers.get("x-allowed-ids") or ""
+
         tenant_token = tenant_id_var.set(tenant_id) if tenant_id else None
         user_token = user_id_var.set(user_id) if user_id else None
         schema_token = schema_readable_var.set(schema_readable)
         guest_anchor_token = guest_share_anchor_var.set(guest_share_anchor) if guest_share_anchor else None
+        allowed_ids_token = allowed_ids_var.set(allowed_ids_header) if allowed_ids_header else None
 
         try:
             await self.app(scope, receive, send)
@@ -491,6 +528,8 @@ class TenantASGIMiddleware:
                 user_id_var.reset(user_token)
             if guest_anchor_token:
                 guest_share_anchor_var.reset(guest_anchor_token)
+            if allowed_ids_token:
+                allowed_ids_var.reset(allowed_ids_token)
             schema_readable_var.reset(schema_token)
 
 app.add_middleware(TenantASGIMiddleware)

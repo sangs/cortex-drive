@@ -61,7 +61,7 @@ CORTEX_DRIVE_RELATIONSHIPS = [
 # Relationships permitted in neighbor-traversal Cypher queries (used in _fragment_neighbor_aggregation
 # and expand_node_topology). Add new relationship types here — never hardcode them in expert_tools.py.
 TRAVERSAL_RELATIONSHIPS = [
-    # Career domain
+    # Career domain — HAS_ACCESS removed: authorization is now OpenFGA-only (Invariant 9)
     'HELD_ROLE', 'AT', 'CONTRIBUTED_TO', 'PARTICIPATED_IN',
     'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL', 'CONTAINS',
     'HAS_REFERENCE', 'BUILT_DURING', 'FEATURE_GUEST',

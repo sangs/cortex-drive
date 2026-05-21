@@ -96,6 +96,7 @@ export default function DashboardPage() {
     const bentoCache = useRef<Map<string, any>>(new Map());
     const [isBentoHydrating, setIsBentoHydrating] = useState(false);
     const [legendOpen, setLegendOpen] = useState(false);
+    const [accessScope, setAccessScope] = useState<string | null>(null);
 
     useEffect(() => {
         setHasMounted(true);
@@ -455,11 +456,13 @@ export default function DashboardPage() {
             setForceRefreshNext(false);
 
             const result = await query(userMsg, history, forceRefresh);
-            
+
+            if (result.access_scope) setAccessScope(result.access_scope);
+
             // 1. Add assistant text answer
-            setMessages(prev => [...prev, { 
-                role: "assistant", 
-                content: result.answer 
+            setMessages(prev => [...prev, {
+                role: "assistant",
+                content: result.answer
             }]);
 
             if (result.raw_data) {
@@ -1033,6 +1036,12 @@ export default function DashboardPage() {
                     </header>
 
                     <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-32">
+                        {accessScope === 'restricted' && (
+                            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
+                                <span>⚠</span>
+                                <span>This answer is based on public nodes only — your session may have limited access.</span>
+                            </div>
+                        )}
                         {messages.map((msg, i) => (
                             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`max-w-[95%] ${msg.role === 'user' ? 'bg-secondary p-5 rounded-2xl text-foreground font-medium shadow-sm ring-1 ring-border' : 'text-foreground'}`}>

@@ -248,7 +248,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: '100%', opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950/95 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
+                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
             >
                 {header}
 
