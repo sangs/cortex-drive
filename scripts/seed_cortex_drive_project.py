@@ -27,15 +27,21 @@ NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 TENANT_ID = os.getenv("TENANT_ID")
+OWNER_USER_ID = os.getenv("OWNER_USER_ID")
 
 if not all([NEO4J_URI, NEO4J_PASSWORD, TENANT_ID]):
     print("ERROR: NEO4J_URI, NEO4J_PASSWORD, and TENANT_ID must be set in .env")
     sys.exit(1)
+if not OWNER_USER_ID or not OWNER_USER_ID.startswith("user_"):
+    print("ERROR: OWNER_USER_ID must be set in .env and start with 'user_'")
+    sys.exit(1)
 
 CYPHER_QUERIES = [
-    # 1. Core Project node
+    # 1. Core Project node — stamp owner_id so the security clause in _get_security_clause()
+    # passes for both the :Startup:Project node from seed_resume_graph.py and any bare
+    # :Project node this script may have created out-of-order (AP-13 guard).
     ("""
-    MERGE (p:Project {name: "Cortex-Drive", tenant_id: $tenant_id})
+    MERGE (p:Startup {name: "Cortex-Drive"})
     ON CREATE SET
         p.type = "Project",
         p.description = "AI-powered enterprise knowledge graph with zero-trust ReBAC, MCP orchestration, and virtual cross-domain bridge discovery.",
@@ -45,8 +51,9 @@ CYPHER_QUERIES = [
     ON MATCH SET
         p.type = "Project",
         p.status = "Active"
+    SET p:Project, p.owner_id = $owner_id
     RETURN p.name AS name
-    """, "Cortex-Drive Project node"),
+    """, "Cortex-Drive Project node (AP-13-safe: merges with canonical :Startup:Project)"),
 
     # 2. Link to Person (identity anchor — enables direct graph traversal from Sangeetha)
     ("""
@@ -66,7 +73,8 @@ CYPHER_QUERIES = [
     UNWIND [
         "Neo4j", "Graph Databases", "LLM", "MCP", "Vector Search",
         "AI Agent", "FastAPI", "TypeScript", "Zero Trust Architecture",
-        "Knowledge Graph", "Retrieval-Augmented Generation"
+        "Knowledge Graph", "Retrieval-Augmented Generation",
+        "Governance", "Explainability", "AI Architecture"
     ] AS tech
     MERGE (t:Technology {name: tech})
     ON CREATE SET t.type = "Technology", t.tenant_id = 'SYSTEM', t.owner_id = 'user_SYSTEM_ADMIN'
@@ -131,7 +139,7 @@ def run():
         for cypher, label in CYPHER_QUERIES:
             print(f"  Running: {label}...")
             try:
-                result = session.run(cypher, tenant_id=TENANT_ID)
+                result = session.run(cypher, tenant_id=TENANT_ID, owner_id=OWNER_USER_ID)
                 records = result.data()
                 if records:
                     for r in records:

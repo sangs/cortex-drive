@@ -892,7 +892,7 @@ const mcpToolsDefinitions = [
         type: "function",
         function: {
             name: "connect_knowledge_on_demand",
-            description: "Discover virtual cross-domain knowledge bridges for a specific node WITHOUT writing to Neo4j. Finds nodes in another domain that share Technology, Topic, or Concept anchors. Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI'). Returns session-only ghost links rendered as GOLD DASHED connections in the graph. Use for cross-domain influence questions: 'How did this thought leadership influence Cortex-Drive?', 'What podcast episodes relate to this project?', 'How did Sangeetha's work at X influence Y?'.",
+            description: "Discover virtual cross-domain knowledge bridges for a specific ThoughtLeadership node WITHOUT writing to Neo4j. Finds nodes in another domain that share Technology, Topic, or Concept anchors. Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI'). Returns session-only ghost links rendered as GOLD DASHED connections in the graph. source_node_name MUST be a ThoughtLeadership node name obtained from search_enterprise_graph — never a Company, Role, Person, or paraphrased name.",
             parameters: {
                 type: "object",
                 properties: {
@@ -1200,7 +1200,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     const toolName = toolCall.function.name;
                     const toolArgs = JSON.parse(toolCall.function.arguments);
 
-                    console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`);
+                    console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));
 
                     try {
                         const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
@@ -1394,22 +1394,30 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // Audit response for hallucinated URLs before sending.
                 const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
 
-                // cross_domain regression fix (1af57ec): accumulatedGraph now includes ALL tool nodes,
-                // but for cross_domain only bridge participants should reach the frontend.
-                // Prune to nodes/links that appear in virtual_links before sending.
-                if (domainSignal === 'cross_domain' && accumulatedGraph.virtual_links.length > 0) {
-                    const bridgeIds = new Set();
-                    accumulatedGraph.virtual_links.forEach(l => {
-                        if (l.source) bridgeIds.add(l.source);
-                        if (l.target) bridgeIds.add(l.target);
-                    });
-                    accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => {
-                        const id = n.element_id || n.id || n.name;
-                        return bridgeIds.has(id);
-                    });
-                    accumulatedGraph.links = accumulatedGraph.links.filter(l =>
-                        bridgeIds.has(l.source) && bridgeIds.has(l.target)
-                    );
+                // cross_domain: only bridge participants should reach the frontend.
+                // When a bridge IS found, prune to virtual_link endpoints only.
+                // When no bridge is found, clear entirely — the career/podcast backbone from
+                // the intermediate search_enterprise_graph call must not pollute the canvas.
+                if (domainSignal === 'cross_domain') {
+                    if (accumulatedGraph.virtual_links.length > 0) {
+                        const bridgeIds = new Set();
+                        accumulatedGraph.virtual_links.forEach(l => {
+                            if (l.source) bridgeIds.add(l.source);
+                            if (l.target) bridgeIds.add(l.target);
+                        });
+                        accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => {
+                            const id = n.element_id || n.id || n.name;
+                            return bridgeIds.has(id);
+                        });
+                        accumulatedGraph.links = accumulatedGraph.links.filter(l =>
+                            bridgeIds.has(l.source) && bridgeIds.has(l.target)
+                        );
+                    } else {
+                        // No virtual bridge found — clear accumulated nodes so the canvas
+                        // stays empty and matches the "no bridge" chat response.
+                        accumulatedGraph.nodes = [];
+                        accumulatedGraph.links = [];
+                    }
                 }
 
                 const hasGraph = accumulatedGraph.nodes.length > 0;
@@ -1448,6 +1456,14 @@ const bentoProxy = createProxyMiddleware({
     onProxyReq: (proxyReq, req, res) => {
         if (req.headers['x-tenant-id']) proxyReq.setHeader('x-tenant-id', req.headers['x-tenant-id']);
         if (req.headers['x-user-id']) proxyReq.setHeader('x-user-id', req.headers['x-user-id']);
+        // express.json() consumes the raw body stream before the proxy runs.
+        // Re-write req.body onto the proxy request so the Bento server receives it.
+        if (req.body && Object.keys(req.body).length > 0) {
+            const bodyData = JSON.stringify(req.body);
+            proxyReq.setHeader('Content-Type', 'application/json');
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            proxyReq.write(bodyData);
+        }
     }
 });
 
@@ -1487,8 +1503,34 @@ app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluste
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 
-// Smart Routing
-app.use('/api/get_node_details', authMiddleware, bentoProxy);
+// Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because
+// app.use() strips the full mount path before the middleware sees req.url, so
+// pathRewrite: {'^/api': ''} would match '/' → forward to bento root → 404.
+app.post('/api/get_node_details', authMiddleware, async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'] || '';
+    try {
+        const bentoResponse = await fetch(`${bentoServerUrl}/get_node_details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId || '',
+                'x-user-id': userId
+            },
+            body: JSON.stringify(req.body),
+            signal: AbortSignal.timeout(8000)
+        });
+        if (!bentoResponse.ok) {
+            const text = await bentoResponse.text();
+            return res.status(bentoResponse.status).send(text);
+        }
+        const data = await bentoResponse.json();
+        res.json(data);
+    } catch (err) {
+        console.error('[/api/get_node_details]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 app.use('/api', authMiddleware, mcpProxy);
 
 app.listen(port, () => {

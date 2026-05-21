@@ -131,6 +131,49 @@ RESUME_CYPHER_QUERIES = [
     MERGE (pj)-[:HAS_REFERENCE]->(l)
     """,
 
+    # 3b. CORTEX-DRIVE: Technology/Concept bridge anchors + IS_A taxonomy
+    # SYSTEM-tier semantics: MERGE on name only (no tenant_id) so these nodes are globally
+    # visible landmarks. Tier 1 bulk SET stamps SYSTEM/user_SYSTEM_ADMIN afterward.
+    # Absorbed from seed_cortex_drive_project.py — that script is no longer needed for this.
+    """
+    MATCH (pj:Startup {name: "Cortex-Drive"})
+
+    WITH pj
+    UNWIND [
+        "Neo4j", "Graph Databases", "LLM", "MCP", "Vector Search",
+        "AI Agent", "FastAPI", "TypeScript", "Zero Trust Architecture",
+        "Knowledge Graph", "Retrieval-Augmented Generation",
+        "Governance", "Explainability", "AI Architecture"
+    ] AS tech
+    MERGE (t:Technology {name: tech})
+    ON CREATE SET t.type = "Technology", t.tenant_id = 'SYSTEM', t.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (pj)-[:USES_TOOL]->(t)
+
+    WITH DISTINCT pj
+    UNWIND [
+        "AI Architecture", "Graph UX", "Metadata Orchestration",
+        "Enterprise Knowledge Management", "Federated Identity",
+        "Progressive Disclosure", "Semantic Search"
+    ] AS concept
+    MERGE (c:Concept {name: concept})
+    ON CREATE SET c.type = "Concept", c.tenant_id = 'SYSTEM', c.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (pj)-[:DISCUSSES]->(c)
+
+    WITH DISTINCT pj
+    UNWIND [
+        {child: "AI Agent", parent: "AI Architecture"},
+        {child: "Graph UX", parent: "Graph Databases"},
+        {child: "Retrieval-Augmented Generation", parent: "AI Architecture"},
+        {child: "Semantic Search", parent: "Vector Search"},
+        {child: "Federated Identity", parent: "Zero Trust Architecture"}
+    ] AS rel
+    MERGE (child:Concept {name: rel.child})
+    ON CREATE SET child.type = "Concept", child.tenant_id = 'SYSTEM', child.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (parent:Concept {name: rel.parent})
+    ON CREATE SET parent.type = "Concept", parent.tenant_id = 'SYSTEM', parent.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (child)-[:IS_A]->(parent)
+    """,
+
     # 4. HACKATHONS (Canonical List of 3)
     """
     MATCH (cat:Category {name: "Hackathons"})

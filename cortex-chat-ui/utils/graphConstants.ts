@@ -68,6 +68,19 @@ export const COMPANY_NODE_TYPES = new Set(['Company', 'Startup']);
  */
 export const WORK_ITEM_NODE_TYPES = new Set(['Project', 'Role']);
 
+/**
+ * Returns true when a node should open the bento detail panel on single-click.
+ * Mirrors the isBentoEligible branch of applyAffordanceFlags in parseDataToGraph.
+ * Used wherever nodes enter graphData without going through parseDataToGraph
+ * (e.g. grouper children that come directly from raw server JSON).
+ */
+export function isBentoEligible(node: { name?: string; type?: string; isGrouper?: boolean }): boolean {
+    if (!node.name || node.isGrouper) return false;
+    if (TAG_LEAF_TYPES.has(node.type ?? '')) return false;
+    if (node.type === 'Topic' || node.type === 'Category') return false;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Grouper configuration
 // ---------------------------------------------------------------------------
@@ -260,13 +273,17 @@ export function buildCompanyGroupers(
         }
     });
 
-    return companyNodes.map(c => ({
-        ...c,
-        isGrouper: true,
-        isExpandable: true,
-        isBentoEligible: true,
-        children: companyChildren.get(c.id) ?? [],
-    }));
+    return companyNodes.map(c => {
+        const children = companyChildren.get(c.id) ?? [];
+        const isGrouper = children.length > 0;
+        return {
+            ...c,
+            isGrouper,
+            isExpandable: true,
+            isBentoEligible: !isGrouper,
+            children,
+        };
+    });
 }
 
 /**

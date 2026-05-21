@@ -121,6 +121,13 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 people.push({ name: peer.name, role });
             }
         });
+        // Fall back to hydrated guests from get_node_details when episode hasn't been expanded yet.
+        if (people.length === 0 && Array.isArray(node.guests)) {
+            return node.guests.filter((g: any) => g?.name).map((g: any) => ({
+                name: g.name,
+                role: (g.role === 'HOSTS') ? 'Host' : 'Guest'
+            }));
+        }
         return people;
     }, [node, allNodes, allLinks]);
 
@@ -284,7 +291,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                     </div>
                                     {podcastPeople.length > 0 ? (
                                         <div className="flex flex-col gap-2">
-                                            {podcastPeople.map((p, i) => (
+                                            {podcastPeople.map((p: { name: string; role: string }, i: number) => (
                                                 <div key={i} className="flex items-center justify-between">
                                                     <span className="text-xs text-slate-100">{p.name}</span>
                                                     <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wider">{p.role}</span>
@@ -293,8 +300,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                         </div>
                                     ) : (
                                         <div className="flex flex-col gap-1">
-                                            <span className="text-slate-300 text-xs font-medium">Not yet loaded</span>
-                                            <span className="text-slate-400 text-[10px]">Double-click the episode node in the graph to expand guests</span>
+                                            <span className="text-slate-300 text-xs font-medium">No guests found</span>
                                         </div>
                                     )}
                                 </div>
