@@ -3,7 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
-import { BrainCircuit, Sparkles, Network, Database, ShieldCheck, ChevronRight, Activity, ArrowRight, Play, X, UserSearch } from "lucide-react";
+import { BrainCircuit, Sparkles, Network, Database, ShieldCheck, ChevronRight, Activity, ArrowRight, X, UserSearch } from "lucide-react";
+import { VideoPlayer } from "@/components/VideoPlayer";
+
+const VIDEOS = [
+  { src: "/videos/CortexDrive-Introduction.mp4", title: "Introduction", label: "What is CortexDrive?" },
+  { src: "/videos/CortexDrive-KnowledgeThatReasons.mp4", title: "Knowledge That Reasons", label: "Knowledge That Reasons" },
+  { src: "/videos/CortexDrive-InstitutionalMemoryMadeNavigable.mp4", title: "Institutional Memory Made Navigable", label: "Institutional Memory Made Navigable" },
+];
 
 export default function Home() {
   const [showDemo, setShowDemo] = useState(false);
@@ -84,26 +91,12 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Full-Width Video Placeholder */}
+        {/* Full-Width Video Player */}
         <section className="mt-20 relative">
-          <button
-            onClick={() => { setShowDemo(true); setDemoStep(1); }}
-            className="w-full group relative block"
-          >
-            <div className="relative z-10 p-2 bg-slate-900 rounded-[2.5rem] shadow-[0_40px_100px_-20px_rgba(2,6,23,0.4)] border border-slate-800 overflow-hidden">
-              <div className="aspect-video bg-slate-950 rounded-[2rem] flex flex-col items-center justify-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-transparent pointer-events-none" />
-                <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 group-hover:scale-110 group-hover:bg-white/20 transition-all duration-300">
-                  <Play className="text-white fill-white w-10 h-10 ml-1" />
-                </div>
-                <div className="mt-6 text-center">
-                  <p className="text-sm font-black text-white uppercase tracking-[0.2em]">Watch CortexDrive in Action</p>
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-2">3 queries · live graph · no narration</p>
-                </div>
-              </div>
-            </div>
-            <div className="absolute -bottom-4 -right-4 w-full h-full bg-primary/5 rounded-[2.5rem] -z-10 rotate-1 border border-primary/10" />
-          </button>
+          <div className="relative z-10 p-2 bg-slate-900 rounded-[2.5rem] shadow-[0_40px_100px_-20px_rgba(2,6,23,0.4)] border border-slate-800 overflow-hidden">
+            <VideoPlayer videos={VIDEOS} />
+          </div>
+          <div className="absolute -bottom-4 -right-4 w-full h-full bg-primary/5 rounded-[2.5rem] -z-10 rotate-1 border border-primary/10" />
         </section>
 
         {/* Strategic Proof points */}
