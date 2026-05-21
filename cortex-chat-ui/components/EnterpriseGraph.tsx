@@ -364,19 +364,19 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
         graphZoomRef.current = Math.min(graphZoomRef.current * 1.3, 6);
-        e.setOption({ series: [{ zoom: graphZoomRef.current }] });
+        e.setOption({ series: [{ type: 'graph', zoom: graphZoomRef.current }] });
     };
     const handleZoomOut = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
         graphZoomRef.current = Math.max(graphZoomRef.current / 1.3, 0.15);
-        e.setOption({ series: [{ zoom: graphZoomRef.current }] });
+        e.setOption({ series: [{ type: 'graph', zoom: graphZoomRef.current }] });
     };
     const handleZoomReset = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
         graphZoomRef.current = 1;
-        e.setOption({ series: [{ zoom: 1, center: ['50%', '50%'] }] });
+        e.setOption({ series: [{ type: 'graph', zoom: 1, center: ['50%', '50%'] }] });
     };
 
     // Auto-fit: after each bloom (node count changes), wait for force to settle then re-center
@@ -392,7 +392,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 // Scale zoom inversely with node count so all nodes remain visible after bloom
                 const targetZoom = Math.max(0.35, 1 / Math.sqrt(Math.max(currentCount, 1) / 3));
                 graphZoomRef.current = targetZoom;
-                e.setOption({ series: [{ zoom: targetZoom }] }, false);
+                e.setOption({ series: [{ type: 'graph', zoom: targetZoom }] }, false);
             }, 900);
             return () => clearTimeout(timer);
         }
