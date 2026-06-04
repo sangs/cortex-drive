@@ -498,13 +498,15 @@ const authMiddleware = async (req, res, next) => {
             // Standardizing for @clerk/backend standalone verification
             const decoded = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
             
-            // Prioritize: 1. Org from token, 2. Default Org from env, 3. User sub from token
-            const tenantId = decoded.org_id || process.env.TENANT_ID || decoded.sub;
-            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (Primary: ${!!decoded.org_id}, Fallback: ${!decoded.org_id})`);
+            // TENANT_ID env var wins — handles dev/prod Clerk split where dev JWT carries
+            // a different org_id than the Neo4j tenant (migrated to prod org_id in Phase 1).
+            const tenantId = process.env.TENANT_ID || decoded.org_id || decoded.sub;
+            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (EnvOverride: ${!!process.env.TENANT_ID}, JwtOrg: ${decoded.org_id || 'none'})`);
             
             req.headers['x-tenant-id'] = tenantId;
-            // Forward the individual user ID so the MCP server can identify the owner
-            req.headers['x-user-id'] = decoded.sub || '';
+            // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but OpenFGA
+            // tuples are keyed on the production sub. Same override pattern as TENANT_ID.
+            req.headers['x-user-id'] = process.env.OWNER_USER_ID || decoded.sub || '';
             
             // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
             const isAdmin = decoded.org_role === 'org:admin' || decoded.org_role === 'admin';

@@ -231,11 +231,15 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     );
 
+    const primaryActionLabel = isPodcastDomain
+        ? (displayLinks.length === 1 ? 'Open Episode' : 'View Resources')
+        : (displayLinks.length === 1 ? 'Open Resource' : 'View Resources');
+
     const footer = displayLinks.length > 0 && (
         <footer className="mt-8 pt-6 border-t border-white/5">
             <a href={displayLinks[0].url} target="_blank" rel="noopener noreferrer"
                 className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-all font-bold group shadow-lg shadow-indigo-600/20 text-white">
-                {displayLinks.length === 1 ? 'Open Episode' : 'View Primary Resource'}
+                {primaryActionLabel}
                 <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
             </a>
         </footer>

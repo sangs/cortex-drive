@@ -1629,6 +1629,9 @@ class ExpertTools:
             result = self._exec_query(
                 query,
                 **self._security_params(),
+                # sec_source_read always uses $tenant_id regardless of OpenFGA mode.
+                # In OpenFGA mode _security_params() omits it, so supply it explicitly.
+                **({"tenant_id": self.tenant_id} if self.allowed_ids is not None else {}),
                 source_node_id=source_node_id or "",
                 source_node_name=source_node_name or "",
                 target_domain_labels=target_domain_labels,
