@@ -21,7 +21,7 @@
 set -euo pipefail
 
 # --- CONFIG (non-sensitive) --------------------------------------------------
-PROJECT_ID="cortex-drive"
+PROJECT_ID="cortex-drive-496915"
 REGION="us-central1"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/cortex-images"
 TENANT_ID="org_3E0FtIXiFM6DHwXg05sEVvq2mi0"
