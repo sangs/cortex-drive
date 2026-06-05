@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from openfga_sdk import OpenFgaClient, ClientConfiguration
+from openfga_sdk.credentials import CredentialConfiguration, Credentials
 from openfga_sdk.client.models import (
     ClientTuple,
     ClientWriteRequest,
@@ -36,11 +37,25 @@ def _decode_eid(encoded: str) -> str:
 
 
 def _get_client() -> OpenFgaClient:
-    """Return a configured OpenFGA client using env vars."""
+    """Return a configured OpenFGA client using env vars.
+
+    When OPENFGA_API_TOKEN is set (e.g. Cloud Run OIDC token injected by bootstrap
+    entrypoint), it is passed as a bearer token so the SDK can reach a
+    --no-allow-unauthenticated Cloud Run service.
+    """
+    api_token = os.environ.get("OPENFGA_API_TOKEN", "")
+    credentials = (
+        Credentials(
+            method="api_token",
+            configuration=CredentialConfiguration(api_token=api_token),
+        )
+        if api_token else None
+    )
     config = ClientConfiguration(
         api_url=os.environ.get("OPENFGA_API_URL", "http://localhost:8082"),
         store_id=os.environ.get("OPENFGA_STORE_ID", ""),
         authorization_model_id=os.environ.get("OPENFGA_MODEL_ID", ""),
+        credentials=credentials,
     )
     return OpenFgaClient(config)
 
