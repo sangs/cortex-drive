@@ -454,7 +454,10 @@ const verifyShareToken = (token) => {
     }
 };
 
-app.use(cors());
+// ALLOWED_ORIGIN: restrict to app subdomain in production, wildcard in local dev.
+// Set ALLOWED_ORIGIN=https://app.cortex-drive.com in Cloud Run env after custom domain is live.
+const _corsOrigin = process.env.ALLOWED_ORIGIN || '*';
+app.use(cors({ origin: _corsOrigin }));
 
 /**
  * Interceptor for Stateless Guest Share Tokens

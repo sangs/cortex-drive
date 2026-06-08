@@ -336,7 +336,7 @@ gcloud run deploy cortex-gateway \
     --timeout 600 \
     --min-instances 0 \
     --max-instances 5 \
-    --set-env-vars "MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production" \
+    --set-env-vars "MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=https://app.cortex-drive.com" \
     --set-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest,CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\
 TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
 GATEWAY_SHARE_SECRET=GATEWAY_SHARE_SECRET:latest,\
@@ -376,7 +376,7 @@ gcloud run deploy cortex-ui \
     --memory 1Gi \
     --min-instances 0 \
     --max-instances 3 \
-    --set-env-vars "NEXT_PUBLIC_GATEWAY_URL=${GATEWAY_URL},NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PK}" \
+    --set-env-vars "NEXT_PUBLIC_GATEWAY_URL=https://api.cortex-drive.com,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PK}" \
     --set-secrets "CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest"
 
 UI_URL=$(gcloud run services describe cortex-ui \
@@ -384,11 +384,12 @@ UI_URL=$(gcloud run services describe cortex-ui \
 echo "UI URL: ${UI_URL}"
 
 # --- 8.7 Clerk manual gate ---------------------------------------------------
-section "Phase 8 — GATE: Add Cloud Run URLs to Clerk Dashboard"
-echo "  1. Go to https://dashboard.clerk.com → your production application"
-echo "  2. Domains → Add: ${UI_URL}"
-echo "  3. Redirect URLs → Add: ${UI_URL}"
-echo "  4. Also add: ${UI_URL}/*"
+section "Phase 8 — GATE: Custom domains + Clerk Dashboard"
+echo "  1. Cloud Run → cortex-ui → Custom domains → Add: app.cortex-drive.com → copy CNAME"
+echo "  2. Cloud Run → cortex-gateway → Custom domains → Add: api.cortex-drive.com → copy CNAME"
+echo "  3. DNS provider: add both CNAME records → SSL auto-provisions in ~5 min"
+echo "  4. Clerk Dashboard → Home URL → https://app.cortex-drive.com → Save"
+echo "  (Raw Cloud Run URLs for reference: UI=${UI_URL}  GW=${GATEWAY_URL})"
 pause "Clerk domains and redirect URLs updated"
 
 # =============================================================================
