@@ -482,6 +482,15 @@ class TenantASGIMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
+        # Rewrite Host header to localhost before the MCP SSE layer validates it.
+        # MCP's SseServerTransport DNS rebinding protection rejects *.run.app hostnames
+        # (returns HTTP 421). Cloud Run's OIDC auth is the actual security boundary;
+        # host header validation provides no additional protection in this deployment.
+        scope = {**scope, "headers": [
+            (b"host", b"localhost") if k.lower() == b"host" else (k, v)
+            for k, v in scope.get("headers", [])
+        ]}
+
         # Use Starlette helpers to parse headers and query params from scope
         headers = Headers(scope=scope)
         query_params = QueryParams(scope.get("query_string", b"").decode())

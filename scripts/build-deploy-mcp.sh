@@ -26,7 +26,7 @@ gcloud run deploy cortex-mcp \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --no-allow-unauthenticated \
-    --ingress internal \
+    --ingress all \
     --port 8080 \
     --memory 1Gi \
     --timeout 600 \
