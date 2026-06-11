@@ -1220,6 +1220,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                         });
 
                     } catch (err) {
+                        console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -1415,6 +1416,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                         });
 
                     } catch (err) {
+                        console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
