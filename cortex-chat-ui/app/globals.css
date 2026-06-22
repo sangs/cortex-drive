@@ -17,11 +17,13 @@
   --font-display: var(--font-outfit);
 }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-outfit), sans-serif;
-  letter-spacing: -0.03em;
-  font-weight: 900; /* Black weight for authority */
-  color: var(--foreground);
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-outfit), sans-serif;
+    letter-spacing: -0.03em;
+    font-weight: 900;
+    color: var(--foreground);
+  }
 }
 
 body {
