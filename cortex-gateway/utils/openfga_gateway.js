@@ -2,28 +2,27 @@
  * OpenFGA gateway utilities — thin wrappers around the FGA client for share operations.
  * Used by the /api/share/* endpoints in index.js.
  * All functions accept a pre-initialized OpenFgaClient instance.
+ *
+ * Node identity: all functions accept node_id (n.node_id property — a stable UUID4 set
+ * once at node creation). UUIDs contain only hyphens which are valid in OpenFGA object IDs,
+ * so no encoding is needed. Object IDs are simply `node:<uuid>`.
  */
 
-// Neo4j elementIds ('4:uuid:num') contain colons which OpenFGA disallows in object IDs.
-// Encode ':' → '.' for storage; getAllowedNodeIds decodes '.' → ':' on read.
-const encodeEid = (elementId) => elementId.replace(/:/g, '.');
-const decodeEid = (encoded) => encoded.replace(/\./g, ':');
-
-async function makeNodeTenantWide(fga, elementId, tenantOrgId) {
+async function makeNodeTenantWide(fga, node_id, tenantOrgId) {
     await fga.write({
         writes: [{
             user: `org:${tenantOrgId}#member`,
             relation: 'tenant_viewer',
-            object: `node:${encodeEid(elementId)}`,
+            object: `node:${node_id}`,
         }],
     });
 }
 
-async function shareNodeWithUser(fga, elementId, targetSub, expiresAt = null) {
+async function shareNodeWithUser(fga, node_id, targetSub, expiresAt = null) {
     const tuple = {
         user: `user:${targetSub}`,
         relation: 'shared_viewer',
-        object: `node:${encodeEid(elementId)}`,
+        object: `node:${node_id}`,
     };
     if (expiresAt) {
         tuple.condition = { name: 'not_expired', context: { expires_at: expiresAt } };
@@ -31,11 +30,11 @@ async function shareNodeWithUser(fga, elementId, targetSub, expiresAt = null) {
     await fga.write({ writes: [tuple] });
 }
 
-async function shareNodeWithGroup(fga, elementId, groupId, expiresAt = null) {
+async function shareNodeWithGroup(fga, node_id, groupId, expiresAt = null) {
     const tuple = {
         user: `group:${groupId}#member`,
         relation: 'shared_viewer',
-        object: `node:${encodeEid(elementId)}`,
+        object: `node:${node_id}`,
     };
     if (expiresAt) {
         tuple.condition = { name: 'not_expired', context: { expires_at: expiresAt } };
@@ -43,18 +42,18 @@ async function shareNodeWithGroup(fga, elementId, groupId, expiresAt = null) {
     await fga.write({ writes: [tuple] });
 }
 
-async function revokeNodeAccess(fga, elementId, subject, relation) {
+async function revokeNodeAccess(fga, node_id, subject, relation) {
     await fga.write({
         deletes: [{
             user: subject,
             relation,
-            object: `node:${encodeEid(elementId)}`,
+            object: `node:${node_id}`,
         }],
     });
 }
 
-async function listNodeAccess(fga, elementId) {
-    const resp = await fga.readTuples({ object: `node:${encodeEid(elementId)}` });
+async function listNodeAccess(fga, node_id) {
+    const resp = await fga.readTuples({ object: `node:${node_id}` });
     const tuples = (resp.tuples || []).map(t => ({
         user: t.key.user,
         relation: t.key.relation,
@@ -73,6 +72,4 @@ module.exports = {
     shareNodeWithGroup,
     revokeNodeAccess,
     listNodeAccess,
-    encodeEid,
-    decodeEid,
 };

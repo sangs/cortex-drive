@@ -45,9 +45,6 @@ gcloud run deploy cortex-gateway \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --allow-unauthenticated \
-    --network default \
-    --subnet default \
-    --vpc-egress all-traffic \
     --port 8080 \
     --memory 512Mi \
     --timeout 600 \

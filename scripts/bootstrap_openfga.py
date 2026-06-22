@@ -30,14 +30,14 @@ load_dotenv()
 
 
 def fetch_private_node_ids(tenant_id: str) -> list[str]:
-    """Return elementId for all Tier-3 (private) nodes belonging to tenant_id."""
+    """Return n.node_id (stable UUID) for all Tier-3 nodes belonging to tenant_id."""
     driver = GraphDatabase.driver(
         os.environ["NEO4J_URI"],
         auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
     )
     try:
         result = driver.execute_query(
-            "MATCH (n) WHERE n.tenant_id = $tenant_id RETURN elementId(n) AS eid",
+            "MATCH (n) WHERE n.tenant_id = $tenant_id AND n.node_id IS NOT NULL RETURN n.node_id AS eid",
             tenant_id=tenant_id,
         )
         return [r["eid"] for r in result.records]
@@ -52,17 +52,17 @@ async def bootstrap(tenant_id: str, owner_sub: str, visibility: str, openfga_url
     from openfga_utils import register_node_owner, make_tenant_wide
 
     print(f"Fetching nodes for tenant_id={tenant_id} ...")
-    element_ids = fetch_private_node_ids(tenant_id)
-    print(f"Found {len(element_ids)} nodes. Writing OpenFGA tuples ...")
+    node_ids = fetch_private_node_ids(tenant_id)
+    print(f"Found {len(node_ids)} nodes. Writing OpenFGA tuples ...")
 
-    for i, eid in enumerate(element_ids, 1):
+    for i, eid in enumerate(node_ids, 1):
         await register_node_owner(eid, owner_sub)
         if visibility == "tenant-wide":
             await make_tenant_wide(eid, tenant_id)
         if i % 100 == 0:
-            print(f"  {i}/{len(element_ids)} done ...")
+            print(f"  {i}/{len(node_ids)} done ...")
 
-    print(f"Bootstrap complete. {len(element_ids)} nodes processed.")
+    print(f"Bootstrap complete. {len(node_ids)} nodes processed.")
     if visibility == "tenant-wide":
         print(f"  Each node: owner tuple + tenant_viewer tuple for org:{tenant_id}#member")
     else:

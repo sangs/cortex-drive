@@ -38,12 +38,20 @@ class ExpertTools:
         """
         if self.allowed_ids is None:
             return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
-        return f"(elementId({node_var}) IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
+        # Guest/share mode: strictly bounded to the granted node_id list (no tenant fallback).
+        if self.guest_share_anchor:
+            return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
+        # Org-member OpenFGA mode: node_id list + tenant_id fallback (defense-in-depth).
+        # Fallback guards against missing bootstrap node_ids silently excluding org-owned nodes.
+        return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
 
     def _security_params(self) -> dict:
         """Returns the kwargs for _exec_query matched to _get_security_clause."""
         if self.allowed_ids is None:
             return {"tenant_id": self.tenant_id}
+        if not self.guest_share_anchor:
+            # Non-guest OpenFGA: pass both so $tenant_id in the dual-check clause is bound.
+            return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
         return {"allowed_ids": self.allowed_ids}
 
     def _apply_security(self, query: str, *node_vars: str) -> str:
@@ -1003,6 +1011,7 @@ class ExpertTools:
                narratives,
                guests,
                elementId(n) AS element_id,
+               n.node_id AS node_id,
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
         """
@@ -1173,6 +1182,7 @@ class ExpertTools:
         WITH allNodes, allRels,
              collect(DISTINCT {{
                 id: elementId(node),
+                node_id: node.node_id,
                 name: node.name,
                 type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
@@ -1394,6 +1404,7 @@ class ExpertTools:
         MATCH (n)
         WHERE (elementId(n) = $node_name OR toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name)
           AND ({sec_n})
+          AND NOT n:{bridge_labels}
         
         OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m)
         WHERE ({sec_m})
@@ -1415,17 +1426,18 @@ class ExpertTools:
         OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
         WHERE ({sec_note})
 
-        WITH n, node, rel, roleRel, 
+        WITH node, rel, roleRel,
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
              collect(DISTINCT tech.name) AS cluster_tech_urls,
              collect(DISTINCT note.text) AS notes
 
-        WITH n, node, rel, roleRel, cluster_tech_urls, notes,
+        WITH node, rel, roleRel, cluster_tech_urls, notes,
              apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links
 
-        WITH n,
+        WITH
              collect(DISTINCT {
                 id: elementId(node),
+                node_id: node.node_id,
                 name: node.name,
                 type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
@@ -1608,6 +1620,7 @@ class ExpertTools:
              collect(DISTINCT {{
                 name: sharedAnchor.name,
                 element_id: elementId(sharedAnchor),
+                node_id: sharedAnchor.node_id,
                 type: labels(sharedAnchor)[0],
                 anchor_element_id: elementId(sharedAnchor)
              }}) AS sharedAnchors
@@ -1616,6 +1629,7 @@ class ExpertTools:
         RETURN
             elementId(source) AS source_eid,
             elementId(target) AS target_eid,
+            target.node_id AS target_node_id,
             target.name AS target_name,
             labels(target)[0] AS target_type,
             target.description AS target_description,
@@ -1667,6 +1681,7 @@ class ExpertTools:
                     nodes.append({
                         "id": target_eid,
                         "element_id": target_eid,
+                        "node_id": record.get("target_node_id"),
                         "name": target_name,
                         "type": target_type,
                         "description": record["target_description"] or "",
@@ -1687,6 +1702,7 @@ class ExpertTools:
                         nodes.append({
                             "id": anchor_eid,
                             "element_id": anchor_eid,
+                            "node_id": anchor.get("node_id"),
                             "name": anchor_name,
                             "type": anchor_type,
                             "is_bridge": True,

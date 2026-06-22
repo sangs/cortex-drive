@@ -36,7 +36,7 @@ gcloud run deploy cortex-bento \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --no-allow-unauthenticated \
-    --ingress internal \
+    --ingress all \
     --port 8080 \
     --memory 512Mi \
     --timeout 600 \

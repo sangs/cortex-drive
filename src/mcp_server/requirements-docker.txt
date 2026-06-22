@@ -14,7 +14,7 @@ litellm
 openai>=1.107.3
 numpy>=2.0.2
 nltk
-mcp>=1.0.0
+mcp==1.14.0
 starlette
 uvicorn
 sse-starlette

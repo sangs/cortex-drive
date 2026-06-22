@@ -30,7 +30,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         if (!node) return;
         setShareStatus('loading');
         try {
-            const nodeId = node.id || node.name;
+            const nodeId = node.node_id || node.id || node.name;
             const response = await fetch(`/api/share?nodeId=${encodeURIComponent(nodeId)}`);
             const data = await response.json();
             if (data.shareUrl) {

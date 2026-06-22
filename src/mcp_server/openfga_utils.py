@@ -6,6 +6,10 @@ beyond calling these functions and getAllowedNodeIds().
 
 Default at ingestion: ONE owner tuple. No tenant_viewer = no org member sees the node.
 Owner explicitly promotes visibility via make_tenant_wide() or share_with_user().
+
+Node identity: all functions accept node_id (n.node_id property — a stable UUID set
+once at node creation, never derived from Neo4j internal elementId). This is immune
+to Aura database UUID changes that make elementId-based tuples stale.
 """
 
 import os
@@ -19,21 +23,6 @@ from openfga_sdk.client.models import (
     ClientCheckRequest,
     ClientListObjectsRequest,
 )
-
-
-def _encode_eid(element_id: str) -> str:
-    """Encode a Neo4j elementId for use as an OpenFGA object ID.
-
-    Neo4j elementIds are formatted as '4:uuid:number' — the colons are invalid
-    in OpenFGA object IDs which disallow ':', '#', '@', and whitespace.
-    Replace ':' with '.' to produce a stable, reversible encoding.
-    """
-    return element_id.replace(":", ".")
-
-
-def _decode_eid(encoded: str) -> str:
-    """Reverse of _encode_eid — convert OpenFGA object ID back to Neo4j elementId."""
-    return encoded.replace(".", ":")
 
 
 def _get_client() -> OpenFgaClient:
@@ -64,51 +53,54 @@ def _get_client() -> OpenFgaClient:
 # Core tuple operations
 # ---------------------------------------------------------------------------
 
-async def register_node_owner(element_id: str, owner_user_id: str) -> None:
+async def register_node_owner(node_id: str, owner_user_id: str) -> None:
     """Write the single owner tuple for a newly created node.
 
     Called after every Neo4j CREATE/MERGE. This is the sole gate that makes
     a node private-by-default — no other tuple = invisible to everyone except owner.
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
     """
     async with _get_client() as fga:
         await fga.write(ClientWriteRequest(
             writes=[ClientTuple(
                 user=f"user:{owner_user_id}",
                 relation="owner",
-                object=f"node:{_encode_eid(element_id)}",
+                object=f"node:{node_id}",
             )]
         ))
 
 
-async def make_tenant_wide(element_id: str, tenant_org_id: str) -> None:
+async def make_tenant_wide(node_id: str, tenant_org_id: str) -> None:
     """Publish a node to all members of a tenant org.
 
     Writes a tenant_viewer tuple for org#member. After this call every member's
     listObjects will return this node — no individual tuple needed per member.
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
     """
     async with _get_client() as fga:
         await fga.write(ClientWriteRequest(
             writes=[ClientTuple(
                 user=f"org:{tenant_org_id}#member",
                 relation="tenant_viewer",
-                object=f"node:{_encode_eid(element_id)}",
+                object=f"node:{node_id}",
             )]
         ))
 
 
 async def share_with_user(
-    element_id: str,
+    node_id: str,
     target_sub: str,
     expires_at: Optional[str] = None,
 ) -> None:
     """Share a node with a specific user (cross-tenant or same-tenant direct share).
 
     expires_at: ISO 8601 string e.g. "2026-07-01T00:00:00Z". Omit for permanent share.
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
     """
     tuple_obj = ClientTuple(
         user=f"user:{target_sub}",
         relation="shared_viewer",
-        object=f"node:{_encode_eid(element_id)}",
+        object=f"node:{node_id}",
     )
     if expires_at:
         tuple_obj.condition = {
@@ -120,15 +112,18 @@ async def share_with_user(
 
 
 async def share_with_group(
-    element_id: str,
+    node_id: str,
     group_id: str,
     expires_at: Optional[str] = None,
 ) -> None:
-    """Share a node with all members of a group."""
+    """Share a node with all members of a group.
+
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
+    """
     tuple_obj = ClientTuple(
         user=f"group:{group_id}#member",
         relation="shared_viewer",
-        object=f"node:{_encode_eid(element_id)}",
+        object=f"node:{node_id}",
     )
     if expires_at:
         tuple_obj.condition = {
@@ -139,9 +134,10 @@ async def share_with_group(
         await fga.write(ClientWriteRequest(writes=[tuple_obj]))
 
 
-async def revoke(element_id: str, subject: str, relation: str) -> None:
+async def revoke(node_id: str, subject: str, relation: str) -> None:
     """Delete a tuple. Immediate revocation. Neo4j is not touched.
 
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
     subject examples:
       "user:investor_sub"
       "org:tenant_org_id#member"
@@ -153,7 +149,7 @@ async def revoke(element_id: str, subject: str, relation: str) -> None:
             deletes=[ClientTuple(
                 user=subject,
                 relation=relation,
-                object=f"node:{_encode_eid(element_id)}",
+                object=f"node:{node_id}",
             )]
         ))
 
@@ -163,7 +159,7 @@ async def revoke(element_id: str, subject: str, relation: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def create_agent_session(
-    element_ids: list[str],
+    node_ids: list[str],
     agent_session_id: str,
     delegated_by_user_id: str,
     ttl_hours: float = 1.0,
@@ -172,6 +168,7 @@ async def create_agent_session(
 
     Returns the expires_at ISO string so the caller can log/store it.
     Agent access is always time-bound — no indefinite agent access permitted.
+    node_ids are the stable n.node_id UUID properties, not Neo4j elementIds.
     """
     expires_at = (
         datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
@@ -181,10 +178,10 @@ async def create_agent_session(
         ClientTuple(
             user=f"agent:{agent_session_id}",
             relation="shared_viewer",
-            object=f"node:{_encode_eid(eid)}",
+            object=f"node:{nid}",
             condition={"name": "not_expired", "context": {"expires_at": expires_at}},
         )
-        for eid in element_ids
+        for nid in node_ids
     ]
     async with _get_client() as fga:
         await fga.write(ClientWriteRequest(writes=tuples))
@@ -192,15 +189,18 @@ async def create_agent_session(
     return expires_at
 
 
-async def revoke_agent_session(agent_session_id: str, element_ids: list[str]) -> None:
-    """Immediately revoke all access for an agent session."""
+async def revoke_agent_session(agent_session_id: str, node_ids: list[str]) -> None:
+    """Immediately revoke all access for an agent session.
+
+    node_ids are the stable n.node_id UUID properties, not Neo4j elementIds.
+    """
     tuples = [
         ClientTuple(
             user=f"agent:{agent_session_id}",
             relation="shared_viewer",
-            object=f"node:{_encode_eid(eid)}",
+            object=f"node:{nid}",
         )
-        for eid in element_ids
+        for nid in node_ids
     ]
     async with _get_client() as fga:
         await fga.write(ClientWriteRequest(deletes=tuples))
@@ -210,13 +210,14 @@ async def revoke_agent_session(agent_session_id: str, element_ids: list[str]) ->
 # Read helpers (used by share UI GET endpoint)
 # ---------------------------------------------------------------------------
 
-async def list_node_access(element_id: str) -> list[dict]:
+async def list_node_access(node_id: str) -> list[dict]:
     """Return all tuples for a node (active + expired) for the Manage Access Modal.
 
     Expired tuples are never auto-deleted — they serve as the audit trail.
+    node_id is the stable n.node_id UUID property, not Neo4j elementId.
     """
     async with _get_client() as fga:
-        response = await fga.read(object=f"node:{_encode_eid(element_id)}")
+        response = await fga.read(object=f"node:{node_id}")
         tuples = response.tuples or []
         return [
             {

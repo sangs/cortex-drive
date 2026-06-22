@@ -177,6 +177,7 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-16** — Tool shortcuts that return backbone-only results must be gated on an explicit signal (`wants_visual_map=True`), never on keyword content; keyword content is unpredictable and will eventually match the wrong condition
 - **AP-17** — Use `res.on('close')` with `!res.writableEnded` to detect client disconnect; `req.on('close')` fires on TCP half-close (client done sending) and is a false positive during long-running async handlers
 - **AP-18** — Only use `createProxyMiddleware` for SSE/WebSocket/streaming routes; for plain JSON endpoints use a direct `fetch`. `app.use('/full/path', proxy)` strips the mount path before the proxy sees `req.url` — `pathRewrite` must match the stripped remainder, not the full path
+- **AP-19** — Any Cypher anchor MATCH using `CONTAINS` or fuzzy predicates must also exclude bridge-label types (`AND NOT n:{bridge_labels}`); a bridge-label node selected as anchor blocks all traversal paths via the path filter, silently returning only the anchor itself
 
 ---
 

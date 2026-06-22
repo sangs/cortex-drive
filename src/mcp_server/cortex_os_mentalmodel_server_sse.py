@@ -11,6 +11,7 @@ import contextvars
 import asyncio
 import json
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from typing import Optional
 
@@ -39,7 +40,10 @@ def _parse_allowed_ids(header_value: str) -> list | None:
     except (ValueError, TypeError):
         return None
 
-mcp = FastMCP("cortex-os-mentalmodel")
+mcp = FastMCP(
+    "cortex-os-mentalmodel",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 @mcp.tool()
 async def search_episodes_gds_by_question_tool(
@@ -99,6 +103,7 @@ async def query_relevant_chunks_hybrid_tool(
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
     allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    print(f"[FGA/MCP] query_relevant_chunks_hybrid_tool: mode={'openfga' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
@@ -481,15 +486,6 @@ class TenantASGIMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-
-        # Rewrite Host header to localhost before the MCP SSE layer validates it.
-        # MCP's SseServerTransport DNS rebinding protection rejects *.run.app hostnames
-        # (returns HTTP 421). Cloud Run's OIDC auth is the actual security boundary;
-        # host header validation provides no additional protection in this deployment.
-        scope = {**scope, "headers": [
-            (b"host", b"localhost") if k.lower() == b"host" else (k, v)
-            for k, v in scope.get("headers", [])
-        ]}
 
         # Use Starlette helpers to parse headers and query params from scope
         headers = Headers(scope=scope)

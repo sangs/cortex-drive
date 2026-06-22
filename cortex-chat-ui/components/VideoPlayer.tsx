@@ -9,6 +9,7 @@ import {
   Subtitles,
   Maximize,
   Minimize,
+  RotateCcw,
 } from "lucide-react";
 
 interface VideoItem {
@@ -38,6 +39,10 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCCTooltip, setShowCCTooltip] = useState(false);
+  // pendingNext: set when a mid-playlist video ends. Nothing auto-plays — user must engage.
+  const [pendingNext, setPendingNext] = useState<number | null>(null);
+  // isEnded: set when the final video finishes. Shows a replay/restart overlay.
+  const [isEnded, setIsEnded] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,11 +51,14 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
 
   const goToVideo = useCallback((index: number) => {
     setVideoIndex(index);
+    setPendingNext(null);
+    setIsEnded(false);
     setCurrentTime(0);
     setDuration(0);
   }, []);
 
-  // Auto-play after video index changes (video remounts via key=)
+  // Auto-play only when the user explicitly navigates (tab click or end-card "Play").
+  // Does NOT fire on initial mount because hasStarted is false then.
   useEffect(() => {
     if (hasStarted && videoRef.current) {
       videoRef.current.play().catch(() => {});
@@ -104,13 +112,27 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
     }
   }, []);
 
+  // On end: highlight the next video but do not play it.
+  // For the final video, show a replay/restart overlay instead.
   const handleVideoEnded = useCallback(() => {
+    setIsPlaying(false);
     if (videoIndex < videos.length - 1) {
-      goToVideo(videoIndex + 1);
+      setPendingNext(videoIndex + 1);
     } else {
-      setIsPlaying(false);
+      setIsEnded(true);
     }
-  }, [videoIndex, videos.length, goToVideo]);
+  }, [videoIndex, videos.length]);
+
+  const handleReplay = useCallback(() => {
+    setPendingNext(null);
+    setIsEnded(false);
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = 0;
+      video.play().catch(() => {});
+      setIsPlaying(true);
+    }
+  }, []);
 
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const time = Number(e.target.value);
@@ -154,7 +176,7 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
   return (
     <div
       ref={containerRef}
-      className="aspect-video bg-slate-950 rounded-[2rem] relative overflow-hidden group/player"
+      className="aspect-video bg-slate-950 rounded-xl relative overflow-hidden group/player"
     >
       {/* Video element */}
       <video
@@ -188,15 +210,75 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
         </button>
       )}
 
-      {/* ── Top bar: title (left) + volume & CC (right) — always visible when playing ── */}
+      {/* ── End-card overlay: shown when a video finishes and there is a next one ── */}
+      {pendingNext !== null && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 bg-slate-950/88 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 text-center px-10">
+            <p className="text-[10px] uppercase tracking-[0.25em] text-white/40 font-black">
+              Up Next
+            </p>
+            <p className="text-white text-base font-bold leading-snug">
+              {videos[pendingNext].label}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReplay}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white/50 bg-white/10 hover:bg-white/20 hover:text-white/80 transition-all"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Replay
+            </button>
+            <button
+              onClick={() => goToVideo(pendingNext)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-primary hover:bg-primary/80 transition-colors"
+            >
+              <Play className="w-3 h-3 fill-white" />
+              Play
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Final-video end overlay ── */}
+      {isEnded && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 bg-slate-950/88 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 text-center px-10">
+            <p className="text-[10px] uppercase tracking-[0.25em] text-white/40 font-black">
+              That&apos;s everything
+            </p>
+            <p className="text-white text-base font-bold leading-snug">
+              {videos[videoIndex].label}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReplay}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white/50 bg-white/10 hover:bg-white/20 hover:text-white/80 transition-all"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Replay
+            </button>
+            {videos.length > 1 && (
+              <button
+                onClick={() => goToVideo(0)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-primary hover:bg-primary/80 transition-colors"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Watch from start
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Top bar: title (left) + volume & CC (right) ── */}
       {hasStarted && (
         <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-5 pt-4 pb-8 bg-gradient-to-b from-black/65 to-transparent pointer-events-none z-10">
-          {/* Title */}
           <span className="text-white text-sm font-bold drop-shadow-md leading-tight max-w-[60%] truncate">
             {videos[videoIndex].label}
           </span>
 
-          {/* Volume + CC — re-enable pointer events */}
           <div className="flex items-center gap-2 pointer-events-auto">
             {/* Volume control */}
             <div
@@ -254,7 +336,7 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
         </div>
       )}
 
-      {/* ── Bottom bar: progress + controls — visible on hover or when paused ── */}
+      {/* ── Bottom bar: progress + controls ── */}
       {hasStarted && (
         <div
           className={`absolute bottom-0 left-0 right-0 px-5 pb-4 pt-10 bg-gradient-to-t from-black/75 to-transparent z-10 transition-opacity duration-200 ${
@@ -282,7 +364,6 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
 
           {/* Controls row */}
           <div className="flex items-center justify-between gap-3">
-            {/* Left: play/pause + time + playlist tabs */}
             <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={togglePlayPause}
@@ -299,25 +380,27 @@ export function VideoPlayer({ videos }: VideoPlayerProps) {
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
 
+              {/* Playlist tabs — show title, not just number; pulse when pending */}
               <div className="flex items-center gap-1.5 shrink-0">
                 {videos.map((v, i) => (
                   <button
                     key={i}
                     onClick={() => goToVideo(i)}
-                    className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest transition-all ${
+                    title={v.label}
+                    className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest transition-all max-w-[88px] truncate ${
                       i === videoIndex
                         ? "bg-primary text-white"
+                        : i === pendingNext
+                        ? "bg-white/10 text-white ring-1 ring-primary animate-pulse"
                         : "bg-white/10 text-slate-300 hover:bg-white/20"
                     }`}
-                    title={v.label}
                   >
-                    {i + 1}
+                    {i + 1} · {v.title}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Right: fullscreen */}
             <button
               onClick={toggleFullscreen}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white shrink-0"

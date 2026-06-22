@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 from typing import List, Dict, Any
@@ -5,11 +6,11 @@ from datetime import datetime
 from openai import OpenAI
 from neo4j import GraphDatabase
 from schema_guard import (
-    validate_upsert, 
-    CORTEX_DRIVE_NODES, 
-    PROJECT_GRAPH_NODES, 
+    validate_upsert,
+    CORTEX_DRIVE_NODES,
+    PROJECT_GRAPH_NODES,
     SYSTEM_NODES,
-    CORTEX_DRIVE_RELATIONSHIPS, 
+    CORTEX_DRIVE_RELATIONSHIPS,
     PROJECT_GRAPH_RELATIONSHIPS
 )
 from expert_tools import ExpertTools
@@ -22,7 +23,7 @@ class IngestionEngine:
     CortexDrive Unified Ingestion Engine.
     Consolidates the 10-step legacy ingestion process into a streamlined pipeline.
     """
-    
+
     def __init__(self, tenant_id: str):
         self.tenant_id = tenant_id
         self.expert = ExpertTools(tenant_id=tenant_id)
@@ -41,14 +42,14 @@ class IngestionEngine:
         Main entry point for processing a single transcript.
         """
         print(f"Starting ingestion for Episode {episode_metadata.get('number')}...")
-        
+
         # 1. Schema Validation for Episode
         episode_metadata['tenant_id'] = self.tenant_id
         validated_ep = validate_upsert('Episode', episode_metadata)
-        
-        # 2. Upsert Episode Node
-        self._upsert_episode(validated_ep)
-        
+
+        # 2. Upsert Episode Node — returns stable node_id
+        ep_node_id = self._upsert_episode(validated_ep)
+
         # 3. Create Source Metadata Node
         source_data = {
             'tenant_id': self.tenant_id,
@@ -61,47 +62,57 @@ class IngestionEngine:
 
         # 4. Semantic Chunking & Embedding
         chunks = self._create_chunks(transcript_text, validated_ep)
-        
+
         # 5. LLM Entity Extraction (Graph Transformation)
         entities = self._extract_entities(transcript_text, validated_ep.name)
-        
-        # 6. Atomic Upsert of Source, Chunks & Entities
-        self._upsert_graph_data(validated_ep, validated_source, chunks, entities)
-        
+
+        # 6. Atomic Upsert of Source, Chunks & Entities — returns new node_ids
+        graph_node_ids = self._upsert_graph_data(validated_ep, validated_source, chunks, entities)
+
         # 6. Metadata Context Injection (Listener & Podcast Hierarchy)
         podcast_title = episode_metadata.get('podcast_title')
         invoked_by = episode_metadata.get('invoked_by')
+        meta_node_ids = []
         if podcast_title or invoked_by:
-            self._upsert_metadata_relationships(validated_ep, podcast_title, invoked_by)
-        
+            meta_node_ids = self._upsert_metadata_relationships(validated_ep, podcast_title, invoked_by)
+
         # 7. Post-Processing Enrichment (GDS, KNN, etc.)
         self._trigger_enrichment(validated_ep)
-        
+
+        # 8. Register all new nodes in OpenFGA (idempotent — existing tuples are no-ops)
+        all_node_ids = [ep_node_id] + graph_node_ids + meta_node_ids
+        self._register_with_openfga([nid for nid in all_node_ids if nid])
+
         print(f"Ingestion complete for Episode {validated_ep.number}.")
 
-    def _upsert_episode(self, ep_node):
+    def _upsert_episode(self, ep_node) -> str | None:
+        """Upsert episode node, setting node_id on creation. Returns the node_id."""
         query = """
         MERGE (ep:Episode {tenant_id: $tenant_id, number: $number})
+        ON CREATE SET ep.node_id = randomUUID()
         SET ep += $props
+        RETURN ep.node_id AS node_id
         """
         props = ep_node.dict()
         # Neo4j cannot store dictionaries in properties; serialize the metadata generic store
         if 'metadata' in props and isinstance(props['metadata'], dict):
             props['metadata'] = json.dumps(props['metadata'])
-            
+
         with self.driver.session() as session:
-            session.run(query, tenant_id=self.tenant_id, number=ep_node.number, props=props)
+            result = session.run(query, tenant_id=self.tenant_id, number=ep_node.number, props=props)
+            record = result.single()
+            return record["node_id"] if record else None
 
     def _create_chunks(self, text: str, ep_node, chunk_size: int = 1000):
         # Resilient regex for [H:M:S] or [M:S]
         ts_pattern = re.compile(r"\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]")
-        
+
         words = text.split()
         chunks = []
         for i in range(0, len(words), chunk_size):
             chunk_text = " ".join(words[i:i + chunk_size])
             embedding = self.expert.get_embedding(chunk_text)
-            
+
             # Extract first timestamp in this chunk
             start_seconds = None
             ts_match = ts_pattern.search(chunk_text)
@@ -111,7 +122,7 @@ class IngestionEngine:
                 m = int(m_str)
                 s = int(s_str)
                 start_seconds = h * 3600 + m * 60 + s
-            
+
             chunk_data = {
                 'tenant_id': self.tenant_id,
                 'text': chunk_text,
@@ -120,7 +131,7 @@ class IngestionEngine:
                 'startTime': start_seconds
             }
             chunks.append(validate_upsert('Chunk', chunk_data))
-            
+
             # Post-process: Set endTime for the PREVIOUS chunk if we just found a startTime
             if len(chunks) > 1 and start_seconds is not None:
                 chunks[-2].endTime = start_seconds
@@ -132,42 +143,50 @@ class IngestionEngine:
         Extract Topics, Concepts, and Technologies from text using BAML.
         """
         print(f"Extracting strictly constrained entities for tenant {self.tenant_id} using BAML...")
-        
+
         # Use BAML client for structured extraction
         extracted = b.ExtractGraph(transcript=text, episode_title=episode_title)
-        
+
         # Convert BAML types to LangChain-compatible Document-like graph structure
         # (or directly to a format we can upsert)
         # For now, let's keep the return type meaningful for _upsert_graph_data
-        
+
         return extracted
 
-    def _upsert_graph_data(self, ep, source, chunks, extraction):
+    def _upsert_graph_data(self, ep, source, chunks, extraction) -> list[str | None]:
+        """Upsert source, chunks, and entities. Returns list of node_ids created."""
+        node_ids: list[str | None] = []
+
         with self.driver.session() as session:
             # 1. Upsert Source Node
             query_source = """
             MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
             MERGE (s:Source {tenant_id: $tenant_id, fileName: $fileName})
-            ON CREATE SET s.type = $type, s.fileSource = $fileSource, s.ingestedAt = $ingestedAt
+            ON CREATE SET s.node_id = randomUUID(), s.type = $type, s.fileSource = $fileSource, s.ingestedAt = $ingestedAt
             MERGE (ep)-[:HAS_SOURCE]->(s)
+            RETURN s.node_id AS node_id
             """
-            session.run(query_source, 
+            result = session.run(query_source,
                 tenant_id=self.tenant_id, ep_num=ep.number,
-                fileName=source.fileName, type=source.type, 
+                fileName=source.fileName, type=source.type,
                 fileSource=source.fileSource, ingestedAt=source.ingestedAt
             )
+            record = result.single()
+            node_ids.append(record["node_id"] if record else None)
 
             # 2. Upsert Chunks
             for chunk in chunks:
                 query_chunk = """
                 MATCH (s:Source {tenant_id: $tenant_id, fileName: $fileName})
                 MERGE (c:Chunk {tenant_id: $tenant_id, order: $order, embedding: $embedding})
+                ON CREATE SET c.node_id = randomUUID()
                 SET c.text = $text, c.startTime = $startTime, c.endTime = $endTime
                 MERGE (s)-[:CONTAINS]->(c)
                 MERGE (c)-[:BELONGS_TO_SOURCE]->(s)
+                RETURN c.node_id AS node_id
                 """
-                session.run(query_chunk, 
-                    tenant_id=self.tenant_id, 
+                result = session.run(query_chunk,
+                    tenant_id=self.tenant_id,
                     fileName=source.fileName,
                     order=chunk.order,
                     text=chunk.text,
@@ -175,26 +194,43 @@ class IngestionEngine:
                     startTime=chunk.startTime,
                     endTime=chunk.endTime
                 )
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # 3. Upsert BAML Extractions
-            self._upsert_baml_entities(ep, extraction)
+            entity_ids = self._upsert_baml_entities(ep, extraction)
+            node_ids.extend(entity_ids)
 
-    def _upsert_baml_entities(self, ep, extraction):
+        return node_ids
+
+    def _upsert_baml_entities(self, ep, extraction) -> list[str | None]:
         """
         Surgically upsert BAML-extracted entities and link them to the episode.
+        Returns list of node_ids for newly created nodes.
         """
+        node_ids: list[str | None] = []
+
         with self.driver.session() as session:
             # 1. Upsert Podcasts and Episodes (if any metadata was extracted/clarified)
             for podcast in extraction.podcasts:
-                query = "MERGE (p:Podcast {tenant_id: $tenant_id, title: $title})"
-                session.run(query, tenant_id=self.tenant_id, title=podcast.title)
+                query = """
+                MERGE (p:Podcast {tenant_id: $tenant_id, title: $title})
+                ON CREATE SET p.node_id = randomUUID()
+                RETURN p.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, title=podcast.title)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             for b_ep in extraction.episodes:
                 query = """
                 MERGE (ep:Episode {tenant_id: $tenant_id, number: $number})
-                ON CREATE SET ep.name = $name, ep.description = $description
+                ON CREATE SET ep.node_id = randomUUID(), ep.name = $name, ep.description = $description
+                RETURN ep.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, number=b_ep.number, name=b_ep.name, description=b_ep.description)
+                result = session.run(query, tenant_id=self.tenant_id, number=b_ep.number, name=b_ep.name, description=b_ep.description)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # 2. Upsert Nodes (Topics, Concepts, Tech, People, Links)
             # Topics
@@ -202,27 +238,43 @@ class IngestionEngine:
                 query = """
                 MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
                 MERGE (t:Topic {tenant_id: $tenant_id, name: $name})
-                ON CREATE SET t.description = $description
+                ON CREATE SET t.node_id = randomUUID(), t.description = $description
                 MERGE (ep)-[:HAS_TOPIC]->(t)
                 MERGE (t)-[:COVERED_BY_EPISODE]->(ep)
+                RETURN t.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, name=topic.name, description=topic.description)
+                result = session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, name=topic.name, description=topic.description)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # Concepts (Independent nodes; linkage handled by relationships)
             for concept in extraction.concepts:
-                query = "MERGE (c:Concept {tenant_id: $tenant_id, name: $name}) ON CREATE SET c.description = $description"
-                session.run(query, tenant_id=self.tenant_id, name=concept.name, description=concept.description)
+                query = """
+                MERGE (c:Concept {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET c.node_id = randomUUID(), c.description = $description
+                RETURN c.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, name=concept.name, description=concept.description)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # Technologies (Independent nodes; linkage handled by relationships)
             for tech in extraction.technologies:
-                query = "MERGE (t:Technology {tenant_id: $tenant_id, name: $name}) ON CREATE SET t.description = $description"
-                session.run(query, tenant_id=self.tenant_id, name=tech.name, description=tech.description)
+                query = """
+                MERGE (t:Technology {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET t.node_id = randomUUID(), t.description = $description
+                RETURN t.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, name=tech.name, description=tech.description)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # People
             for person in extraction.people:
                 query = """
                 MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
                 MERGE (p:Person {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET p.node_id = randomUUID()
                 WITH ep, p
                 CALL apoc.do.when(
                     coalesce($role, "") = "Guest",
@@ -230,19 +282,24 @@ class IngestionEngine:
                     'MERGE (p)-[:MENTIONED]->(ep)',
                     {p:p, ep:ep}
                 ) YIELD value
-                RETURN count(*)
+                RETURN p.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, name=person.name, role=person.role)
+                result = session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, name=person.name, role=person.role)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # ReferenceLinks
             for link in extraction.links:
                 query = """
                 MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
                 MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
-                ON CREATE SET l.text = $text
+                ON CREATE SET l.node_id = randomUUID(), l.text = $text
                 MERGE (ep)-[:HAS_REFERENCE]->(l)
+                RETURN l.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, url=link.url, text=link.text)
+                result = session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, url=link.url, text=link.text)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
 
             # 3. Dynamic Relationship Linking
             for rel in extraction.relationships:
@@ -256,29 +313,37 @@ class IngestionEngine:
                 """
                 session.run(query, tenant_id=self.tenant_id, src=rel.source_node, target=rel.target_node)
 
-    def _upsert_metadata_relationships(self, ep, podcast_title: str, invoked_by: str):
+        return node_ids
+
+    def _upsert_metadata_relationships(self, ep, podcast_title: str, invoked_by: str) -> list[str | None]:
         """
-        Implicitly maps the Podcast parent edge and connects the invoking User 
+        Implicitly maps the Podcast parent edge and connects the invoking User
         (listener) to the Episode using structural audience relationships.
+        Returns node_ids for any newly created nodes.
         """
         print(f"Injecting metadata contexts for Episode {ep.number}...")
+        node_ids: list[str | None] = []
+
         with self.driver.session() as session:
             # Connect Podcast -> Episode
             if podcast_title:
                 query = """
                 MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
                 MERGE (pod:Podcast {tenant_id: $tenant_id, title: $title})
-                ON CREATE SET pod.id = $title
+                ON CREATE SET pod.node_id = randomUUID(), pod.id = $title
                 MERGE (pod)-[:HAS_EPISODE]->(ep)
+                RETURN pod.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, title=podcast_title)
-            
+                result = session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, title=podcast_title)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
             # Connect Invoking Person -> Podcast & Episode
             if invoked_by:
                 query = """
                 MATCH (ep:Episode {tenant_id: $tenant_id, number: $ep_num})
                 MERGE (person:Person {tenant_id: $tenant_id, name: $invoker})
-                ON CREATE SET person.role = 'Listener'
+                ON CREATE SET person.node_id = randomUUID(), person.role = 'Listener'
                 MERGE (person)-[:LISTENS_TO_EPISODE]->(ep)
                 MERGE (person)-[:LEARNING_FROM]->(ep)
                 WITH ep, person
@@ -287,8 +352,38 @@ class IngestionEngine:
                     MERGE (person)-[:LISTENS_TO]->(p)
                     MERGE (person)-[:SUBSCRIBES_TO]->(p)
                 )
+                RETURN person.node_id AS node_id
                 """
-                session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, invoker=invoked_by)
+                result = session.run(query, tenant_id=self.tenant_id, ep_num=ep.number, invoker=invoked_by)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
+        return node_ids
+
+    def _register_with_openfga(self, node_ids: list[str]) -> None:
+        """Register newly ingested nodes in OpenFGA. Idempotent — existing tuples are no-ops."""
+        if not os.environ.get("OPENFGA_STORE_ID"):
+            return  # OpenFGA not configured, skip
+        owner_sub = os.environ.get("OWNER_USER_ID", "")
+        if not owner_sub:
+            print("[ingestion] OWNER_USER_ID not set — skipping OpenFGA registration")
+            return
+
+        import sys
+        sys.path.insert(0, os.path.dirname(__file__))
+        from openfga_utils import register_node_owner, make_tenant_wide
+
+        async def _register_all():
+            for nid in node_ids:
+                await register_node_owner(nid, owner_sub)
+                await make_tenant_wide(nid, self.tenant_id)
+
+        try:
+            asyncio.run(_register_all())
+            print(f"[ingestion] Registered {len(node_ids)} node(s) in OpenFGA.")
+        except RuntimeError as e:
+            # Already inside an event loop (e.g. called from async context)
+            print(f"[ingestion] OpenFGA registration skipped — event loop conflict: {e}")
 
     def _trigger_enrichment(self, ep):
         # Placeholder for legacy steps 7-10 (GDS projections, KNN scoring)

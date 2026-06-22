@@ -357,26 +357,38 @@ if (!global.fetch) {
 // --- OpenFGA Authorization Client ---
 const { OpenFgaClient, CredentialsMethod } = require('@openfga/sdk');
 
-let _fgaClient = null;
-function getFgaClient() {
-    if (_fgaClient) return _fgaClient;
+// getFgaClient creates a fresh OpenFGA client per call (no singleton) so that
+// the OIDC bearer token — which expires after 1hr — is always current.
+// bearerToken is a "Bearer <token>" string from getCloudRunToken(); omit for local dev.
+function getFgaClient(bearerToken = null) {
     const storeId = process.env.OPENFGA_STORE_ID;
     if (!storeId) return null; // OpenFGA not configured — legacy mode
-    _fgaClient = new OpenFgaClient({
+    const config = {
         apiUrl: process.env.OPENFGA_API_URL || 'http://localhost:8082',
         storeId,
         authorizationModelId: process.env.OPENFGA_MODEL_ID,
-    });
-    return _fgaClient;
+    };
+    if (bearerToken) {
+        config.credentials = {
+            method: CredentialsMethod.ApiToken,
+            config: { token: bearerToken.replace('Bearer ', '') },
+        };
+    }
+    return new OpenFgaClient(config);
 }
 
 /**
- * Returns the list of node elementIds the user can see via OpenFGA.
+ * Returns the list of node_id UUIDs the user can see via OpenFGA.
  * Returns null when OpenFGA is not configured (triggers legacy tenant_id mode in MCP).
+ * Fetches a Cloud Run OIDC token so cortex-openfga (--no-allow-unauthenticated) accepts
+ * the request — same pattern used for cortex-mcp and cortex-bento calls.
  */
 async function getAllowedNodeIds(userId, agentSessionId = null) {
-    const fga = getFgaClient();
-    if (!fga) return null; // legacy mode — MCP uses tenant_id fallback
+    if (!process.env.OPENFGA_STORE_ID) return null; // legacy mode
+    const openfgaUrl = process.env.OPENFGA_API_URL || 'http://localhost:8082';
+    const oidcToken = await getCloudRunToken(openfgaUrl);
+    const fga = getFgaClient(oidcToken);
+    if (!fga) return null;
 
     const principal = agentSessionId ? `agent:${agentSessionId}` : `user:${userId}`;
     try {
@@ -386,8 +398,8 @@ async function getAllowedNodeIds(userId, agentSessionId = null) {
             type: 'node',
             context: { current_time: new Date().toISOString() },
         });
-        // Decode OpenFGA object IDs back to Neo4j elementId format: '.' → ':'
-        const ids = (resp.objects || []).map(o => o.replace('node:', '').replace(/\./g, ':'));
+        // Strip 'node:' prefix — object IDs are plain UUIDs (n.node_id), no further decoding needed
+        const ids = (resp.objects || []).map(o => o.replace('node:', ''));
         console.log(`[FGA] ${principal} can_view ${ids.length} nodes`);
         return ids;
     } catch (err) {
@@ -570,14 +582,14 @@ app.get('/api/share', authMiddleware, (req, res) => {
 // These are no-ops when OpenFGA is not configured (OPENFGA_STORE_ID unset).
 
 app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
-    const { elementId } = req.body;
+    const { node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
-    if (!elementId) return res.status(400).json({ error: 'elementId required' });
+    if (!node_id) return res.status(400).json({ error: 'node_id required' });
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
         const { makeNodeTenantWide } = require('./utils/openfga_gateway');
-        await makeNodeTenantWide(fga, elementId, tenantId);
+        await makeNodeTenantWide(fga, node_id, tenantId);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/tenant-wide]', err.message);
@@ -586,13 +598,13 @@ app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/share/user', authMiddleware, async (req, res) => {
-    const { elementId, targetSub, expiresAt } = req.body;
-    if (!elementId || !targetSub) return res.status(400).json({ error: 'elementId and targetSub required' });
+    const { node_id, targetSub, expiresAt } = req.body;
+    if (!node_id || !targetSub) return res.status(400).json({ error: 'node_id and targetSub required' });
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
         const { shareNodeWithUser } = require('./utils/openfga_gateway');
-        await shareNodeWithUser(fga, elementId, targetSub, expiresAt || null);
+        await shareNodeWithUser(fga, node_id, targetSub, expiresAt || null);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
@@ -601,13 +613,13 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/share/group', authMiddleware, async (req, res) => {
-    const { elementId, groupId, expiresAt } = req.body;
-    if (!elementId || !groupId) return res.status(400).json({ error: 'elementId and groupId required' });
+    const { node_id, groupId, expiresAt } = req.body;
+    if (!node_id || !groupId) return res.status(400).json({ error: 'node_id and groupId required' });
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
         const { shareNodeWithGroup } = require('./utils/openfga_gateway');
-        await shareNodeWithGroup(fga, elementId, groupId, expiresAt || null);
+        await shareNodeWithGroup(fga, node_id, groupId, expiresAt || null);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/group]', err.message);
@@ -616,13 +628,13 @@ app.post('/api/share/group', authMiddleware, async (req, res) => {
 });
 
 app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
-    const { elementId, subject, relation } = req.body;
-    if (!elementId || !subject || !relation) return res.status(400).json({ error: 'elementId, subject, relation required' });
+    const { node_id, subject, relation } = req.body;
+    if (!node_id || !subject || !relation) return res.status(400).json({ error: 'node_id, subject, relation required' });
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
         const { revokeNodeAccess } = require('./utils/openfga_gateway');
-        await revokeNodeAccess(fga, elementId, subject, relation);
+        await revokeNodeAccess(fga, node_id, subject, relation);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/revoke]', err.message);
@@ -630,13 +642,13 @@ app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
     }
 });
 
-app.get('/api/share/access/:elementId', authMiddleware, async (req, res) => {
-    const { elementId } = req.params;
+app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
+    const { node_id } = req.params;
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
         const { listNodeAccess } = require('./utils/openfga_gateway');
-        const access = await listNodeAccess(fga, elementId);
+        const access = await listNodeAccess(fga, node_id);
         res.json(access);
     } catch (err) {
         console.error('[/api/share/access]', err.message);
@@ -1185,6 +1197,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                                 // Transform to UI format
                                 const uiNodes = newNodesRaw.map(n => ({
                                     id: n.element_id || n.id || n.name,
+                                    node_id: n.node_id,
                                     name: n.display_name || n.name,
                                     type: n.labels ? n.labels[0] : (n.type || 'Unknown'),
                                     isBackbone: n.is_backbone || false,
@@ -1675,12 +1688,14 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || '';
     try {
+        const bentoOidcToken = await getCloudRunToken(bentoServerUrl);
         const bentoResponse = await fetch(`${bentoServerUrl}/get_node_details`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId || '',
-                'x-user-id': userId
+                'x-user-id': userId,
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify(req.body),
             signal: AbortSignal.timeout(8000)

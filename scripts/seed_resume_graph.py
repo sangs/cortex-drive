@@ -814,6 +814,13 @@ def seed_resume_graph():
                 owner_id=owner_id,
             )
 
+            # Stamp stable node_id on any node that lacks one (idempotent — skips nodes
+            # already set by prior backfill or seeder runs)
+            session.run(
+                "MATCH (n) WHERE n.node_id IS NULL SET n.node_id = randomUUID()"
+            )
+            print("  -> node_id backfill complete.")
+
             # Step 3a: Remove stale year-only duplicate relationships.
             # MERGE creates a NEW relationship when properties differ, so old year-only
             # rels (e.g. start:"2013") and new mm/yyyy rels (e.g. start:"02/2013") can
