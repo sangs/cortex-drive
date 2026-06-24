@@ -384,6 +384,22 @@ class IngestionEngine:
         except RuntimeError as e:
             # Already inside an event loop (e.g. called from async context)
             print(f"[ingestion] OpenFGA registration skipped — event loop conflict: {e}")
+            return
+
+        # Increment generation counter once after the full batch — not per-node —
+        # so consumers invalidate their permission caches in one step.
+        try:
+            import redis as redis_lib
+            _r = redis_lib.Redis.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379"),
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+            _r.incr(f"perm_version:{self.tenant_id}")
+            print(f"[ingestion] Incremented perm_version for tenant {self.tenant_id}.")
+        except Exception as e:
+            print(f"[ingestion] perm_version increment failed (non-fatal): {e}")
 
     def _trigger_enrichment(self, ep):
         # Placeholder for legacy steps 7-10 (GDS projections, KNN scoring)

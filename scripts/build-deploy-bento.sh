@@ -44,7 +44,8 @@ gcloud run deploy cortex-bento \
     --max-instances 3 \
     --set-secrets "NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,\
 NEO4J_PASSWORD=NEO4J_PASSWORD:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,\
-TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest"
+TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
+REDIS_URL=REDIS_URL:latest"
 
 echo ""
 echo "✓ cortex-bento deployed (internal ingress)"

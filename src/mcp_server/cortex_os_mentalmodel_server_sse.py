@@ -10,6 +10,7 @@ from starlette.middleware.cors import CORSMiddleware
 import contextvars
 import asyncio
 import json
+import redis.asyncio as aioredis
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
@@ -26,19 +27,72 @@ user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", def
 schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
 # Contextvar to hold the authorized node ID for Guest Share Tokens
 guest_share_anchor_var: contextvars.ContextVar[str] = contextvars.ContextVar("guest_share_anchor", default="")
-# Contextvar to hold the OpenFGA-computed allowed node IDs (JSON string; None = legacy mode)
-allowed_ids_var: contextvars.ContextVar[str] = contextvars.ContextVar("allowed_ids", default="")
+# Contextvar to hold resolved allowed node IDs (list | None; None = legacy tenant_id mode)
+allowed_ids_var: contextvars.ContextVar[list | None] = contextvars.ContextVar("allowed_ids", default=None)
+# Contextvar to hold perm_version at request start for staleness detection
+perm_version_var: contextvars.ContextVar[str] = contextvars.ContextVar("perm_version", default="0")
+
+# Async Redis client — shared across all requests (connection pool managed by aioredis)
+_redis = aioredis.Redis.from_url(
+    os.environ.get("REDIS_URL", "redis://localhost:6379"),
+    decode_responses=True,
+    socket_connect_timeout=1,
+    socket_timeout=1,
+)
 
 
-def _parse_allowed_ids(header_value: str) -> list | None:
-    """Parse x-allowed-ids header. Returns None if absent (legacy tenant_id fallback mode)."""
-    if not header_value:
+async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | None, str]:
+    """Resolve allowed node IDs from Redis cache, falling back to OpenFGA on miss.
+
+    Returns (allowed_ids, perm_version).
+    allowed_ids=None means OpenFGA is unconfigured → legacy tenant_id-only mode.
+    """
+    if not user_id:
+        return None, "0"
+    perm_key = f"perm:{user_id}"
+    version_key = f"perm_version:{tenant_id}"
+    try:
+        cached, version = await _redis.mget(perm_key, version_key)
+        if cached is not None:
+            print(f"[PERM-CACHE/MCP] hit user={user_id} version={version or '0'}")
+            return json.loads(cached), version or "0"
+    except Exception as e:
+        print(f"[PERM-CACHE/MCP] Redis read failed, falling back to OpenFGA: {e}")
+    # Cache miss — resolve from OpenFGA
+    from openfga_utils import list_viewable_node_ids
+    allowed_ids = await list_viewable_node_ids(user_id)
+    version = "0"
+    try:
+        version = await _redis.get(version_key) or "0"
+        if allowed_ids is not None:
+            await _redis.setex(perm_key, 300, json.dumps(allowed_ids))
+            print(f"[PERM-CACHE/MCP] miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
+    except Exception as e:
+        print(f"[PERM-CACHE/MCP] Redis write failed (non-fatal): {e}")
+    return allowed_ids, version
+
+
+async def _get_current_allowed_ids() -> list | None:
+    """Return allowed_ids from context, re-resolving from OpenFGA if perm_version changed.
+
+    Called at the start of every MCP tool to detect mid-session permission revocations.
+    The Redis GET adds ~0.5ms — negligible against a Cypher query.
+    """
+    user_id = user_id_var.get() or ""
+    tenant_id = tenant_id_var.get() or ""
+    if not user_id:
         return None
     try:
-        parsed = json.loads(header_value)
-        return parsed if isinstance(parsed, list) else None
-    except (ValueError, TypeError):
-        return None
+        current_version = await _redis.get(f"perm_version:{tenant_id}") or "0"
+        if current_version != perm_version_var.get():
+            print(f"[PERM-CACHE/MCP] version stale (stored={perm_version_var.get()} current={current_version}) — re-resolving")
+            allowed_ids, new_version = await _resolve_allowed_ids(user_id, tenant_id)
+            allowed_ids_var.set(allowed_ids)
+            perm_version_var.set(new_version)
+            return allowed_ids
+    except Exception:
+        pass
+    return allowed_ids_var.get()
 
 mcp = FastMCP(
     "cortex-os-mentalmodel",
@@ -55,7 +109,7 @@ async def search_episodes_gds_by_question_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
@@ -77,7 +131,7 @@ async def search_episodes_by_question_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_episodes_by_question(question, k=k)
@@ -102,7 +156,7 @@ async def query_relevant_chunks_hybrid_tool(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     print(f"[FGA/MCP] query_relevant_chunks_hybrid_tool: mode={'openfga' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
@@ -119,7 +173,7 @@ async def get_context() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_tool_context()
@@ -138,7 +192,7 @@ async def get_tool_statistics() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_episode_statistics()
@@ -158,7 +212,7 @@ async def find_episodes_by_people(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_people(question)
@@ -176,7 +230,7 @@ async def get_episodes_with_cast() -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_episodes_with_cast()
@@ -195,7 +249,7 @@ async def find_episodes_by_concept(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_concept(question)
@@ -214,7 +268,7 @@ async def find_episodes_by_topic(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_topic(question)
@@ -233,7 +287,7 @@ async def find_episodes_by_technology(question: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_technology(question)
@@ -253,7 +307,7 @@ async def find_episodes_by_reference(reference_string: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_reference(reference_string)
@@ -272,7 +326,7 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.find_episodes_by_mentions(search_terms)
@@ -292,7 +346,7 @@ async def get_people_by_episode_tool(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_people_by_episode(episode_name)
@@ -315,7 +369,7 @@ async def run_cypher_query(
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
     schema_readable = schema_readable_var.get()
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
@@ -333,7 +387,7 @@ async def get_node_details(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.get_node_details(node_id=node_id, node_name=node_name)
@@ -357,7 +411,7 @@ async def search_enterprise_graph(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or "trial-user"
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent)
@@ -376,7 +430,7 @@ async def explore_graph_schema() -> str:
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     schema_readable = schema_readable_var.get()
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.explore_graph_schema(schema_readable=schema_readable)
@@ -400,7 +454,7 @@ async def hybrid_discovery_tool(
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
         return expert.hybrid_discovery(question, k=k)
@@ -425,7 +479,7 @@ async def get_cluster_context(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.get_cluster_context(node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
@@ -456,7 +510,7 @@ async def connect_knowledge_on_demand(
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
-    allowed_ids = _parse_allowed_ids(allowed_ids_var.get())
+    allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return expert.connect_knowledge_on_demand(
@@ -515,14 +569,17 @@ class TenantASGIMiddleware:
             query_params.get("share_anchor")
         )
 
-        # Extract OpenFGA allowed node IDs (JSON list; absent = legacy tenant_id mode)
-        allowed_ids_header = headers.get("x-allowed-ids") or ""
+        # Resolve permissions from Redis (or OpenFGA on cache miss)
+        resolved_allowed_ids, perm_version = await _resolve_allowed_ids(
+            (user_id or ""), (tenant_id or "")
+        )
 
         tenant_token = tenant_id_var.set(tenant_id) if tenant_id else None
         user_token = user_id_var.set(user_id) if user_id else None
         schema_token = schema_readable_var.set(schema_readable)
         guest_anchor_token = guest_share_anchor_var.set(guest_share_anchor) if guest_share_anchor else None
-        allowed_ids_token = allowed_ids_var.set(allowed_ids_header) if allowed_ids_header else None
+        allowed_ids_token = allowed_ids_var.set(resolved_allowed_ids)
+        perm_version_token = perm_version_var.set(perm_version)
 
         try:
             await self.app(scope, receive, send)
@@ -533,8 +590,8 @@ class TenantASGIMiddleware:
                 user_id_var.reset(user_token)
             if guest_anchor_token:
                 guest_share_anchor_var.reset(guest_anchor_token)
-            if allowed_ids_token:
-                allowed_ids_var.reset(allowed_ids_token)
+            allowed_ids_var.reset(allowed_ids_token)
+            perm_version_var.reset(perm_version_token)
             schema_readable_var.reset(schema_token)
 
 app.add_middleware(TenantASGIMiddleware)

@@ -207,6 +207,30 @@ async def revoke_agent_session(agent_session_id: str, node_ids: list[str]) -> No
 
 
 # ---------------------------------------------------------------------------
+# Permission resolution helper (used by MCP and Bento Redis cache population)
+# ---------------------------------------------------------------------------
+
+async def list_viewable_node_ids(user_id: str) -> list[str] | None:
+    """Return all node UUIDs visible to a user via OpenFGA can_view relation.
+
+    Returns None when OpenFGA is not configured (OPENFGA_STORE_ID absent) —
+    callers treat None as legacy tenant_id-only mode.
+    Called on Redis cache miss; result is cached by the caller for 300s.
+    user_id is the raw Clerk sub (no "user:" prefix — added here).
+    """
+    if not os.environ.get("OPENFGA_STORE_ID"):
+        return None
+    async with _get_client() as fga:
+        resp = await fga.list_objects(ClientListObjectsRequest(
+            user=f"user:{user_id}",
+            relation="can_view",
+            type="node",
+            context={"current_time": datetime.now(timezone.utc).isoformat()},
+        ))
+        return [o.replace("node:", "") for o in (resp.objects or [])]
+
+
+# ---------------------------------------------------------------------------
 # Read helpers (used by share UI GET endpoint)
 # ---------------------------------------------------------------------------
 

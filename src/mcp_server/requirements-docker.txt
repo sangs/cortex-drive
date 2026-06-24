@@ -1,16 +1,10 @@
 pydantic
 markdown
-langchain
-langchain-openai
-langchain-neo4j
-langchain-experimental
-langgraph
 python-dotenv
 tqdm
 pypdf
 pandas
 neo4j
-litellm
 openai>=1.107.3
 numpy>=2.0.2
 nltk
@@ -21,3 +15,4 @@ sse-starlette
 baml-py
 openfga-sdk
 httpx
+redis>=5.0.0

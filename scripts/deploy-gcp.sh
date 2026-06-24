@@ -244,7 +244,8 @@ gcloud run deploy cortex-mcp \
     --max-instances 3 \
     --set-secrets "NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,\
 NEO4J_PASSWORD=NEO4J_PASSWORD:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,\
-TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest"
+TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
+REDIS_URL=REDIS_URL:latest"
 
 MCP_URL=$(gcloud run services describe cortex-mcp \
     --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
@@ -273,7 +274,8 @@ gcloud run deploy cortex-bento \
     --max-instances 3 \
     --set-secrets "NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,\
 NEO4J_PASSWORD=NEO4J_PASSWORD:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,\
-TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest"
+TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
+REDIS_URL=REDIS_URL:latest"
 
 BENTO_URL=$(gcloud run services describe cortex-bento \
     --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
@@ -342,7 +344,8 @@ TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
 GATEWAY_SHARE_SECRET=GATEWAY_SHARE_SECRET:latest,\
 OPENFGA_API_URL=OPENFGA_API_URL:latest,\
 OPENFGA_STORE_ID=OPENFGA_STORE_ID:latest,\
-OPENFGA_MODEL_ID=OPENFGA_MODEL_ID:latest"
+OPENFGA_MODEL_ID=OPENFGA_MODEL_ID:latest,\
+REDIS_URL=REDIS_URL:latest"
 
 GATEWAY_URL=$(gcloud run services describe cortex-gateway \
     --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')

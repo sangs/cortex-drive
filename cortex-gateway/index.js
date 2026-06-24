@@ -305,7 +305,7 @@ async function buildQ2WriterCall(node, openaiClient) {
  * Used to enrich top-2 Q2 nodes before writer calls, since search_enterprise_graph
  * only surfaces Note nodes (HAS_NOTE), not PreparatoryNote (HAS_PRIVATE_NOTE).
  */
-async function fetchNodeNarratives(node, tenantId, userId) {
+async function fetchNodeNarratives(node, tenantId, userId, guestShareAnchor = '') {
     const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     try {
         const bentoOidcToken = await getCloudRunToken(bentoBase);
@@ -315,6 +315,7 @@ async function fetchNodeNarratives(node, tenantId, userId) {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId,
                 'x-user-id': userId || '',
+                ...(guestShareAnchor ? { 'x-guest-share-anchor': guestShareAnchor } : {}),
                 ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify({ node_name: node.name }),
@@ -348,6 +349,15 @@ require('dotenv').config();
 
 // Initialize Semantic Cache (24h default TTL, check every 1h)
 const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
+
+// Redis client for permission resolution cache (Phase 2 + Phase 4)
+const Redis = require('ioredis');
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+});
+redis.on('error', (err) => console.warn('[REDIS] connection error (non-fatal):', err.message));
 
 // Ensure fetch is available globally (for orchestration)
 if (!global.fetch) {
@@ -406,6 +416,40 @@ async function getAllowedNodeIds(userId, agentSessionId = null) {
         console.warn('[FGA] listObjects failed (non-fatal):', err.message);
         return null; // fall back to legacy mode on FGA errors
     }
+}
+
+/**
+ * Resolve allowed_ids for a user — Redis cache first, OpenFGA fallback on miss.
+ * Writes result to Redis with 300s TTL. Also reads the per-tenant generation counter
+ * so callers can detect stale permission sets mid-request.
+ * Returns { allowedIds, permVersion } — both null-safe.
+ */
+async function resolveAndCachePermissions(userId, tenantId) {
+    const permKey = `perm:${userId}`;
+    const versionKey = `perm_version:${tenantId}`;
+    try {
+        const [cached, version] = await redis.mget(permKey, versionKey);
+        if (cached !== null) {
+            console.log(`[PERM-CACHE] hit user=${userId} version=${version || '0'}`);
+            return { allowedIds: JSON.parse(cached), permVersion: version || '0' };
+        }
+    } catch (redisErr) {
+        console.warn('[PERM-CACHE] Redis read failed, falling back to OpenFGA:', redisErr.message);
+    }
+
+    // Cache miss — resolve from OpenFGA
+    const allowedIds = await getAllowedNodeIds(userId);
+    const permVersion = await redis.get(versionKey).catch(() => '0') || '0';
+
+    if (allowedIds !== null) {
+        try {
+            await redis.setex(permKey, 300, JSON.stringify(allowedIds));
+            console.log(`[PERM-CACHE] miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
+        } catch (redisErr) {
+            console.warn('[PERM-CACHE] Redis write failed (non-fatal):', redisErr.message);
+        }
+    }
+    return { allowedIds, permVersion };
 }
 
 /**
@@ -590,6 +634,7 @@ app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
     try {
         const { makeNodeTenantWide } = require('./utils/openfga_gateway');
         await makeNodeTenantWide(fga, node_id, tenantId);
+        await redis.incr(`perm_version:${tenantId}`);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/tenant-wide]', err.message);
@@ -605,6 +650,8 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
     try {
         const { shareNodeWithUser } = require('./utils/openfga_gateway');
         await shareNodeWithUser(fga, node_id, targetSub, expiresAt || null);
+        const tenantId = req.headers['x-tenant-id'];
+        await redis.incr(`perm_version:${tenantId}`);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
@@ -620,6 +667,8 @@ app.post('/api/share/group', authMiddleware, async (req, res) => {
     try {
         const { shareNodeWithGroup } = require('./utils/openfga_gateway');
         await shareNodeWithGroup(fga, node_id, groupId, expiresAt || null);
+        const tenantId = req.headers['x-tenant-id'];
+        await redis.incr(`perm_version:${tenantId}`);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/group]', err.message);
@@ -632,9 +681,17 @@ app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
     if (!node_id || !subject || !relation) return res.status(400).json({ error: 'node_id, subject, relation required' });
     const fga = getFgaClient();
     if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    const tenantId = req.headers['x-tenant-id'];
     try {
         const { revokeNodeAccess } = require('./utils/openfga_gateway');
         await revokeNodeAccess(fga, node_id, subject, relation);
+        await redis.incr(`perm_version:${tenantId}`);
+        // If the subject is a specific user, immediately invalidate their cached permissions
+        // so the next request re-resolves from OpenFGA rather than serving stale access.
+        // subject format: "user:clerk_sub_id" — strip the "user:" prefix
+        if (subject.startsWith('user:')) {
+            await redis.del(`perm:${subject.slice(5)}`);
+        }
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/revoke]', err.message);
@@ -658,20 +715,19 @@ app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
 
 // --- LLM Orchestration Section ---
 
-async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}, allowedIds = null) {
+async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
 
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
 
-    // Build shared MCP headers — include OIDC token and allowed_ids for production
+    // MCP server resolves allowed_ids from Redis directly — no x-allowed-ids header needed.
     const oidcToken = await getCloudRunToken(mcpServerUrl);
     const mcpHeaders = {
         "x-tenant-id": tenantId,
         "x-user-id": userId,
         "x-schema-readable": schemaReadable ? "true" : "false",
         "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || '',
-        ...(allowedIds !== null ? { "x-allowed-ids": JSON.stringify(allowedIds) } : {}),
         ...(oidcToken ? { "Authorization": oidcToken } : {}),
     };
 
@@ -1120,8 +1176,9 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
     try {
         console.log(`[SSE] Starting orchestration for: ${query}`);
 
-        // OpenFGA: compute allowed node IDs before any MCP call
-        const allowedIds = await getAllowedNodeIds(userId);
+        // Seed Redis permission cache for this user before the orchestration loop starts.
+        // MCP server reads from Redis on each tool call — no allowed_ids in headers.
+        const { allowedIds, permVersion: _ssePV } = await resolveAndCachePermissions(userId, tenantId);
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
         console.log(`[FGA/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
 
@@ -1169,7 +1226,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                     console.log(`[SSE LOOP ${loopCount}] Executing ${toolName}`);
                     
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers, allowedIds);
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
 
                         // Extract text for LLM
                         let toolContent = JSON.stringify(mcpData);
@@ -1284,9 +1341,9 @@ app.post('/query', authMiddleware, async (req, res) => {
     try {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
 
-        // Cache lookup — keyed per tenant so tenants never share cached responses.
+        // Cache lookup — keyed per tenant AND user so permission-scoped responses are not shared.
         const cacheKey = crypto.createHash('sha256')
-            .update(`${tenantId}:${question.toLowerCase().trim()}`)
+            .update(`${tenantId}:${userId}:${question.toLowerCase().trim()}`)
             .digest('hex');
         if (!forceRefresh) {
             const cached = semanticCache.get(cacheKey);
@@ -1296,8 +1353,8 @@ app.post('/query', authMiddleware, async (req, res) => {
             }
         }
 
-        // OpenFGA: compute allowed node IDs before any MCP call
-        const allowedIds = await getAllowedNodeIds(userId);
+        // Seed Redis permission cache — MCP server reads from Redis per tool call.
+        const { allowedIds, permVersion: _queryPV } = await resolveAndCachePermissions(userId, tenantId);
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
         console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
 
@@ -1379,7 +1436,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));
 
                     try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers, allowedIds);
+                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
 
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
@@ -1450,7 +1507,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                             backbone_only: true,
                             depth: 1,
                             domain: 'professional'
-                        }, userId, false, {}, allowedIds);
+                        }, userId, false, {});
                         const backboneText = backboneMcp?.result?.content?.[0]?.text;
                         if (backboneText) {
                             const backboneParsed = JSON.parse(backboneText);
@@ -1481,7 +1538,7 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                             // Pre-fetch PreparatoryNote narratives in parallel, then run writer calls.
                             const enriched = await Promise.all(writerTargets.map(async n => {
-                                const bentoNarrative = await fetchNodeNarratives(n, tenantId, userId);
+                                const bentoNarrative = await fetchNodeNarratives(n, tenantId, userId, req.headers['x-guest-share-anchor'] || '');
                                 return bentoNarrative ? { ...n, text: bentoNarrative } : n;
                             }));
                             const writerResults = await Promise.all(enriched.map(n => buildQ2WriterCall(n, openai)));
@@ -1687,6 +1744,7 @@ app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('co
 app.post('/api/get_node_details', authMiddleware, async (req, res) => {
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || '';
+    const guestShareAnchor = req.headers['x-guest-share-anchor'] || '';
     try {
         const bentoOidcToken = await getCloudRunToken(bentoServerUrl);
         const bentoResponse = await fetch(`${bentoServerUrl}/get_node_details`, {
@@ -1695,6 +1753,7 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId || '',
                 'x-user-id': userId,
+                ...(guestShareAnchor ? { 'x-guest-share-anchor': guestShareAnchor } : {}),
                 ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify(req.body),
