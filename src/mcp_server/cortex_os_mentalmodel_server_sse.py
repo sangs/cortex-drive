@@ -27,6 +27,9 @@ user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", def
 schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
 # Contextvar to hold the authorized node ID for Guest Share Tokens
 guest_share_anchor_var: contextvars.ContextVar[str] = contextvars.ContextVar("guest_share_anchor", default="")
+# Log prefix for all permission cache operations (Redis hit/miss/error)
+LOG_PERM_CACHE = "[PERM-CACHE/MCP]"
+
 # Contextvar to hold resolved allowed node IDs (list | None; None = legacy tenant_id mode)
 allowed_ids_var: contextvars.ContextVar[list | None] = contextvars.ContextVar("allowed_ids", default=None)
 # Contextvar to hold perm_version at request start for staleness detection
@@ -54,10 +57,10 @@ async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | Non
     try:
         cached, version = await _redis.mget(perm_key, version_key)
         if cached is not None:
-            print(f"[PERM-CACHE/MCP] hit user={user_id} version={version or '0'}")
+            print(f"{LOG_PERM_CACHE} hit user={user_id} version={version or '0'}")
             return json.loads(cached), version or "0"
     except Exception as e:
-        print(f"[PERM-CACHE/MCP] Redis read failed, falling back to OpenFGA: {e}")
+        print(f"{LOG_PERM_CACHE} Redis read failed, falling back to OpenFGA: {e}")
     # Cache miss — resolve from OpenFGA
     from openfga_utils import list_viewable_node_ids
     allowed_ids = await list_viewable_node_ids(user_id)
@@ -66,9 +69,9 @@ async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | Non
         version = await _redis.get(version_key) or "0"
         if allowed_ids is not None:
             await _redis.setex(perm_key, 300, json.dumps(allowed_ids))
-            print(f"[PERM-CACHE/MCP] miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
+            print(f"{LOG_PERM_CACHE} miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
     except Exception as e:
-        print(f"[PERM-CACHE/MCP] Redis write failed (non-fatal): {e}")
+        print(f"{LOG_PERM_CACHE} Redis write failed (non-fatal): {e}")
     return allowed_ids, version
 
 
@@ -85,7 +88,7 @@ async def _get_current_allowed_ids() -> list | None:
     try:
         current_version = await _redis.get(f"perm_version:{tenant_id}") or "0"
         if current_version != perm_version_var.get():
-            print(f"[PERM-CACHE/MCP] version stale (stored={perm_version_var.get()} current={current_version}) — re-resolving")
+            print(f"{LOG_PERM_CACHE} version stale (stored={perm_version_var.get()} current={current_version}) — re-resolving")
             allowed_ids, new_version = await _resolve_allowed_ids(user_id, tenant_id)
             allowed_ids_var.set(allowed_ids)
             perm_version_var.set(new_version)

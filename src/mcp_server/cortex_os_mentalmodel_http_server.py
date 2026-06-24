@@ -14,6 +14,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Log prefix for all permission cache operations (Redis hit/miss/error)
+LOG_PERM_CACHE = "[PERM-CACHE/BENTO]"
+
 # Sync Redis client — Bento uses BaseHTTPRequestHandler (no event loop)
 _redis = redis_lib.Redis.from_url(
     os.environ.get("REDIS_URL", "redis://localhost:6379"),
@@ -37,17 +40,17 @@ def _resolve_allowed_ids_sync(user_id: str, tenant_id: str) -> list | None:
         if cached is not None:
             return json.loads(cached)
     except Exception as e:
-        print(f"[PERM-CACHE/BENTO] Redis read failed: {e}")
+        print(f"{LOG_PERM_CACHE} Redis read failed: {e}")
     # Cache miss — call OpenFGA via asyncio.run (safe: Bento has no running event loop)
     try:
         from openfga_utils import list_viewable_node_ids
         allowed_ids = asyncio.run(list_viewable_node_ids(user_id))
         if allowed_ids is not None:
             _redis.setex(perm_key, 300, json.dumps(allowed_ids))
-            print(f"[PERM-CACHE/BENTO] miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
+            print(f"{LOG_PERM_CACHE} miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
         return allowed_ids
     except Exception as e:
-        print(f"[PERM-CACHE/BENTO] OpenFGA fallback failed (non-fatal): {e}")
+        print(f"{LOG_PERM_CACHE} OpenFGA fallback failed (non-fatal): {e}")
         return None
 
 

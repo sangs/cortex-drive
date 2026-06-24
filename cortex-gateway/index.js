@@ -350,6 +350,9 @@ require('dotenv').config();
 // Initialize Semantic Cache (24h default TTL, check every 1h)
 const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
 
+// Log prefix for all permission cache operations (Redis hit/miss/error)
+const LOG_PERM_CACHE = '[PERM-CACHE]';
+
 // Redis client for permission resolution cache (Phase 2 + Phase 4)
 const Redis = require('ioredis');
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
@@ -430,11 +433,11 @@ async function resolveAndCachePermissions(userId, tenantId) {
     try {
         const [cached, version] = await redis.mget(permKey, versionKey);
         if (cached !== null) {
-            console.log(`[PERM-CACHE] hit user=${userId} version=${version || '0'}`);
+            console.log(`${LOG_PERM_CACHE} hit user=${userId} version=${version || '0'}`);
             return { allowedIds: JSON.parse(cached), permVersion: version || '0' };
         }
     } catch (redisErr) {
-        console.warn('[PERM-CACHE] Redis read failed, falling back to OpenFGA:', redisErr.message);
+        console.warn(`${LOG_PERM_CACHE} Redis read failed, falling back to OpenFGA:`, redisErr.message);
     }
 
     // Cache miss — resolve from OpenFGA
@@ -444,9 +447,9 @@ async function resolveAndCachePermissions(userId, tenantId) {
     if (allowedIds !== null) {
         try {
             await redis.setex(permKey, 300, JSON.stringify(allowedIds));
-            console.log(`[PERM-CACHE] miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
+            console.log(`${LOG_PERM_CACHE} miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
         } catch (redisErr) {
-            console.warn('[PERM-CACHE] Redis write failed (non-fatal):', redisErr.message);
+            console.warn(`${LOG_PERM_CACHE} Redis write failed (non-fatal):`, redisErr.message);
         }
     }
     return { allowedIds, permVersion };
