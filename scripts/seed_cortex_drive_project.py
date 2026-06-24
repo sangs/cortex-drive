@@ -150,6 +150,11 @@ def run():
                 print(f"    ERROR: {e}")
             print()
 
+        # Stamp stable node_id on any node that lacks one (idempotent)
+        print("  Running: node_id backfill...")
+        session.run("MATCH (n) WHERE n.node_id IS NULL SET n.node_id = randomUUID()")
+        print("    → done")
+
     driver.close()
     print("Done. Cortex-Drive project node seeded.")
     print("\nNext: ask 'How did Sangeetha thought leadership influence Cortex-Drive?'")

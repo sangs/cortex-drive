@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "user"
+    },
+    {
+      "type": "org",
+      "relations": {
+        "member": {
+          "this": {}
+        },
+        "admin": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [{ "type": "user" }]
+          },
+          "admin": {
+            "directly_related_user_types": [{ "type": "user" }]
+          }
+        }
+      }
+    },
+    {
+      "type": "group",
+      "relations": {
+        "member": {
+          "this": {}
+        },
+        "admin": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "org", "relation": "member" }
+            ]
+          },
+          "admin": {
+            "directly_related_user_types": [{ "type": "user" }]
+          }
+        }
+      }
+    },
+    {
+      "type": "agent",
+      "relations": {
+        "delegated_by": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "delegated_by": {
+            "directly_related_user_types": [{ "type": "user" }]
+          }
+        }
+      }
+    },
+    {
+      "type": "node",
+      "relations": {
+        "owner": {
+          "this": {}
+        },
+        "tenant_viewer": {
+          "this": {}
+        },
+        "shared_viewer": {
+          "this": {}
+        },
+        "can_view": {
+          "union": {
+            "child": [
+              { "computedUserset": { "relation": "owner" } },
+              { "computedUserset": { "relation": "tenant_viewer" } },
+              { "computedUserset": { "relation": "shared_viewer" } }
+            ]
+          }
+        },
+        "can_share": {
+          "computedUserset": { "relation": "owner" }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "owner": {
+            "directly_related_user_types": [{ "type": "user" }]
+          },
+          "tenant_viewer": {
+            "directly_related_user_types": [
+              { "type": "org", "relation": "member" }
+            ]
+          },
+          "shared_viewer": {
+            "directly_related_user_types": [
+              { "type": "user", "condition": "not_expired" },
+              { "type": "group", "relation": "member", "condition": "not_expired" },
+              { "type": "agent", "condition": "not_expired" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "conditions": {
+    "not_expired": {
+      "name": "not_expired",
+      "expression": "current_time < expires_at",
+      "parameters": {
+        "current_time": { "type_name": "TYPE_NAME_TIMESTAMP" },
+        "expires_at": { "type_name": "TYPE_NAME_TIMESTAMP" }
+      }
+    }
+  }
+}

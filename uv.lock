@@ -379,6 +379,7 @@ dependencies = [
     { name = "nltk" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "openfga-sdk" },
     { name = "pandas" },
     { name = "pydantic" },
     { name = "pypdf" },
@@ -407,6 +408,7 @@ requires-dist = [
     { name = "nltk" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "openai", specifier = ">=1.107.3" },
+    { name = "openfga-sdk", specifier = ">=0.10.3" },
     { name = "pandas" },
     { name = "pydantic" },
     { name = "pypdf" },
@@ -2096,6 +2098,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e3/24/7fb5749bcf66b52209e3ece05cb4eaeae2102e95f8ae77589e8afaf70ba8/openai-1.107.3.tar.gz", hash = "sha256:69bb8032b05c5f00f7660e422f70f9aabc94793b9a30c5f899360ed21e46314f", size = 564194, upload-time = "2025-09-15T20:09:20.159Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/1d/58ad0084451f64a9193de48c0afd63047682ffdedb6ae1d494a203e03fd5/openai-1.107.3-py3-none-any.whl", hash = "sha256:4ca54a847235ac04c6320da70fdc06b62d71439de9ec0aa40d5690c3064d4025", size = 947600, upload-time = "2025-09-15T20:09:18.219Z" },
+]
+
+[[package]]
+name = "openfga-sdk"
+version = "0.10.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "opentelemetry-api" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/ce/ac103e36dd9a447186fbc1b816381c45629a1495ce790317951e89acfecc/openfga_sdk-0.10.3.tar.gz", hash = "sha256:02f5514d2fd09bcac07c295ab7a60998ca3dd817ca3af6676ff9c0817e80a110", size = 346509, upload-time = "2026-05-04T08:11:53.717Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/09/8e56c4c8604d42d939ddd90c69b2cae12f7e2e0a4675adbd158be53baff5/openfga_sdk-0.10.3-py3-none-any.whl", hash = "sha256:ece8e56ee39dd4ed6d5eea840508341c251b654e27d6282dbf0fdffbe80795fb", size = 266743, upload-time = "2026-05-04T08:11:51.676Z" },
 ]
 
 [[package]]

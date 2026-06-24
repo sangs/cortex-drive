@@ -5,12 +5,50 @@ Exposes search_episodes_gds_by_question_tool via HTTP endpoint for Toolbox
 
 import json
 import os
+import asyncio
+import redis as redis_lib
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from expert_tools import ExpertTools
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Sync Redis client — Bento uses BaseHTTPRequestHandler (no event loop)
+_redis = redis_lib.Redis.from_url(
+    os.environ.get("REDIS_URL", "redis://localhost:6379"),
+    decode_responses=True,
+    socket_connect_timeout=1,
+    socket_timeout=1,
+)
+
+
+def _resolve_allowed_ids_sync(user_id: str, tenant_id: str) -> list | None:
+    """Resolve allowed node IDs for Bento (sync path).
+
+    Returns None when OpenFGA is unconfigured → legacy tenant_id-only mode.
+    Redis hit avoids an OpenFGA round-trip on every node-details request.
+    """
+    if not user_id:
+        return None
+    perm_key = f"perm:{user_id}"
+    try:
+        cached = _redis.get(perm_key)
+        if cached is not None:
+            return json.loads(cached)
+    except Exception as e:
+        print(f"[PERM-CACHE/BENTO] Redis read failed: {e}")
+    # Cache miss — call OpenFGA via asyncio.run (safe: Bento has no running event loop)
+    try:
+        from openfga_utils import list_viewable_node_ids
+        allowed_ids = asyncio.run(list_viewable_node_ids(user_id))
+        if allowed_ids is not None:
+            _redis.setex(perm_key, 300, json.dumps(allowed_ids))
+            print(f"[PERM-CACHE/BENTO] miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
+        return allowed_ids
+    except Exception as e:
+        print(f"[PERM-CACHE/BENTO] OpenFGA fallback failed (non-fatal): {e}")
+        return None
 
 
 class ToolHandler(BaseHTTPRequestHandler):
@@ -63,8 +101,11 @@ class ToolHandler(BaseHTTPRequestHandler):
                 
                 tenant_id = self.headers.get("x-tenant-id") or os.environ.get("TENANT_ID", "org_3AacpFBbt39hPmDKyZyNBQuuM6t")
                 user_id = self.headers.get("x-user-id") or ""
-                
-                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id)
+                guest_share_anchor = self.headers.get("x-guest-share-anchor") or ""
+                allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
+
+                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
+                                     guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
                 try:
                     result_str = expert.get_node_details(node_id=node_id, node_name=node_name)
                     result = json.loads(result_str)

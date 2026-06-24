@@ -18,10 +18,12 @@ from neo4j_serialization import neo4j_default, neo4j_json_dumps
 class ExpertTools:
     """Expert tools for querying the Neo4j podcast episode graph"""
     
-    def __init__(self, tenant_id: str, requesting_user_id: str = "", guest_share_anchor: str = ""):
+    def __init__(self, tenant_id: str, requesting_user_id: str = "", guest_share_anchor: str = "", allowed_ids: list = None):
         self.tenant_id = tenant_id
         self.requesting_user_id = requesting_user_id
         self.guest_share_anchor = guest_share_anchor
+        # None = OpenFGA not configured; use tenant_id fallback. [] = configured but empty (restricted).
+        self.allowed_ids = allowed_ids
         # Initialize clients
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.driver = GraphDatabase.driver(
@@ -31,27 +33,49 @@ class ExpertTools:
     
     def _get_security_clause(self, node_var: str) -> str:
         """
-        Unified Zero-Trust ReBAC security clause.
-        Matches the identity migration spec:
-          - SYSTEM/PUBLIC nodes are globally visible (tenant_id IN ['SYSTEM','PUBLIC'])
-          - PRIVATE nodes require matching tenant AND (owner or HAS_ACCESS grant)
+        Authorization clause. OpenFGA mode when allowed_ids list is provided by gateway.
+        Falls back to tenant_id filtering when OpenFGA is not configured (allowed_ids=None).
         """
-        return f"""
-        (
-            {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC']
-            OR (
-                {node_var}.tenant_id = $tenant_id
-                AND (
-                    {node_var}.owner_id = $requesting_user_id
-                    OR EXISTS {{ (u:User {{id: $requesting_user_id}})-[:HAS_ACCESS*1..2]->({node_var}) }}
-                )
-            )
-        )
+        if self.allowed_ids is None:
+            return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+        # Guest/share mode: strictly bounded to the granted node_id list (no tenant fallback).
+        if self.guest_share_anchor:
+            return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
+        # Org-member OpenFGA mode: node_id list + tenant_id fallback (defense-in-depth).
+        # Fallback guards against missing bootstrap node_ids silently excluding org-owned nodes.
+        return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+
+    def _security_params(self) -> dict:
+        """Returns the kwargs for _exec_query matched to _get_security_clause."""
+        if self.allowed_ids is None:
+            return {"tenant_id": self.tenant_id}
+        if not self.guest_share_anchor:
+            # Non-guest OpenFGA: pass both so $tenant_id in the dual-check clause is bound.
+            return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
+        return {"allowed_ids": self.allowed_ids}
+
+    def _apply_security(self, query: str, *node_vars: str) -> str:
+        """Replace hardcoded OpenFGA $allowed_ids clauses with the dual-mode security clause.
+        Used for inline query strings that were written with the OpenFGA clause hardcoded.
         """
+        result = query
+        for nv in node_vars:
+            old = f"(elementId({nv}) IN $allowed_ids OR {nv}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
+            result = result.replace(old, self._get_security_clause(nv))
+        return result
+
+    # Node variables that may appear in inline security clauses.
+    _INLINE_NODE_VARS = (
+        "e", "n", "c", "chunk", "seedEpisode", "similarEpisode",
+        "episode", "anchor", "expandedNode", "parentEpisode"
+    )
 
     def _exec_query(self, query: str, **kwargs: Any):
-        """Execute a parameterized Cypher query. cast() satisfies Pylance's LiteralString requirement — all user values are passed as $params, never interpolated."""
-        return self.driver.execute_query(cast(LiteralString, query), **kwargs)
+        """Execute a parameterized Cypher query with dual-mode security substitution.
+        cast() satisfies Pylance's LiteralString requirement — all user values are $params.
+        """
+        q = self._apply_security(query, *self._INLINE_NODE_VARS)
+        return self.driver.execute_query(cast(LiteralString, q), **kwargs)
 
     def _fragment_taxonomy_expansion(self) -> str:
         query = """
@@ -284,13 +308,12 @@ class ExpertTools:
         """
         
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
-            requesting_user_id=self.requesting_user_id,
-            embedding=embedding, 
+            query,
+            **self._security_params(),
+            embedding=embedding,
             top_k=top_k
         )
-        
+
         # Convert result to list of dictionaries
         chunks = []
         for record in result.records:
@@ -333,19 +356,17 @@ class ExpertTools:
         
         try:
             v_res = self._exec_query(
-                vector_query, 
-                embedding=embedding, 
-                top_k=top_k, 
+                vector_query,
+                embedding=embedding,
+                top_k=top_k,
                 question=question,
-                tenant_id=self.tenant_id,
-                requesting_user_id=self.requesting_user_id
+                **self._security_params(),
             )
             k_res = self._exec_query(
-                keyword_query, 
-                question=question, 
+                keyword_query,
+                question=question,
                 top_k=top_k,
-                tenant_id=self.tenant_id,
-                requesting_user_id=self.requesting_user_id
+                **self._security_params(),
             )
             
             # Reciprocal Rank Fusion (RRF)
@@ -377,10 +398,9 @@ class ExpertTools:
                 LIMIT 1
                 """
                 meta_res = self._exec_query(
-                    meta_query, 
-                    text=text, 
-                    tenant_id=self.tenant_id,
-                    requesting_user_id=self.requesting_user_id
+                    meta_query,
+                    text=text,
+                    **self._security_params(),
                 )
                 if meta_res.records:
                     meta = meta_res.records[0]
@@ -415,13 +435,12 @@ class ExpertTools:
         """
         
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
-            requesting_user_id=self.requesting_user_id,
-            embedding=embedding, 
+            query,
+            **self._security_params(),
+            embedding=embedding,
             top_k=top_k
         )
-        
+
         chunks = []
         for record in result.records:
             chunks.append({
@@ -438,11 +457,11 @@ class ExpertTools:
         """
         Search for episodes that contain specific topics or keywords.
         """
-        query = """
+        query = self._apply_security("""
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         MATCH (e)-[:HAS_TOPIC]->(t:Topic)
-        WHERE toLower(t.name) CONTAINS toLower($question) OR 
+        WHERE toLower(t.name) CONTAINS toLower($question) OR
               toLower(e.name) CONTAINS toLower($question) OR
               toLower(e.description) CONTAINS toLower($question)
         RETURN DISTINCT e.name AS episode_name,
@@ -453,13 +472,12 @@ class ExpertTools:
                $question AS matched_term
         ORDER BY e.number DESC
         LIMIT 10
-        """
-        
+        """, "e")
+
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             question=question,
-            requesting_user_id=self.requesting_user_id
         )
         
         episodes = []
@@ -480,11 +498,11 @@ class ExpertTools:
         Gets the behavior context for how to use & access graph data.
         """
         if use_case:
-            query = "MATCH (n:__MetaContext__ {useCase: $use_case}) WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n))) RETURN n.context AS context"
-            result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, use_case=use_case)
+            query = self._apply_security("MATCH (n:__MetaContext__ {useCase: $use_case}) WHERE (elementId(n) IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC']) RETURN n.context AS context", "n")
+            result = self._exec_query(query, **self._security_params(), use_case=use_case)
         else:
-            query = "MATCH (n:__MetaContext__) WHERE (n.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(n))) RETURN n.context AS context"
-            result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
+            query = self._apply_security("MATCH (n:__MetaContext__) WHERE (elementId(n) IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC']) RETURN n.context AS context", "n")
+            result = self._exec_query(query, **self._security_params())
             
         if result.records:
             return "\n\n".join([r['context'] for r in result.records if r['context']])
@@ -509,12 +527,11 @@ class ExpertTools:
         """
         
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             question=question,
-            requesting_user_id=self.requesting_user_id
         )
-        
+
         people = []
         for record in result.records:
             people.append({
@@ -535,11 +552,11 @@ class ExpertTools:
         query = """
         WITH split(toLower($question), ' ') AS keywords
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         MATCH (e)-[:HAS_TOPIC|SIMILAR|IS_SIMILAR|DISCUSSES|COVERS_CONCEPT|COVERS_TECHNOLOGY*1..2]-(c)
         WHERE any(label IN labels(c) WHERE label IN ["Concept", "Technology", "Topic"])
           AND (
-            any(word IN keywords WHERE toLower(c.name) CONTAINS word) OR 
+            any(word IN keywords WHERE toLower(c.name) CONTAINS word) OR
             any(word IN keywords WHERE toLower(c.description) CONTAINS word)
           )
         RETURN DISTINCT e.name AS episode_name,
@@ -551,14 +568,13 @@ class ExpertTools:
         ORDER BY e.number DESC
         LIMIT 10
         """
-        
+
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             question=question,
-            requesting_user_id=self.requesting_user_id
         )
-        
+
         concepts = []
         for record in result.records:
             concepts.append({
@@ -579,7 +595,7 @@ class ExpertTools:
         query = """
         WITH split(toLower($question), ' ') AS keywords
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         MATCH (e)-[:HAS_TOPIC|SIMILAR|IS_SIMILAR|DISCUSSES|COVERS_TECHNOLOGY*1..2]-(tech:Technology)
         WHERE any(word IN keywords WHERE toLower(tech.name) CONTAINS word)
         RETURN DISTINCT e.name AS episode_name,
@@ -590,12 +606,11 @@ class ExpertTools:
         ORDER BY e.number DESC
         LIMIT 10
         """
-        
+
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             question=question,
-            requesting_user_id=self.requesting_user_id
         )
         
         technologies = []
@@ -616,7 +631,7 @@ class ExpertTools:
         """
         query = """
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
         OPTIONAL MATCH (e)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
         OPTIONAL MATCH (e)-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(c:Chunk)
@@ -625,8 +640,8 @@ class ExpertTools:
                count(DISTINCT r) AS total_reference_links,
                count(DISTINCT c) AS total_chunks
         """
-        
-        result = self._exec_query(query, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id)
+
+        result = self._exec_query(query, **self._security_params())
         record = result.records[0]
         
         stats = {
@@ -644,9 +659,9 @@ class ExpertTools:
         """
         query = """
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         MATCH (e)-[:HAS_REFERENCE_LINK]->(r:ReferenceLink)
-        WHERE toLower(r.url) CONTAINS toLower($reference_string) OR 
+        WHERE toLower(r.url) CONTAINS toLower($reference_string) OR
               toLower(r.text) CONTAINS toLower($reference_string)
         RETURN e.name AS episode_name,
                e.number AS episode_number,
@@ -657,12 +672,11 @@ class ExpertTools:
                $reference_string AS matched_term
         ORDER BY e.number DESC
         """
-        
+
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             reference_string=reference_string,
-            requesting_user_id=self.requesting_user_id
         )
         
         episodes = []
@@ -682,17 +696,14 @@ class ExpertTools:
     def detect_embedding_model(self) -> str:
         """Detect which embedding model was used for chunks by checking dimensions"""
         query = """
-        MATCH (c:Chunk {tenant_id: $tenant_id})
-        WHERE c.embedding IS NOT NULL
+        MATCH (c:Chunk)
+        WHERE (elementId(c) IN $allowed_ids OR c.tenant_id IN ['SYSTEM', 'PUBLIC'])
+          AND c.embedding IS NOT NULL
         RETURN c.embedding AS embedding
         LIMIT 1
         """
-        
-        result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id,
-            requesting_user_id=self.requesting_user_id
-        )
+
+        result = self._exec_query(query, **self._security_params())
         if result.records:
             embedding = result.records[0]['embedding']
             if embedding:
@@ -712,7 +723,7 @@ class ExpertTools:
         question_embedding = self.get_embedding(question, model="text-embedding-3-small")
         
         with self.driver.session() as session:
-            result = session.run("""
+            _gds_query = self._apply_security("""
                 WITH split($question, ' ') AS keywords
                 CALL db.index.vector.queryNodes(
                     'chunkIndex',
@@ -721,10 +732,10 @@ class ExpertTools:
                 )
                 YIELD node AS chunk, score AS indexScore
 
-                MATCH (seedEpisode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
-                WHERE (seedEpisode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(seedEpisode)))
-                OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode {tenant_id: $tenant_id})
-                WHERE (similarEpisode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(similarEpisode)))
+                MATCH (seedEpisode:Episode)-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
+                WHERE (elementId(seedEpisode) IN $allowed_ids OR seedEpisode.tenant_id IN ['SYSTEM', 'PUBLIC'])
+                OPTIONAL MATCH (seedEpisode)-[r:SEMANTICALLY_SIMILAR_KNN]->(similarEpisode:Episode)
+                WHERE (elementId(similarEpisode) IN $allowed_ids OR similarEpisode.tenant_id IN ['SYSTEM', 'PUBLIC'])
 
                 RETURN DISTINCT
                     seedEpisode.name AS SeedEpisode,
@@ -733,11 +744,12 @@ class ExpertTools:
                     similarEpisode.name AS SimilarEpisode,
                     similarEpisode.number AS SimilarEpisodeNumber,
                     r.knn_score AS KNN_Similarity_Score
-                ORDER BY 
+                ORDER BY
                     SeedEpisode_IndexScore DESC,
                     KNN_Similarity_Score DESC
                 LIMIT $limit
-            """, questionEmbedding=question_embedding, k=k, limit=limit, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, question=question)
+            """, "seedEpisode", "similarEpisode")
+            result = session.run(_gds_query, questionEmbedding=question_embedding, k=k, limit=limit, **self._security_params(), question=question)
             
             results = []
             for record in result:
@@ -759,7 +771,7 @@ class ExpertTools:
         question_embedding = self.get_embedding(question, model="text-embedding-3-small")
         
         with self.driver.session() as session:
-            result = session.run("""
+            _vec_query = self._apply_security("""
                 WITH split($question, ' ') AS keywords
                 CALL db.index.vector.queryNodes(
                     'chunkIndex',
@@ -767,20 +779,21 @@ class ExpertTools:
                     $questionEmbedding
                 )
                 YIELD node AS chunk, score
-                MATCH (episode:Episode {tenant_id: $tenant_id})-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
-                WHERE (episode.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(episode)))
+                MATCH (episode:Episode)-[:HAS_SOURCE]->(s:Source)-[:CONTAINS]->(chunk)
+                WHERE (elementId(episode) IN $allowed_ids OR episode.tenant_id IN ['SYSTEM', 'PUBLIC'])
                 OPTIONAL MATCH (episode)-[:HAS_TOPIC]->(t:Topic)
                 OPTIONAL MATCH (p:Person)-[]-(episode)
                 RETURN
                     episode.name AS EpisodeTitle,
                     episode.number AS EpisodeNumber,
-                    chunk.text AS ChunkContent, 
+                    chunk.text AS ChunkContent,
                     score AS SimilarityScore,
                     collect(DISTINCT t.name) AS Topics,
                     collect(DISTINCT p.name) AS People
                 ORDER BY
                     SimilarityScore DESC
-            """, questionEmbedding=question_embedding, k=k, tenant_id=self.tenant_id, requesting_user_id=self.requesting_user_id, question=question)
+            """, "episode")
+            result = session.run(_vec_query, questionEmbedding=question_embedding, k=k, **self._security_params(), question=question)
             
             results = []
             for record in result:
@@ -800,21 +813,21 @@ class ExpertTools:
         Find all people associated with a specific episode.
         """
         query = """
-        MATCH (e:Episode {tenant_id: $tenant_id})-[r]-(p:Person)
-        WHERE toLower(e.name) CONTAINS toLower($episode_name)
-        RETURN p.name AS person_name, 
+        MATCH (e:Episode)-[r]-(p:Person)
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
+          AND toLower(e.name) CONTAINS toLower($episode_name)
+        RETURN p.name AS person_name,
                type(r) AS relationship,
                e.name AS episode_title,
                e.number AS episode_number
         LIMIT 20
         """
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id, 
+            query,
+            **self._security_params(),
             episode_name=episode_name,
-            requesting_user_id=self.requesting_user_id
         )
-        
+
         people = []
         for record in result.records:
             people.append({
@@ -833,20 +846,16 @@ class ExpertTools:
         """
         query = """
         MATCH (e:Episode)
-        WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
+        WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
         OPTIONAL MATCH (p:Person)-[r:HOSTS|GUEST_ON]->(e)
-        RETURN e.name AS episode_name, 
+        RETURN e.name AS episode_name,
                e.number AS episode_number,
                e.link AS episode_link,
                e.description AS description,
                collect({name: p.name, role: type(r)}) AS cast
         ORDER BY e.number DESC
         """
-        result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id,
-            requesting_user_id=self.requesting_user_id
-        )
+        result = self._exec_query(query, **self._security_params())
         
         episodes = []
         for record in result.records:
@@ -876,15 +885,15 @@ class ExpertTools:
                 continue
 
             query = """
-            MATCH (e:Episode {tenant_id: $tenant_id, name: $episode_name})
-            WHERE (e.tenant_id = $tenant_id OR EXISTS((:User {id: $requesting_user_id})-[:HAS_ACCESS]->(e)))
-            
+            MATCH (e:Episode {name: $episode_name})
+            WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC'])
+
             OPTIONAL MATCH (p:Person)-[r]-(e)
             WHERE type(r) IN ['HOSTS', 'GUEST_ON']
-            
+
             OPTIONAL MATCH (e)-[:HAS_TOPIC]->(t:Topic)
             OPTIONAL MATCH (t)-[:COVERS_TECHNOLOGY]->(tech:Technology)
-    
+
             RETURN e.name AS episode_title,
                    e.number AS episode_number,
                    e.description AS episode_description,
@@ -894,13 +903,12 @@ class ExpertTools:
                    collect(DISTINCT tech.name) AS technologies
             LIMIT 1
             """
-            
+
             try:
                 result = self._exec_query(
-                    query, 
-                    tenant_id=self.tenant_id, 
+                    query,
+                    **self._security_params(),
                     episode_name=episode_name,
-                    requesting_user_id=self.requesting_user_id
                 )
                 
                 if not result.records:
@@ -967,9 +975,8 @@ class ExpertTools:
 
         try:
             result = self._exec_query(
-                query, 
-                tenant_id=self.tenant_id,
-                requesting_user_id=requesting_user_id or self.requesting_user_id
+                query,
+                **self._security_params(),
             )
             output = [record.data() for record in result.records]
             return json.dumps(output, indent=2)
@@ -1004,15 +1011,15 @@ class ExpertTools:
                narratives,
                guests,
                elementId(n) AS element_id,
+               n.node_id AS node_id,
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
         """
         result = self._exec_query(
-            query, 
-            tenant_id=self.tenant_id,
+            query,
+            **self._security_params(),
             node_id=node_id,
             node_name=node_name,
-            requesting_user_id=self.requesting_user_id
         )
         
         if not result.records:
@@ -1066,8 +1073,7 @@ class ExpertTools:
                 query,
                 node_id=node_id,
                 node_name=node_name,
-                tenant_id=self.tenant_id,
-                requesting_user_id=self.requesting_user_id,
+                **self._security_params(),
                 allowed_labels=DISCOVERY_LABELS
             )
             
@@ -1176,6 +1182,7 @@ class ExpertTools:
         WITH allNodes, allRels,
              collect(DISTINCT {{
                 id: elementId(node),
+                node_id: node.node_id,
                 name: node.name,
                 type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
@@ -1222,9 +1229,8 @@ class ExpertTools:
 
             print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id}")
             result = self._exec_query(
-                query, 
-                tenant_id=self.tenant_id,
-                requesting_user_id=requesting_user_id,
+                query,
+                **self._security_params(),
                 keyword=keyword,
                 keywords=keywords_list,
                 anchorLabels=anchor_labels,
@@ -1250,9 +1256,8 @@ class ExpertTools:
                 """
                 result = self._exec_query(
                     fallback_query,
-                    tenant_id=self.tenant_id,
+                    **self._security_params(),
                     embedding=embedding,
-                    requesting_user_id=requesting_user_id
                 )
 
             backbone_labels = get_backbone_labels()
@@ -1399,6 +1404,7 @@ class ExpertTools:
         MATCH (n)
         WHERE (elementId(n) = $node_name OR toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name)
           AND ({sec_n})
+          AND NOT n:{bridge_labels}
         
         OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m)
         WHERE ({sec_m})
@@ -1420,17 +1426,18 @@ class ExpertTools:
         OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
         WHERE ({sec_note})
 
-        WITH n, node, rel, roleRel, 
+        WITH node, rel, roleRel,
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
              collect(DISTINCT tech.name) AS cluster_tech_urls,
              collect(DISTINCT note.text) AS notes
 
-        WITH n, node, rel, roleRel, cluster_tech_urls, notes,
+        WITH node, rel, roleRel, cluster_tech_urls, notes,
              apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links
 
-        WITH n,
+        WITH
              collect(DISTINCT {
                 id: elementId(node),
+                node_id: node.node_id,
                 name: node.name,
                 type: CASE
                     WHEN 'Category' IN labels(node) THEN 'Category'
@@ -1505,9 +1512,8 @@ class ExpertTools:
             from domain_registry import get_backbone_labels
             backbone_labels_list = get_backbone_labels(domain)
             result = self._exec_query(
-                query, 
-                tenant_id=self.tenant_id,
-                requesting_user_id=self.requesting_user_id,
+                query,
+                **self._security_params(),
                 node_name=node_name,
                 backbone_labels_list=backbone_labels_list,
                 authorized_labels=authorized_labels,
@@ -1614,6 +1620,7 @@ class ExpertTools:
              collect(DISTINCT {{
                 name: sharedAnchor.name,
                 element_id: elementId(sharedAnchor),
+                node_id: sharedAnchor.node_id,
                 type: labels(sharedAnchor)[0],
                 anchor_element_id: elementId(sharedAnchor)
              }}) AS sharedAnchors
@@ -1622,6 +1629,7 @@ class ExpertTools:
         RETURN
             elementId(source) AS source_eid,
             elementId(target) AS target_eid,
+            target.node_id AS target_node_id,
             target.name AS target_name,
             labels(target)[0] AS target_type,
             target.description AS target_description,
@@ -1634,8 +1642,10 @@ class ExpertTools:
         try:
             result = self._exec_query(
                 query,
-                tenant_id=self.tenant_id,
-                requesting_user_id=self.requesting_user_id,
+                **self._security_params(),
+                # sec_source_read always uses $tenant_id. _security_params() omits tenant_id
+                # only in guest_share_anchor mode — supply it there explicitly.
+                **({"tenant_id": self.tenant_id} if self.guest_share_anchor else {}),
                 source_node_id=source_node_id or "",
                 source_node_name=source_node_name or "",
                 target_domain_labels=target_domain_labels,
@@ -1671,6 +1681,7 @@ class ExpertTools:
                     nodes.append({
                         "id": target_eid,
                         "element_id": target_eid,
+                        "node_id": record.get("target_node_id"),
                         "name": target_name,
                         "type": target_type,
                         "description": record["target_description"] or "",
@@ -1691,6 +1702,7 @@ class ExpertTools:
                         nodes.append({
                             "id": anchor_eid,
                             "element_id": anchor_eid,
+                            "node_id": anchor.get("node_id"),
                             "name": anchor_name,
                             "type": anchor_type,
                             "is_bridge": True,

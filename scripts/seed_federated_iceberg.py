@@ -91,6 +91,8 @@ def seed_iceberg():
             for i, query in enumerate(FEDERATED_QUERIES, 1):
                 print(f"  -> Running Federated Pass {i}/{len(FEDERATED_QUERIES)}")
                 session.run(query, tenant_id=TENANT_ID)
+            # Stamp stable node_id on any node that lacks one (idempotent)
+            session.run("MATCH (n) WHERE n.node_id IS NULL SET n.node_id = randomUUID()")
         print("\n✓ SUCCESS: Federated Iceberg landmarks seeded.")
     except Exception as e:
         print(f"Error: {e}")

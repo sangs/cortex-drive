@@ -30,7 +30,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         if (!node) return;
         setShareStatus('loading');
         try {
-            const nodeId = node.id || node.name;
+            const nodeId = node.node_id || node.id || node.name;
             const response = await fetch(`/api/share?nodeId=${encodeURIComponent(nodeId)}`);
             const data = await response.json();
             if (data.shareUrl) {
@@ -231,11 +231,15 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     );
 
+    const primaryActionLabel = isPodcastDomain
+        ? (displayLinks.length === 1 ? 'Open Episode' : 'View Resources')
+        : (displayLinks.length === 1 ? 'Open Resource' : 'View Resources');
+
     const footer = displayLinks.length > 0 && (
         <footer className="mt-8 pt-6 border-t border-white/5">
             <a href={displayLinks[0].url} target="_blank" rel="noopener noreferrer"
                 className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-all font-bold group shadow-lg shadow-indigo-600/20 text-white">
-                {displayLinks.length === 1 ? 'Open Episode' : 'View Primary Resource'}
+                {primaryActionLabel}
                 <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
             </a>
         </footer>
@@ -248,7 +252,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: '100%', opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950/95 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
+                className="absolute right-0 top-0 bottom-0 w-[450px] bg-slate-950 backdrop-blur-xl border-l border-white/10 z-40 flex flex-col shadow-2xl p-8"
             >
                 {header}
 

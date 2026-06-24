@@ -6,10 +6,13 @@ import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import { BrainCircuit, Sparkles, Network, Database, ShieldCheck, ChevronRight, Activity, ArrowRight, X, UserSearch } from "lucide-react";
 import { VideoPlayer } from "@/components/VideoPlayer";
 
+// Videos are hosted on GCS (not bundled in the Docker image — public/videos/ is excluded
+// from the Cloud Build context to keep image size manageable).
+const GCS_VIDEOS = "https://storage.googleapis.com/cortex-drive-videos";
 const VIDEOS = [
-  { src: "/videos/CortexDrive-Introduction.mp4", title: "Introduction", label: "What is CortexDrive?" },
-  { src: "/videos/CortexDrive-KnowledgeThatReasons.mp4", title: "Knowledge That Reasons", label: "Knowledge That Reasons" },
-  { src: "/videos/CortexDrive-InstitutionalMemoryMadeNavigable.mp4", title: "Institutional Memory Made Navigable", label: "Institutional Memory Made Navigable" },
+  { src: `${GCS_VIDEOS}/CortexDrive-Introduction.mp4`, title: "Introduction", label: "What is CortexDrive?" },
+  { src: `${GCS_VIDEOS}/CortexDrive-KnowledgeThatReasons.mp4`, title: "Knowledge That Reasons", label: "Knowledge That Reasons" },
+  { src: `${GCS_VIDEOS}/CortexDrive-InstitutionalMemoryMadeNavigable.mp4`, title: "Institutional Memory Made Navigable", label: "Institutional Memory Made Navigable" },
 ];
 
 export default function Home() {

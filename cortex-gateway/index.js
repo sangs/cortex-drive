@@ -305,15 +305,18 @@ async function buildQ2WriterCall(node, openaiClient) {
  * Used to enrich top-2 Q2 nodes before writer calls, since search_enterprise_graph
  * only surfaces Note nodes (HAS_NOTE), not PreparatoryNote (HAS_PRIVATE_NOTE).
  */
-async function fetchNodeNarratives(node, tenantId, userId) {
+async function fetchNodeNarratives(node, tenantId, userId, guestShareAnchor = '') {
     const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     try {
+        const bentoOidcToken = await getCloudRunToken(bentoBase);
         const res = await fetch(`${bentoBase}/get_node_details`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId,
-                'x-user-id': userId || ''
+                'x-user-id': userId || '',
+                ...(guestShareAnchor ? { 'x-guest-share-anchor': guestShareAnchor } : {}),
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify({ node_name: node.name }),
             signal: AbortSignal.timeout(8000)
@@ -347,9 +350,123 @@ require('dotenv').config();
 // Initialize Semantic Cache (24h default TTL, check every 1h)
 const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
 
+// Redis client for permission resolution cache (Phase 2 + Phase 4)
+const Redis = require('ioredis');
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    lazyConnect: true,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
+});
+redis.on('error', (err) => console.warn('[REDIS] connection error (non-fatal):', err.message));
+
 // Ensure fetch is available globally (for orchestration)
 if (!global.fetch) {
     global.fetch = require('node-fetch');
+}
+
+// --- OpenFGA Authorization Client ---
+const { OpenFgaClient, CredentialsMethod } = require('@openfga/sdk');
+
+// getFgaClient creates a fresh OpenFGA client per call (no singleton) so that
+// the OIDC bearer token — which expires after 1hr — is always current.
+// bearerToken is a "Bearer <token>" string from getCloudRunToken(); omit for local dev.
+function getFgaClient(bearerToken = null) {
+    const storeId = process.env.OPENFGA_STORE_ID;
+    if (!storeId) return null; // OpenFGA not configured — legacy mode
+    const config = {
+        apiUrl: process.env.OPENFGA_API_URL || 'http://localhost:8082',
+        storeId,
+        authorizationModelId: process.env.OPENFGA_MODEL_ID,
+    };
+    if (bearerToken) {
+        config.credentials = {
+            method: CredentialsMethod.ApiToken,
+            config: { token: bearerToken.replace('Bearer ', '') },
+        };
+    }
+    return new OpenFgaClient(config);
+}
+
+/**
+ * Returns the list of node_id UUIDs the user can see via OpenFGA.
+ * Returns null when OpenFGA is not configured (triggers legacy tenant_id mode in MCP).
+ * Fetches a Cloud Run OIDC token so cortex-openfga (--no-allow-unauthenticated) accepts
+ * the request — same pattern used for cortex-mcp and cortex-bento calls.
+ */
+async function getAllowedNodeIds(userId, agentSessionId = null) {
+    if (!process.env.OPENFGA_STORE_ID) return null; // legacy mode
+    const openfgaUrl = process.env.OPENFGA_API_URL || 'http://localhost:8082';
+    const oidcToken = await getCloudRunToken(openfgaUrl);
+    const fga = getFgaClient(oidcToken);
+    if (!fga) return null;
+
+    const principal = agentSessionId ? `agent:${agentSessionId}` : `user:${userId}`;
+    try {
+        const resp = await fga.listObjects({
+            user: principal,
+            relation: 'can_view',
+            type: 'node',
+            context: { current_time: new Date().toISOString() },
+        });
+        // Strip 'node:' prefix — object IDs are plain UUIDs (n.node_id), no further decoding needed
+        const ids = (resp.objects || []).map(o => o.replace('node:', ''));
+        console.log(`[FGA] ${principal} can_view ${ids.length} nodes`);
+        return ids;
+    } catch (err) {
+        console.warn('[FGA] listObjects failed (non-fatal):', err.message);
+        return null; // fall back to legacy mode on FGA errors
+    }
+}
+
+/**
+ * Resolve allowed_ids for a user — Redis cache first, OpenFGA fallback on miss.
+ * Writes result to Redis with 300s TTL. Also reads the per-tenant generation counter
+ * so callers can detect stale permission sets mid-request.
+ * Returns { allowedIds, permVersion } — both null-safe.
+ */
+async function resolveAndCachePermissions(userId, tenantId) {
+    const permKey = `perm:${userId}`;
+    const versionKey = `perm_version:${tenantId}`;
+    try {
+        const [cached, version] = await redis.mget(permKey, versionKey);
+        if (cached !== null) {
+            console.log(`[PERM-CACHE] hit user=${userId} version=${version || '0'}`);
+            return { allowedIds: JSON.parse(cached), permVersion: version || '0' };
+        }
+    } catch (redisErr) {
+        console.warn('[PERM-CACHE] Redis read failed, falling back to OpenFGA:', redisErr.message);
+    }
+
+    // Cache miss — resolve from OpenFGA
+    const allowedIds = await getAllowedNodeIds(userId);
+    const permVersion = await redis.get(versionKey).catch(() => '0') || '0';
+
+    if (allowedIds !== null) {
+        try {
+            await redis.setex(permKey, 300, JSON.stringify(allowedIds));
+            console.log(`[PERM-CACHE] miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
+        } catch (redisErr) {
+            console.warn('[PERM-CACHE] Redis write failed (non-fatal):', redisErr.message);
+        }
+    }
+    return { allowedIds, permVersion };
+}
+
+/**
+ * OIDC token for Cloud Run service-to-service auth.
+ * Returns null in local dev (NODE_ENV !== 'production').
+ */
+async function getCloudRunToken(targetUrl) {
+    if (process.env.NODE_ENV !== 'production') return null;
+    try {
+        const { GoogleAuth } = require('google-auth-library');
+        const client = await new GoogleAuth().getIdTokenClient(targetUrl);
+        const h = await client.getRequestHeaders(targetUrl);
+        return h.Authorization;
+    } catch (e) {
+        console.warn('[OIDC] token fetch failed:', e.message);
+        return null;
+    }
 }
 
 const app = express();
@@ -393,7 +510,10 @@ const verifyShareToken = (token) => {
     }
 };
 
-app.use(cors());
+// ALLOWED_ORIGIN: restrict to app subdomain in production, wildcard in local dev.
+// Set ALLOWED_ORIGIN=https://app.cortex-drive.com in Cloud Run env after custom domain is live.
+const _corsOrigin = process.env.ALLOWED_ORIGIN || '*';
+app.use(cors({ origin: _corsOrigin }));
 
 /**
  * Interceptor for Stateless Guest Share Tokens
@@ -437,13 +557,15 @@ const authMiddleware = async (req, res, next) => {
             // Standardizing for @clerk/backend standalone verification
             const decoded = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
             
-            // Prioritize: 1. Org from token, 2. Default Org from env, 3. User sub from token
-            const tenantId = decoded.org_id || process.env.TENANT_ID || decoded.sub;
-            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (Primary: ${!!decoded.org_id}, Fallback: ${!decoded.org_id})`);
+            // TENANT_ID env var wins — handles dev/prod Clerk split where dev JWT carries
+            // a different org_id than the Neo4j tenant (migrated to prod org_id in Phase 1).
+            const tenantId = process.env.TENANT_ID || decoded.org_id || decoded.sub;
+            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (EnvOverride: ${!!process.env.TENANT_ID}, JwtOrg: ${decoded.org_id || 'none'})`);
             
             req.headers['x-tenant-id'] = tenantId;
-            // Forward the individual user ID so the MCP server can identify the owner
-            req.headers['x-user-id'] = decoded.sub || '';
+            // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but OpenFGA
+            // tuples are keyed on the production sub. Same override pattern as TENANT_ID.
+            req.headers['x-user-id'] = process.env.OWNER_USER_ID || decoded.sub || '';
             
             // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
             const isAdmin = decoded.org_role === 'org:admin' || decoded.org_role === 'admin';
@@ -468,7 +590,8 @@ const authMiddleware = async (req, res, next) => {
 
         if (apiKey === PUBLIC_TRIAL_KEY) {
             req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
-            req.headers['x-user-id'] = 'trial-user';  // Trial users are never owners
+            // Use OWNER_USER_ID so OpenFGA lookups return the owner's allowed nodes
+            req.headers['x-user-id'] = process.env.OWNER_USER_ID || 'trial-user';
             console.log('Public Trial Access granted for tenant:', TRIAL_TENANT_ID);
             return next();
         } else {
@@ -499,22 +622,116 @@ app.get('/api/share', authMiddleware, (req, res) => {
     });
 });
 
+// --- OpenFGA Share Endpoints ---
+// These are no-ops when OpenFGA is not configured (OPENFGA_STORE_ID unset).
+
+app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
+    const { node_id } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    if (!node_id) return res.status(400).json({ error: 'node_id required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { makeNodeTenantWide } = require('./utils/openfga_gateway');
+        await makeNodeTenantWide(fga, node_id, tenantId);
+        await redis.incr(`perm_version:${tenantId}`);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/tenant-wide]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/share/user', authMiddleware, async (req, res) => {
+    const { node_id, targetSub, expiresAt } = req.body;
+    if (!node_id || !targetSub) return res.status(400).json({ error: 'node_id and targetSub required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { shareNodeWithUser } = require('./utils/openfga_gateway');
+        await shareNodeWithUser(fga, node_id, targetSub, expiresAt || null);
+        const tenantId = req.headers['x-tenant-id'];
+        await redis.incr(`perm_version:${tenantId}`);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/user]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/share/group', authMiddleware, async (req, res) => {
+    const { node_id, groupId, expiresAt } = req.body;
+    if (!node_id || !groupId) return res.status(400).json({ error: 'node_id and groupId required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { shareNodeWithGroup } = require('./utils/openfga_gateway');
+        await shareNodeWithGroup(fga, node_id, groupId, expiresAt || null);
+        const tenantId = req.headers['x-tenant-id'];
+        await redis.incr(`perm_version:${tenantId}`);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/group]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
+    const { node_id, subject, relation } = req.body;
+    if (!node_id || !subject || !relation) return res.status(400).json({ error: 'node_id, subject, relation required' });
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    const tenantId = req.headers['x-tenant-id'];
+    try {
+        const { revokeNodeAccess } = require('./utils/openfga_gateway');
+        await revokeNodeAccess(fga, node_id, subject, relation);
+        await redis.incr(`perm_version:${tenantId}`);
+        // If the subject is a specific user, immediately invalidate their cached permissions
+        // so the next request re-resolves from OpenFGA rather than serving stale access.
+        // subject format: "user:clerk_sub_id" — strip the "user:" prefix
+        if (subject.startsWith('user:')) {
+            await redis.del(`perm:${subject.slice(5)}`);
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/revoke]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
+    const { node_id } = req.params;
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { listNodeAccess } = require('./utils/openfga_gateway');
+        const access = await listNodeAccess(fga, node_id);
+        res.json(access);
+    } catch (err) {
+        console.error('[/api/share/access]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- LLM Orchestration Section ---
 
 async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
-    
+
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
-    
-    const sseResponse = await fetch(`${mcpServerUrl}/sse`, {
-        headers: { 
-            "x-tenant-id": tenantId, 
-            "x-user-id": userId,
-            "x-schema-readable": schemaReadable ? "true" : "false",
-            "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || ''
-        }
-    });
+
+    // MCP server resolves allowed_ids from Redis directly — no x-allowed-ids header needed.
+    const oidcToken = await getCloudRunToken(mcpServerUrl);
+    const mcpHeaders = {
+        "x-tenant-id": tenantId,
+        "x-user-id": userId,
+        "x-schema-readable": schemaReadable ? "true" : "false",
+        "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || '',
+        ...(oidcToken ? { "Authorization": oidcToken } : {}),
+    };
+
+    const sseResponse = await fetch(`${mcpServerUrl}/sse`, { headers: mcpHeaders });
 
     if (!sseResponse.ok) {
         throw new Error(`Failed to connect to SSE: ${sseResponse.statusText}`);
@@ -534,13 +751,7 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
         const postJson = async (url, body) => {
             const res = await fetch(url, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'x-tenant-id': tenantId, 
-                    'x-user-id': userId,
-                    'x-schema-readable': schemaReadable ? "true" : "false",
-                    'x-guest-share-anchor': reqHeaders['x-guest-share-anchor'] || ''
-                },
+                headers: { 'Content-Type': 'application/json', ...mcpHeaders },
                 body: JSON.stringify(body)
             });
             return res;
@@ -964,8 +1175,20 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 
     try {
         console.log(`[SSE] Starting orchestration for: ${query}`);
-        
-        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+
+        // Seed Redis permission cache for this user before the orchestration loop starts.
+        // MCP server reads from Redis on each tool call — no allowed_ids in headers.
+        const { allowedIds, permVersion: _ssePV } = await resolveAndCachePermissions(userId, tenantId);
+        const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
+        console.log(`[FGA/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
+
+        let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+        if (accessScope === 'restricted') {
+            baseSystemPrompt = 'NOTE: This query is executing with restricted node access. ' +
+                'If you cannot find data, explicitly state that access is unavailable. ' +
+                'Do not synthesize from prior knowledge.\n\n' + baseSystemPrompt;
+        }
+        const systemPrompt = baseSystemPrompt;
         let messages = [
             { role: "system", content: systemPrompt },
             { role: "user", content: query }
@@ -1004,7 +1227,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                     
                     try {
                         const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
-                        
+
                         // Extract text for LLM
                         let toolContent = JSON.stringify(mcpData);
                         if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
@@ -1031,6 +1254,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                                 // Transform to UI format
                                 const uiNodes = newNodesRaw.map(n => ({
                                     id: n.element_id || n.id || n.name,
+                                    node_id: n.node_id,
                                     name: n.display_name || n.name,
                                     type: n.labels ? n.labels[0] : (n.type || 'Unknown'),
                                     isBackbone: n.is_backbone || false,
@@ -1066,6 +1290,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                         });
 
                     } catch (err) {
+                        console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -1116,9 +1341,9 @@ app.post('/query', authMiddleware, async (req, res) => {
     try {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
 
-        // Cache lookup — keyed per tenant so tenants never share cached responses.
+        // Cache lookup — keyed per tenant AND user so permission-scoped responses are not shared.
         const cacheKey = crypto.createHash('sha256')
-            .update(`${tenantId}:${question.toLowerCase().trim()}`)
+            .update(`${tenantId}:${userId}:${question.toLowerCase().trim()}`)
             .digest('hex');
         if (!forceRefresh) {
             const cached = semanticCache.get(cacheKey);
@@ -1127,6 +1352,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                 return res.send(cached);
             }
         }
+
+        // Seed Redis permission cache — MCP server reads from Redis per tool call.
+        const { allowedIds, permVersion: _queryPV } = await resolveAndCachePermissions(userId, tenantId);
+        const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
+        console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
 
         const domainSignal = classifyDomain(question);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
@@ -1138,7 +1368,10 @@ app.post('/query', authMiddleware, async (req, res) => {
             `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node. ` +
             `For 'unknown': use your judgment.`;
 
-        const systemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
+        const restrictionNote = accessScope === 'restricted'
+            ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
+            : '';
+        const systemPrompt = restrictionNote + gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
         let messages = [
             { role: "system", content: systemPrompt },
             ...(history || []),
@@ -1253,6 +1486,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                         });
 
                     } catch (err) {
+                        console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -1273,7 +1507,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                             backbone_only: true,
                             depth: 1,
                             domain: 'professional'
-                        }, userId);
+                        }, userId, false, {});
                         const backboneText = backboneMcp?.result?.content?.[0]?.text;
                         if (backboneText) {
                             const backboneParsed = JSON.parse(backboneText);
@@ -1304,7 +1538,7 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                             // Pre-fetch PreparatoryNote narratives in parallel, then run writer calls.
                             const enriched = await Promise.all(writerTargets.map(async n => {
-                                const bentoNarrative = await fetchNodeNarratives(n, tenantId, userId);
+                                const bentoNarrative = await fetchNodeNarratives(n, tenantId, userId, req.headers['x-guest-share-anchor'] || '');
                                 return bentoNarrative ? { ...n, text: bentoNarrative } : n;
                             }));
                             const writerResults = await Promise.all(enriched.map(n => buildQ2WriterCall(n, openai)));
@@ -1424,7 +1658,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                 const responsePayload = {
                     answer: auditedAnswer,
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
-                    domain_signal: domainSignal
+                    domain_signal: domainSignal,
+                    access_scope: accessScope
                 };
                 // Cache the response for repeated identical questions (per-tenant, 24h TTL).
                 if (auditedAnswer) {
@@ -1509,13 +1744,17 @@ app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('co
 app.post('/api/get_node_details', authMiddleware, async (req, res) => {
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || '';
+    const guestShareAnchor = req.headers['x-guest-share-anchor'] || '';
     try {
+        const bentoOidcToken = await getCloudRunToken(bentoServerUrl);
         const bentoResponse = await fetch(`${bentoServerUrl}/get_node_details`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'x-tenant-id': tenantId || '',
-                'x-user-id': userId
+                'x-user-id': userId,
+                ...(guestShareAnchor ? { 'x-guest-share-anchor': guestShareAnchor } : {}),
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify(req.body),
             signal: AbortSignal.timeout(8000)

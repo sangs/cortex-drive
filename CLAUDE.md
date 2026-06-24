@@ -177,15 +177,16 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-16** — Tool shortcuts that return backbone-only results must be gated on an explicit signal (`wants_visual_map=True`), never on keyword content; keyword content is unpredictable and will eventually match the wrong condition
 - **AP-17** — Use `res.on('close')` with `!res.writableEnded` to detect client disconnect; `req.on('close')` fires on TCP half-close (client done sending) and is a false positive during long-running async handlers
 - **AP-18** — Only use `createProxyMiddleware` for SSE/WebSocket/streaming routes; for plain JSON endpoints use a direct `fetch`. `app.use('/full/path', proxy)` strips the mount path before the proxy sees `req.url` — `pathRewrite` must match the stripped remainder, not the full path
+- **AP-19** — Any Cypher anchor MATCH using `CONTAINS` or fuzzy predicates must also exclude bridge-label types (`AND NOT n:{bridge_labels}`); a bridge-label node selected as anchor blocks all traversal paths via the path filter, silently returning only the anchor itself
 
 ---
 
 ## Key Architecture Documents
 
-- `documents/architecture/anti-pattern-catalog.md` — full AP incident records (AP-1 through AP-17)
-- `documents/architecture/orchestration-loop-incident-2026-05-04.md` — deep-dive: 4-bug chain that caused "Maximum orchestration loops reached"; diagnostic checklist for future loop errors
-- `documents/architecture/query-behavior-specification.md` — query pattern logic walkthrough, virtual_links pipeline
-- `documents/architecture/intent-classification-research-2026-04-25.md` — intent classifier design
-- `documents/architecture/ontology-persistence-vs-virtual-bridges.md` — zero-write rule rationale
-- `documents/security/` — all GACL, permission-graph, zero-trust, sharing architecture docs
+Full index with status (Active / Historical / Superseded): **`documents/INDEX.md`**
+
+Most-referenced active docs:
+- `documents/architecture/anti-pattern-catalog.md` — full AP incident records
+- `documents/architecture/query-behavior-specification.md` — query pattern logic, virtual_links pipeline
+- `documents/security/permission-resolution-caching-architecture-2026-06-23.md` — OpenFGA + Redis caching (primary auth doc)
 - `documents/daily_logs/` — session logs; most recent contains current sprint items
