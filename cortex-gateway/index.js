@@ -520,16 +520,28 @@ app.use(cors({ origin: _corsOrigin }));
 
 /**
  * Interceptor for Stateless Guest Share Tokens
+ * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke).
  */
-const guestTokenMiddleware = (req, res, next) => {
+const guestTokenMiddleware = async (req, res, next) => {
     const token = req.query.share || req.headers['x-share-token'];
-    
+
     if (token) {
         const verified = verifyShareToken(token);
         if (verified) {
+            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+            try {
+                const active = await redis.get(`guest_link:${tokenHash}`);
+                if (!active) {
+                    console.warn(`[GUEST-AUTH] Token revoked or not registered (hash: ${tokenHash.slice(0, 8)}…)`);
+                    return res.status(403).json({ error: 'This link has been revoked or has expired.' });
+                }
+            } catch (redisErr) {
+                // Redis unavailable — fall through and honour the HMAC signature alone
+                console.warn('[GUEST-AUTH] Redis check failed, falling back to HMAC-only:', redisErr.message);
+            }
             console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
             req.headers['x-tenant-id'] = verified.tenantId;
-            req.headers['x-user-id'] = 'guest-auth'; 
+            req.headers['x-user-id'] = 'guest-auth';
             req.headers['x-guest-share-anchor'] = verified.nodeId;
             return next();
         } else {
@@ -608,21 +620,62 @@ const authMiddleware = async (req, res, next) => {
 /**
  * Endpoints
  */
-app.get('/api/share', authMiddleware, (req, res) => {
+app.get('/api/share', authMiddleware, async (req, res) => {
     const { nodeId } = req.query;
     const tenantId = req.headers['x-tenant-id'];
-    
     if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
-    
-    const token = signShareToken(tenantId, nodeId);
+
+    const expireDays = Math.min(Math.max(parseInt(req.query.expireDays) || 30, 1), 90);
+    const token = signShareToken(tenantId, nodeId, expireDays);
     const shareUrl = `${req.protocol}://${req.get('host')}/discovery?share=${token}`;
-    
-    res.send({ 
-        token, 
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expirySeconds = expireDays * 86400;
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + expirySeconds * 1000;
+
+    try {
+        const linkMeta = JSON.stringify({ nodeId, tenantId, issuedAt, expiresAt, expireDays });
+        await redis.setex(`guest_link:${tokenHash}`, expirySeconds, linkMeta);
+        await redis.sadd(`guest_links:${tenantId}:${nodeId}`, tokenHash);
+        await redis.expire(`guest_links:${tenantId}:${nodeId}`, 90 * 86400);
+    } catch (redisErr) {
+        console.warn('[GUEST-LINK] Redis registration failed (non-fatal):', redisErr.message);
+    }
+
+    res.send({
+        token,
         shareUrl,
-        expiresIn: '30 days',
+        tokenHash,
+        expiresIn: `${expireDays} days`,
         note: "This URL grants stateless 'read-only' access to the specified graph island."
     });
+});
+
+app.get('/api/share/links/:node_id', authMiddleware, async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    try {
+        const members = await redis.smembers(`guest_links:${tenantId}:${req.params.node_id}`);
+        const links = (await Promise.all(members.map(async h => {
+            const meta = await redis.get(`guest_link:${h}`);
+            return meta ? { tokenHash: h, ...JSON.parse(meta) } : null;
+        }))).filter(Boolean);
+        res.json(links);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/share/revoke-link', authMiddleware, async (req, res) => {
+    const { tokenHash, node_id } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    if (!tokenHash || !node_id) return res.status(400).json({ error: 'tokenHash and node_id required' });
+    try {
+        await redis.del(`guest_link:${tokenHash}`);
+        await redis.srem(`guest_links:${tenantId}:${node_id}`, tokenHash);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- OpenFGA Share Endpoints ---
@@ -655,6 +708,8 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
         await shareNodeWithUser(fga, node_id, targetSub, expiresAt || null);
         const tenantId = req.headers['x-tenant-id'];
         await redis.incr(`perm_version:${tenantId}`);
+        // Immediately bust recipient's cache so grant takes effect in seconds, not 300s TTL
+        await redis.del(`perm:${targetSub}`);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
@@ -689,12 +744,15 @@ app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
         const { revokeNodeAccess } = require('./utils/openfga_gateway');
         await revokeNodeAccess(fga, node_id, subject, relation);
         await redis.incr(`perm_version:${tenantId}`);
-        // If the subject is a specific user, immediately invalidate their cached permissions
-        // so the next request re-resolves from OpenFGA rather than serving stale access.
-        // subject format: "user:clerk_sub_id" — strip the "user:" prefix
+        // Immediately invalidate the user's permission cache so revocation takes effect instantly.
         if (subject.startsWith('user:')) {
             await redis.del(`perm:${subject.slice(5)}`);
         }
+        // Append to revocation audit log (1-year TTL, per node)
+        const userId = req.headers['x-user-id'] || 'unknown';
+        const logEntry = JSON.stringify({ subject, relation, revokedAt: new Date().toISOString(), revokedBy: userId });
+        await redis.rpush(`revoke_log:${tenantId}:${node_id}`, logEntry);
+        await redis.expire(`revoke_log:${tenantId}:${node_id}`, 365 * 86400);
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/revoke]', err.message);
@@ -713,6 +771,66 @@ app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('[/api/share/access]', err.message);
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/history/:node_id', authMiddleware, async (req, res) => {
+    const { node_id } = req.params;
+    const tenantId = req.headers['x-tenant-id'];
+    const fga = getFgaClient();
+    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    try {
+        const { listNodeAccess } = require('./utils/openfga_gateway');
+        const [active, revokeLog] = await Promise.all([
+            listNodeAccess(fga, node_id),
+            redis.lrange(`revoke_log:${tenantId}:${node_id}`, 0, -1),
+        ]);
+        res.json({ active, revoked: revokeLog.map(e => JSON.parse(e)) });
+    } catch (err) {
+        console.error('[/api/share/history]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/user/resolve', authMiddleware, async (req, res) => {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    try {
+        const users = await clerkClient.users.getUserList({ emailAddress: [email] });
+        if (!users.data.length) return res.status(404).json({ error: 'No Cortex-Drive account found for that email' });
+        const u = users.data[0];
+        res.json({
+            sub: u.id,
+            email: u.emailAddresses[0]?.emailAddress,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.emailAddresses[0]?.emailAddress,
+        });
+    } catch (err) {
+        console.error('[/api/user/resolve]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
+    const nodeId = req.headers['x-guest-share-anchor'];
+    if (!nodeId) return res.status(400).json({ error: 'Invalid or missing share token' });
+    const tenantId = req.headers['x-tenant-id'] || '';
+    const bentoUrl = process.env.BENTO_URL || 'http://localhost:8000';
+    try {
+        const resp = await fetch(`${bentoUrl}/get_node_details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+                'x-user-id': 'guest-auth',
+                'x-guest-share-anchor': nodeId,
+            },
+            body: JSON.stringify({ node_id: nodeId }),
+        });
+        const data = await resp.json();
+        res.json(data);
+    } catch (err) {
+        console.error('[/api/share/preview]', err.message);
+        res.status(500).json({ error: 'Failed to fetch node preview' });
     }
 });
 

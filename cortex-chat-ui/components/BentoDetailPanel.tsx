@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Check, Network, Mic, CalendarDays, Tag, Hash } from 'lucide-react';
+import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash } from 'lucide-react';
+import ShareModal from './ShareModal';
 
 // Node types that belong to the podcast domain — bento layout differs from career domain.
 const PODCAST_DOMAIN_TYPES = new Set(['Episode', 'Podcast']);
@@ -24,25 +25,7 @@ interface BentoDetailPanelProps {
 }
 
 const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal, isBentoHydrating = false }) => {
-    const [shareStatus, setShareStatus] = React.useState<'idle' | 'loading' | 'success'>('idle');
-
-    const handleShare = async () => {
-        if (!node) return;
-        setShareStatus('loading');
-        try {
-            const nodeId = node.node_id || node.id || node.name;
-            const response = await fetch(`/api/share?nodeId=${encodeURIComponent(nodeId)}`);
-            const data = await response.json();
-            if (data.shareUrl) {
-                await navigator.clipboard.writeText(data.shareUrl);
-                setShareStatus('success');
-                setTimeout(() => setShareStatus('idle'), 3000);
-            }
-        } catch (err) {
-            console.error("Failed to generate share link:", err);
-            setShareStatus('idle');
-        }
-    };
+    const [shareModalOpen, setShareModalOpen] = React.useState(false);
 
     // --- Shared derived data ---
     const displayLinks = React.useMemo(() => {
@@ -175,15 +158,10 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             </div>
             <div className="flex items-center gap-2">
                 <button
-                    onClick={handleShare}
-                    disabled={shareStatus === 'loading'}
-                    className={`p-2 rounded-xl transition-all flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${
-                        shareStatus === 'success'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 border border-transparent'
-                    }`}
+                    onClick={() => setShareModalOpen(true)}
+                    className="p-2 rounded-xl transition-all flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 border border-transparent"
                 >
-                    {shareStatus === 'success' ? <><Check className="w-4 h-4" />Link Copied</> : <><Share2 className="w-4 h-4" />Share</>}
+                    <Share2 className="w-4 h-4" />Share
                 </button>
                 <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-500 hover:text-white">
                     <X className="w-5 h-5" />
@@ -246,6 +224,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     );
 
     return (
+        <>
         <AnimatePresence>
             <motion.aside
                 initial={{ x: '100%', opacity: 0 }}
@@ -474,6 +453,12 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 {footer}
             </motion.aside>
         </AnimatePresence>
+        <ShareModal
+            node={node}
+            open={shareModalOpen}
+            onClose={() => setShareModalOpen(false)}
+        />
+        </>
     );
 };
 
