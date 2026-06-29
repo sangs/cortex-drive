@@ -61,11 +61,13 @@ CORTEX_DRIVE_RELATIONSHIPS = [
 # Relationships permitted in neighbor-traversal Cypher queries (used in _fragment_neighbor_aggregation
 # and expand_node_topology). Add new relationship types here — never hardcode them in expert_tools.py.
 TRAVERSAL_RELATIONSHIPS = [
-    # Career domain — HAS_ACCESS removed: authorization is now OpenFGA-only (Invariant 9)
+    # Career domain — HAS_ACCESS removed: authorization is now Permify-only (Invariant 9)
     'HELD_ROLE', 'AT', 'CONTRIBUTED_TO', 'PARTICIPATED_IN',
     'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL', 'CONTAINS',
     'HAS_REFERENCE', 'BUILT_DURING', 'FEATURE_GUEST',
-    'AUTHORED', 'CO_AUTHORED', 'LEAD_BY', 'PUBLISHED_BY',
+    'AUTHORED', 'CO_AUTHORED', 'PUBLISHED_BY',
+    # Private notes — traversable by owner; Permify is_private attribute enforces non-owner exclusion
+    'HAS_PRIVATE_NOTE',
     # Current work — CURRENTLY_BUILDING connects Person to the active Project node (e.g. Cortex-Drive)
     'CURRENTLY_BUILDING',
     # Education relationships (used by seeder for Degree / Certification / ProfessionalEducation)
@@ -75,6 +77,8 @@ TRAVERSAL_RELATIONSHIPS = [
     # Podcast domain
     'HAS_TOPIC', 'COVERS_TECHNOLOGY', 'DISCUSSES_CONCEPT',
     'HAS_EPISODE', 'HOSTS', 'GUEST_ON', 'INTERVIEWED_BY',
+    # Leadership / portfolio
+    'LED', 'HAS_PORTFOLIO',
 ]
 
 PROJECT_GRAPH_RELATIONSHIPS = [
@@ -85,10 +89,46 @@ PROJECT_GRAPH_RELATIONSHIPS = [
     'RESPONSIBLE_FOR', 'HAS_TASK', 'HAS_DELIVERABLE',
     'HELD_ROLE', 'AT', 'CONTRIBUTED_TO', 'WORKED_AT',
     'EARNED_DEGREE', 'FROM_INSTITUTION', 'HAS_SKILL',
-    'PARTICIPATED_IN', 'BUILT_DURING', 'AUTHORED', 'CO_AUTHORED', 'EARNED', 'LED', 
+    'PARTICIPATED_IN', 'BUILT_DURING', 'AUTHORED', 'CO_AUTHORED', 'EARNED', 'LED',
     'DERIVED_FROM', 'ACTIVE_DURING',
+    # Private notes — composition edge from Project/TL/Hackathon to PreparatoryNote
+    'HAS_PRIVATE_NOTE',
     # Federated Discovery Relationships
     'STORES', 'FEDERATED_TO', 'DOCUMENTED_BY'
+]
+
+# Subset of relationships that carry downward permission inheritance in Permify.
+# Test: "If the parent node is deleted, should the child cease to exist?"
+# Only YES answers belong here. Back-edges, activity links, and semantic refs are excluded.
+# Used by: bootstrap_parent_tuples.py, ingestion_engine._register_parent_tuples(),
+#          POST /api/share/infer BFS traversal.
+# Source of truth: documents/daily_logs/daily_log-2026-06-29.md (Phase 0 query results)
+COMPOSITION_RELATIONSHIPS = [
+    # Podcast domain — downward content hierarchy
+    'HAS_EPISODE',       # Podcast → Episode (6 live edges)
+    'HAS_SOURCE',        # Episode → Source (6 live edges)
+    'CONTAINS',          # Source → Chunk (208 org-tenant edges); SYSTEM-parent edges excluded by bootstrap guard
+    # Owned reference/note content — ceases to exist without parent
+    'HAS_REFERENCE',     # ThoughtLeadership/Project/Hackathon → ReferenceLink (5 live edges)
+    'HAS_PRIVATE_NOTE',  # Project/ThoughtLeadership/Hackathon → PreparatoryNote (24 live org edges)
+]
+
+# Relationships confirmed as NON-composition. Listed explicitly so future code review
+# can verify no new composition edge has been silently added to TRAVERSAL_RELATIONSHIPS.
+NON_COMPOSITION_RELATIONSHIPS = [
+    # Back-edge — reverse direction of CONTAINS, never carries downward inheritance
+    'BELONGS_TO_SOURCE',
+    # Activity/participation — actor exists independently of subject
+    'CONTRIBUTED_TO', 'PARTICIPATED_IN', 'HELD_ROLE', 'AUTHORED', 'CO_AUTHORED',
+    'LED', 'CREATED', 'CURRENTLY_BUILDING', 'WORKED_AT',
+    # Career achievement — achievement node exists independently of the person
+    'GRADUATED_FROM', 'CERTIFIED_BY', 'STUDIED_AT',
+    # Semantic/reference — cross-domain, never ownership
+    'SIMILAR', 'IS_SIMILAR', 'SEMANTICALLY_SIMILAR_KNN', 'DISCUSSES',
+    'COVERS_TECHNOLOGY', 'HAS_TOPIC', 'MENTIONED', 'COVERS', 'IS_A',
+    # Navigation/identity — structural identity, not ownership
+    'HAS_PORTFOLIO', 'REPRESENTS', 'AT', 'FEATURE_GUEST',
+    'HOSTS', 'GUEST_ON', 'INTERVIEWED_BY',
 ]
 
 class Neo4jBaseModel(BaseModel):
