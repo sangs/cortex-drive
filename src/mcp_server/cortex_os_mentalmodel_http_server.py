@@ -120,6 +120,30 @@ class ToolHandler(BaseHTTPRequestHandler):
                     expert.close()
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/get_composition_subtree":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length).decode("utf-8")
+                params = json.loads(body)
+                root_node_id = params.get("root_node_id")
+                max_depth    = int(params.get("max_depth", 5))
+                if not root_node_id:
+                    self.send_error(400, "root_node_id required")
+                    return
+
+                tenant_id = self.headers.get("x-tenant-id") or os.environ.get("TENANT_ID", "org_3AacpFBbt39hPmDKyZyNBQuuM6t")
+                expert = ExpertTools(tenant_id=tenant_id)
+                try:
+                    result = expert.get_composition_subtree(root_node_id, max_depth)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(result).encode("utf-8"))
+                finally:
+                    expert.close()
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
+
         else:
             self.send_error(404, "Not Found")
     def do_GET(self):
