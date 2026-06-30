@@ -60,9 +60,9 @@ async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | Non
             print(f"{LOG_PERM_CACHE} hit user={user_id} version={version or '0'}")
             return json.loads(cached), version or "0"
     except Exception as e:
-        print(f"{LOG_PERM_CACHE} Redis read failed, falling back to OpenFGA: {e}")
-    # Cache miss — resolve from OpenFGA
-    from openfga_utils import list_viewable_node_ids
+        print(f"{LOG_PERM_CACHE} Redis read failed, falling back to Permify: {e}")
+    # Cache miss — resolve from Permify (LookupEntity traverses live parent tuples at depth 5)
+    from permify_utils import list_viewable_node_ids
     allowed_ids = await list_viewable_node_ids(user_id)
     version = "0"
     try:

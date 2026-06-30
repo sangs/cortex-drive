@@ -13,6 +13,7 @@ starlette
 uvicorn
 sse-starlette
 baml-py
-openfga-sdk
 httpx
 redis>=5.0.0
+# openfga-sdk retained until Phase 2 migration is verified complete
+openfga-sdk

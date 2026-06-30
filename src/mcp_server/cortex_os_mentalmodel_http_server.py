@@ -41,9 +41,9 @@ def _resolve_allowed_ids_sync(user_id: str, tenant_id: str) -> list | None:
             return json.loads(cached)
     except Exception as e:
         print(f"{LOG_PERM_CACHE} Redis read failed: {e}")
-    # Cache miss — call OpenFGA via asyncio.run (safe: Bento has no running event loop)
+    # Cache miss — call Permify via asyncio.run (safe: Bento has no running event loop)
     try:
-        from openfga_utils import list_viewable_node_ids
+        from permify_utils import list_viewable_node_ids
         allowed_ids = asyncio.run(list_viewable_node_ids(user_id))
         if allowed_ids is not None:
             _redis.setex(perm_key, 300, json.dumps(allowed_ids))
