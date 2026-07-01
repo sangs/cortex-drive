@@ -13,11 +13,24 @@ Key differences from OpenFGA:
     New children added after a share are automatically covered — no grant refresh needed.
 
 REST API used directly (no gRPC SDK required). All calls are idempotent.
+
+Permify v0.9+ endpoint map (breaking change from earlier versions):
+  Relationships: POST /relationships/write  (key: "tuples")   — NOT /data/write
+  Rel delete:    POST /relationships/delete (key: "filter")
+  Attributes:    POST /data/write           (key: "attributes") — unchanged
+  Attr delete:   POST /data/delete          (keys: "tuple_filter": {}, "attribute_filter": {...})
+  Rel read:      POST /data/relationships/read
+  Attr read:     POST /data/attributes/read
+  Check:         POST /permissions/check
+  Lookup:        POST /permissions/lookup-entity
+
 Env vars:
-  PERMIFY_API_URL   — base URL of the cortex-permify Cloud Run service
-  PERMIFY_TENANT_ID — Permify tenant identifier (default: "cortex-drive")
-  PERMIFY_MAX_DEPTH — depth for LookupEntity traversal (default: 5)
-  PERMIFY_API_TOKEN — OIDC bearer token for Cloud Run auth
+  PERMIFY_API_URL        — base URL of the cortex-permify Cloud Run service
+  PERMIFY_TENANT_ID      — Permify tenant identifier (default: "cortex-drive")
+  PERMIFY_MAX_DEPTH      — depth for LookupEntity traversal (default: 5)
+  PERMIFY_API_TOKEN      — OIDC bearer token for Cloud Run auth
+  PERMIFY_SCHEMA_VERSION — schema version hash returned by /schemas/write;
+                           required for all /data/write calls (no "head" alias exists)
 """
 
 import os
@@ -38,9 +51,29 @@ def _max_depth() -> int:
     return int(os.environ.get("PERMIFY_MAX_DEPTH", "5"))
 
 
-def _headers() -> dict:
-    token = os.environ.get("PERMIFY_API_TOKEN", "")
+def _schema_version() -> str:
+    return os.environ.get("PERMIFY_SCHEMA_VERSION", "")
+
+
+async def _get_headers() -> dict:
     h = {"Content-Type": "application/json"}
+    token = os.environ.get("PERMIFY_API_TOKEN", "")
+    if not token and os.environ.get("K_SERVICE"):
+        # Running in Cloud Run — fetch a fresh GCP OIDC token from the metadata server.
+        # K_SERVICE is set by Cloud Run on every revision; absent in local dev.
+        # Uses httpx (already a dependency) so no extra package is needed.
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
+                    params={"audience": _base_url()},
+                    headers={"Metadata-Flavor": "Google"},
+                )
+                resp.raise_for_status()
+                token = resp.text.strip()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("[OIDC/Permify] token fetch failed: %s", exc)
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -255,10 +288,10 @@ async def list_viewable_node_ids(user_id: str) -> list[str] | None:
         "context":     {"tuples": [], "attributes": [], "data": {}},
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
+        resp = await client.post(url, json=payload, headers=await _get_headers())
         resp.raise_for_status()
         data = resp.json()
-        entity_ids = data.get("entityIds") or []
+        entity_ids = data.get("entity_ids") or []
         return entity_ids
 
 
@@ -275,7 +308,7 @@ async def check_permission(node_id: str, user_id: str, permission: str = "can_vi
         "context":   {"tuples": [], "attributes": [], "data": {}},
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
+        resp = await client.post(url, json=payload, headers=await _get_headers())
         resp.raise_for_status()
         return resp.json().get("can") == "CHECK_RESULT_ALLOWED"
 
@@ -296,7 +329,7 @@ async def list_node_access(node_id: str) -> list[dict]:
         "continuous_token": "",
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
+        resp = await client.post(url, json=payload, headers=await _get_headers())
         resp.raise_for_status()
         tuples = resp.json().get("tuples") or []
         return [
@@ -314,52 +347,50 @@ async def list_node_access(node_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 async def _write_relationships(tuples: list[dict]) -> None:
-    url = f"{_base_url()}/v1/tenants/{_tenant()}/data"
+    # Permify v0.9+: relationships use /relationships/write with "tuples" key.
+    # /data/write silently ignores the "relationships" field in this version.
+    url = f"{_base_url()}/v1/tenants/{_tenant()}/relationships/write"
     payload = {
-        "metadata": {"schema_version": ""},
+        "metadata": {"schema_version": _schema_version()},
         "tuples":   tuples,
-        "attributes": [],
     }
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
+        resp = await client.post(url, json=payload, headers=await _get_headers())
         resp.raise_for_status()
 
 
 async def _delete_relationships(tuples: list[dict]) -> None:
-    url = f"{_base_url()}/v1/tenants/{_tenant()}/data/delete"
-    payload = {
-        "tuples_filter": {
-            "entity": None,
-            "relation": None,
-            "subject": None,
-        },
-        "tuples": tuples,
-    }
+    # /relationships/delete takes a single "filter" (not a list); call once per tuple.
+    url = f"{_base_url()}/v1/tenants/{_tenant()}/relationships/delete"
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
-        resp.raise_for_status()
+        for tup in tuples:
+            resp = await client.post(url, json={"filter": tup}, headers=await _get_headers())
+            resp.raise_for_status()
 
 
 async def _write_attributes(attributes: list[dict]) -> None:
-    url = f"{_base_url()}/v1/tenants/{_tenant()}/data"
+    url = f"{_base_url()}/v1/tenants/{_tenant()}/data/write"
     payload = {
-        "metadata":   {"schema_version": ""},
-        "tuples":     [],
+        "metadata":   {"schema_version": _schema_version()},
         "attributes": attributes,
     }
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
+        resp = await client.post(url, json=payload, headers=await _get_headers())
         resp.raise_for_status()
 
 
 async def _delete_attributes(attributes: list[dict]) -> None:
+    # /data/delete requires tuple_filter (non-null) even for attribute-only deletes.
+    # Pass an empty tuple_filter {} which matches nothing and satisfies the constraint.
     url = f"{_base_url()}/v1/tenants/{_tenant()}/data/delete"
-    payload = {
-        "attributes_filter": {
-            "entity":    attributes[0]["entity"] if attributes else {},
-            "attribute": attributes[0]["attribute"] if attributes else "",
-        },
-    }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=payload, headers=_headers())
-        resp.raise_for_status()
+    for attr in attributes:
+        payload = {
+            "tuple_filter":     {},
+            "attribute_filter": {
+                "entity":    attr["entity"],
+                "attribute": attr["attribute"],
+            },
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=await _get_headers())
+            resp.raise_for_status()

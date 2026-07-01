@@ -40,6 +40,8 @@ MCP_URL="${MCP_URL:-https://cortex-mcp-isabiovosq-uc.a.run.app}"
 BENTO_URL="${BENTO_URL:-https://cortex-bento-isabiovosq-uc.a.run.app}"
 APP_DOMAIN="${APP_DOMAIN:-https://app.cortex-drive.com}"
 
+CLOUD_SQL_CONN="cortex-drive-496915:us-central1:cortex-openfga-db"
+
 gcloud run deploy cortex-gateway \
     --image "${REGISTRY}/cortex-gateway:latest" \
     --region "${REGION}" \
@@ -50,14 +52,19 @@ gcloud run deploy cortex-gateway \
     --timeout 600 \
     --min-instances 0 \
     --max-instances 5 \
-    --set-env-vars "MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN}" \
+    --add-cloudsql-instances "${CLOUD_SQL_CONN}" \
+    --set-env-vars "MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
+CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
+PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION}" \
     --set-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest,CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\
 TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
 GATEWAY_SHARE_SECRET=GATEWAY_SHARE_SECRET:latest,\
 OPENFGA_API_URL=OPENFGA_API_URL:latest,\
 OPENFGA_STORE_ID=OPENFGA_STORE_ID:latest,\
 OPENFGA_MODEL_ID=OPENFGA_MODEL_ID:latest,\
-REDIS_URL=REDIS_URL:latest"
+REDIS_URL=REDIS_URL:latest,\
+PERMIFY_API_URL=PERMIFY_API_URL:latest,\
+DB_PASSWORD=CORTEX_APP_DB_PASSWORD:latest"
 
 echo ""
 echo "✓ cortex-gateway deployed"

@@ -17,16 +17,32 @@ const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...ar
 function baseUrl()  { return (process.env.PERMIFY_API_URL || 'http://localhost:3476').replace(/\/$/, ''); }
 function tenant()   { return process.env.PERMIFY_TENANT_ID || 'cortex-drive'; }
 function maxDepth() { return parseInt(process.env.PERMIFY_MAX_DEPTH || '5', 10); }
-function headers()  {
-  const h = { 'Content-Type': 'application/json' };
-  if (process.env.PERMIFY_API_TOKEN) h['Authorization'] = `Bearer ${process.env.PERMIFY_API_TOKEN}`;
-  return h;
-}
 function configured() { return !!process.env.PERMIFY_API_URL; }
+
+// Fetch a fresh GCP OIDC token for cortex-permify (--no-allow-unauthenticated).
+// Static PERMIFY_API_TOKEN env var takes precedence (local dev / override).
+// Returns null in local dev (NODE_ENV !== 'production') so no auth header is sent.
+async function _getToken() {
+  if (process.env.PERMIFY_API_TOKEN) return `Bearer ${process.env.PERMIFY_API_TOKEN}`;
+  if (process.env.NODE_ENV !== 'production') return null;
+  try {
+    const { GoogleAuth } = require('google-auth-library');
+    const url = baseUrl();
+    const client = await new GoogleAuth().getIdTokenClient(url);
+    const h = await client.getRequestHeaders(url);
+    return h.Authorization;
+  } catch (e) {
+    console.warn('[OIDC/Permify] token fetch failed:', e.message);
+    return null;
+  }
+}
 
 async function _post(path, body) {
   const url = `${baseUrl()}/v1/tenants/${tenant()}${path}`;
-  const resp = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+  const token = await _getToken();
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+  const resp = await fetch(url, { method: 'POST', headers: h, body: JSON.stringify(body) });
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Permify ${path} → ${resp.status}: ${text}`);

@@ -31,8 +31,8 @@ entity agent {
     relation delegated_by @user
 }
 
-rule check_private(is_private boolean) {
-    is_private == true
+rule check_not_private(is_private boolean) {
+    is_private != true
 }
 
 entity node {
@@ -45,8 +45,7 @@ entity node {
     relation shared_viewer  @user @group#member @agent     // written once at share time on the root node only
 
     // non_owner_view: any inherited or directly-granted access, blocked by privacy marker
-    permission non_owner_view = (tenant_viewer or shared_viewer or parent.can_view)
-                                 and not check_private(is_private)
+    permission non_owner_view = (tenant_viewer or shared_viewer or parent.can_view) and check_not_private(is_private)
 
     // can_view: owner always wins; everyone else goes through privacy check
     permission can_view  = owner or non_owner_view
