@@ -350,6 +350,9 @@ require('dotenv').config();
 // Initialize Semantic Cache (24h default TTL, check every 1h)
 const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
 
+// Log prefix for all permission cache operations (Redis hit/miss/error)
+const LOG_PERM_CACHE = '[PERM-CACHE]';
+
 // Redis client for permission resolution cache (Phase 2 + Phase 4)
 const Redis = require('ioredis');
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
@@ -363,6 +366,10 @@ redis.on('error', (err) => console.warn('[REDIS] connection error (non-fatal):',
 if (!global.fetch) {
     global.fetch = require('node-fetch');
 }
+
+// --- Permify + Cloud SQL clients ---
+const permify = require('./utils/permify_gateway');
+const db      = require('./utils/db');
 
 // --- OpenFGA Authorization Client ---
 const { OpenFgaClient, CredentialsMethod } = require('@openfga/sdk');
@@ -430,11 +437,11 @@ async function resolveAndCachePermissions(userId, tenantId) {
     try {
         const [cached, version] = await redis.mget(permKey, versionKey);
         if (cached !== null) {
-            console.log(`[PERM-CACHE] hit user=${userId} version=${version || '0'}`);
+            console.log(`${LOG_PERM_CACHE} hit user=${userId} version=${version || '0'}`);
             return { allowedIds: JSON.parse(cached), permVersion: version || '0' };
         }
     } catch (redisErr) {
-        console.warn('[PERM-CACHE] Redis read failed, falling back to OpenFGA:', redisErr.message);
+        console.warn(`${LOG_PERM_CACHE} Redis read failed, falling back to OpenFGA:`, redisErr.message);
     }
 
     // Cache miss — resolve from OpenFGA
@@ -444,9 +451,9 @@ async function resolveAndCachePermissions(userId, tenantId) {
     if (allowedIds !== null) {
         try {
             await redis.setex(permKey, 300, JSON.stringify(allowedIds));
-            console.log(`[PERM-CACHE] miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
+            console.log(`${LOG_PERM_CACHE} miss — resolved ${allowedIds.length} ids for user=${userId}, cached 300s`);
         } catch (redisErr) {
-            console.warn('[PERM-CACHE] Redis write failed (non-fatal):', redisErr.message);
+            console.warn(`${LOG_PERM_CACHE} Redis write failed (non-fatal):`, redisErr.message);
         }
     }
     return { allowedIds, permVersion };
@@ -517,16 +524,28 @@ app.use(cors({ origin: _corsOrigin }));
 
 /**
  * Interceptor for Stateless Guest Share Tokens
+ * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke).
  */
-const guestTokenMiddleware = (req, res, next) => {
+const guestTokenMiddleware = async (req, res, next) => {
     const token = req.query.share || req.headers['x-share-token'];
-    
+
     if (token) {
         const verified = verifyShareToken(token);
         if (verified) {
+            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+            try {
+                const active = await redis.get(`guest_link:${tokenHash}`);
+                if (!active) {
+                    console.warn(`[GUEST-AUTH] Token revoked or not registered (hash: ${tokenHash.slice(0, 8)}…)`);
+                    return res.status(403).json({ error: 'This link has been revoked or has expired.' });
+                }
+            } catch (redisErr) {
+                // Redis unavailable — fall through and honour the HMAC signature alone
+                console.warn('[GUEST-AUTH] Redis check failed, falling back to HMAC-only:', redisErr.message);
+            }
             console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
             req.headers['x-tenant-id'] = verified.tenantId;
-            req.headers['x-user-id'] = 'guest-auth'; 
+            req.headers['x-user-id'] = 'guest-auth';
             req.headers['x-guest-share-anchor'] = verified.nodeId;
             return next();
         } else {
@@ -605,25 +624,67 @@ const authMiddleware = async (req, res, next) => {
 /**
  * Endpoints
  */
-app.get('/api/share', authMiddleware, (req, res) => {
+app.get('/api/share', authMiddleware, async (req, res) => {
     const { nodeId } = req.query;
     const tenantId = req.headers['x-tenant-id'];
-    
     if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
-    
-    const token = signShareToken(tenantId, nodeId);
+
+    const expireDays = Math.min(Math.max(parseInt(req.query.expireDays) || 30, 1), 90);
+    const token = signShareToken(tenantId, nodeId, expireDays);
     const shareUrl = `${req.protocol}://${req.get('host')}/discovery?share=${token}`;
-    
-    res.send({ 
-        token, 
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expirySeconds = expireDays * 86400;
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + expirySeconds * 1000;
+
+    try {
+        const linkMeta = JSON.stringify({ nodeId, tenantId, issuedAt, expiresAt, expireDays });
+        await redis.setex(`guest_link:${tokenHash}`, expirySeconds, linkMeta);
+        await redis.sadd(`guest_links:${tenantId}:${nodeId}`, tokenHash);
+        await redis.expire(`guest_links:${tenantId}:${nodeId}`, 90 * 86400);
+    } catch (redisErr) {
+        console.warn('[GUEST-LINK] Redis registration failed (non-fatal):', redisErr.message);
+    }
+
+    res.send({
+        token,
         shareUrl,
-        expiresIn: '30 days',
+        tokenHash,
+        expiresIn: `${expireDays} days`,
         note: "This URL grants stateless 'read-only' access to the specified graph island."
     });
 });
 
-// --- OpenFGA Share Endpoints ---
-// These are no-ops when OpenFGA is not configured (OPENFGA_STORE_ID unset).
+app.get('/api/share/links/:node_id', authMiddleware, async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    try {
+        const members = await redis.smembers(`guest_links:${tenantId}:${req.params.node_id}`);
+        const links = (await Promise.all(members.map(async h => {
+            const meta = await redis.get(`guest_link:${h}`);
+            return meta ? { tokenHash: h, ...JSON.parse(meta) } : null;
+        }))).filter(Boolean);
+        res.json(links);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/share/revoke-link', authMiddleware, async (req, res) => {
+    const { tokenHash, node_id } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    if (!tokenHash || !node_id) return res.status(400).json({ error: 'tokenHash and node_id required' });
+    try {
+        await redis.del(`guest_link:${tokenHash}`);
+        await redis.srem(`guest_links:${tenantId}:${node_id}`, tokenHash);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Share Endpoints (Permify-backed, depth-aware) ---
+// Permify is the enforcement layer. share_grants (Cloud SQL) is the audit/UI record.
+// Every share writes ONE shared_viewer tuple on the root; children inherit via parent chain.
 
 app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
     const { node_id } = req.body;
@@ -642,17 +703,84 @@ app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/share/user', authMiddleware, async (req, res) => {
-    const { node_id, targetSub, expiresAt } = req.body;
-    if (!node_id || !targetSub) return res.status(400).json({ error: 'node_id and targetSub required' });
-    const fga = getFgaClient();
-    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+// Preview what will be shared — no Permify writes, no share_grants record.
+// Returns child_node_ids[], private_node_ids[], alreadyAccessible[].
+app.post('/api/share/infer', authMiddleware, async (req, res) => {
+    const { rootNodeId, targetSub, depthSelection = 5 } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    if (!rootNodeId) return res.status(400).json({ error: 'rootNodeId required' });
     try {
-        const { shareNodeWithUser } = require('./utils/openfga_gateway');
-        await shareNodeWithUser(fga, node_id, targetSub, expiresAt || null);
-        const tenantId = req.headers['x-tenant-id'];
-        await redis.incr(`perm_version:${tenantId}`);
-        res.json({ ok: true });
+        const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+        const subtree = await fetch(`${bento}/get_composition_subtree`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+            body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
+        }).then(r => r.json());
+
+        let alreadyAccessible = [];
+        if (targetSub && permify.configured()) {
+            const currentIds = await permify.listViewableNodeIds(targetSub) || [];
+            const currentSet = new Set(currentIds);
+            alreadyAccessible = subtree.child_node_ids.filter(id => currentSet.has(id));
+        }
+        res.json({ ...subtree, alreadyAccessible });
+    } catch (err) {
+        console.error('[/api/share/infer]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Share a node (and its full composition subtree) with a user.
+// Writes ONE Permify shared_viewer tuple on the root + one share_grants audit record.
+app.post('/api/share/user', authMiddleware, async (req, res) => {
+    const { rootNodeId, targetSub, expiresAt, depthSelection = 5 } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    const issuedBy = req.headers['x-user-id'];
+    if (!rootNodeId || !targetSub) return res.status(400).json({ error: 'rootNodeId and targetSub required' });
+    try {
+        // 1. BFS subtree snapshot for audit + dedup preview
+        const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+        const subtree = await fetch(`${bento}/get_composition_subtree`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+            body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
+        }).then(r => r.json());
+        const { child_node_ids: childNodeIds, private_node_ids: privateNodeIds } = subtree;
+
+        // 2. Dedup — what the target can already see
+        const currentIds    = await permify.listViewableNodeIds(targetSub) || [];
+        const currentSet    = new Set(currentIds);
+        const alreadyAccessible = childNodeIds.filter(id => currentSet.has(id));
+
+        // 3. Write ONE shared_viewer tuple on the root node
+        await permify.shareNodeWithUser(rootNodeId, targetSub, expiresAt || null);
+
+        // 4. Persist audit record in Cloud SQL
+        const COMPOSITION_RELS = ['HAS_EPISODE','HAS_SOURCE','CONTAINS','HAS_REFERENCE','HAS_PRIVATE_NOTE'];
+        const grantResult = await db.query(
+            `INSERT INTO share_grants
+               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
+                child_node_ids, already_accessible_ids, private_node_ids, issued_by, expires_at)
+             VALUES ($1, $2, 'shared_viewer', $3, $4, $5, $6, $7, $8, $9)
+             RETURNING grant_id`,
+            [rootNodeId, `user:${targetSub}`, depthSelection, COMPOSITION_RELS,
+             childNodeIds, alreadyAccessible, privateNodeIds, issuedBy, expiresAt || null]
+        );
+        const grantId = grantResult.rows[0].grant_id;
+
+        // 5. Bust recipient cache so grant takes effect immediately
+        await Promise.all([
+            redis.del(`perm:${targetSub}`),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+
+        res.json({
+            grantId,
+            childNodeIds,
+            alreadyAccessible,
+            privateNodeIds,
+            newNodes: childNodeIds.length - alreadyAccessible.length,
+        });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
         res.status(500).json({ error: err.message });
@@ -676,23 +804,68 @@ app.post('/api/share/group', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
-    const { node_id, subject, relation } = req.body;
-    if (!node_id || !subject || !relation) return res.status(400).json({ error: 'node_id, subject, relation required' });
-    const fga = getFgaClient();
-    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
-    const tenantId = req.headers['x-tenant-id'];
+// Preview what access will be lost if a grant is revoked — no writes.
+app.get('/api/share/revoke-preview/:grant_id', authMiddleware, async (req, res) => {
+    const { grant_id } = req.params;
     try {
-        const { revokeNodeAccess } = require('./utils/openfga_gateway');
-        await revokeNodeAccess(fga, node_id, subject, relation);
-        await redis.incr(`perm_version:${tenantId}`);
-        // If the subject is a specific user, immediately invalidate their cached permissions
-        // so the next request re-resolves from OpenFGA rather than serving stale access.
-        // subject format: "user:clerk_sub_id" — strip the "user:" prefix
-        if (subject.startsWith('user:')) {
-            await redis.del(`perm:${subject.slice(5)}`);
-        }
-        res.json({ ok: true });
+        const { rows } = await db.query(
+            `SELECT * FROM share_grants WHERE grant_id = $1 AND status = 'active'`,
+            [grant_id]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Grant not found or already revoked' });
+        const grant = rows[0];
+
+        // Other active grants covering the same subject
+        const { rows: others } = await db.query(
+            `SELECT child_node_ids FROM share_grants
+             WHERE subject = $1 AND status = 'active' AND grant_id <> $2`,
+            [grant.subject, grant_id]
+        );
+        const otherCoverage  = new Set(others.flatMap(r => r.child_node_ids));
+        const willLoseAccess   = grant.child_node_ids.filter(id => !otherCoverage.has(id));
+        const willRetainAccess = grant.child_node_ids.filter(id =>  otherCoverage.has(id));
+
+        res.json({
+            grantId:         grant_id,
+            rootNodeId:      grant.root_node_id,
+            subject:         grant.subject,
+            willLoseAccess,
+            willRetainAccess,
+        });
+    } catch (err) {
+        console.error('[/api/share/revoke-preview]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Revoke a share by grant_id. Deletes ONE Permify shared_viewer tuple on the root.
+// Parent tuples are never deleted — they are graph structure, not policy.
+app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
+    const { grant_id } = req.body;
+    if (!grant_id) return res.status(400).json({ error: 'grant_id required' });
+    const tenantId = req.headers['x-tenant-id'];
+    const revokedBy = req.headers['x-user-id'] || 'unknown';
+    try {
+        const { rows } = await db.query(
+            `UPDATE share_grants
+             SET status = 'revoked', revoked_at = now(), revoked_by = $1
+             WHERE grant_id = $2 AND status = 'active'
+             RETURNING root_node_id, subject`,
+            [revokedBy, grant_id]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Grant not found or already revoked' });
+        const { root_node_id, subject } = rows[0];
+
+        // Delete ONE shared_viewer tuple on the root
+        await permify.revokeNodeAccess(root_node_id, subject, 'shared_viewer');
+
+        // Bust affected user's cache immediately
+        const sub = subject.startsWith('user:') ? subject.slice(5) : null;
+        await Promise.all([
+            ...(sub ? [redis.del(`perm:${sub}`)] : []),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+        res.json({ ok: true, revokedGrantId: grant_id });
     } catch (err) {
         console.error('[/api/share/revoke]', err.message);
         res.status(500).json({ error: err.message });
@@ -701,15 +874,96 @@ app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
 
 app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
     const { node_id } = req.params;
-    const fga = getFgaClient();
-    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
     try {
-        const { listNodeAccess } = require('./utils/openfga_gateway');
-        const access = await listNodeAccess(fga, node_id);
+        const access = await permify.listNodeAccess(node_id);
         res.json(access);
     } catch (err) {
         console.error('[/api/share/access]', err.message);
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/history/:node_id', authMiddleware, async (req, res) => {
+    const { node_id } = req.params;
+    try {
+        const { rows } = await db.query(
+            `SELECT grant_id, subject, relation, depth_ui_selection,
+                    child_node_ids, already_accessible_ids, private_node_ids,
+                    issued_by, issued_at, expires_at, revoked_at, revoked_by, status
+             FROM share_grants
+             WHERE root_node_id = $1
+             ORDER BY issued_at DESC`,
+            [node_id]
+        );
+        const active  = rows.filter(r => r.status === 'active');
+        const revoked = rows.filter(r => r.status !== 'active');
+        res.json({ active, revoked });
+    } catch (err) {
+        console.error('[/api/share/history]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Toggle is_private on a node (owner only). Permify attribute is the enforcement source.
+app.patch('/api/nodes/:nodeId/privacy', authMiddleware, async (req, res) => {
+    const { nodeId }    = req.params;
+    const { is_private } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    const userId   = req.headers['x-user-id'];
+    if (typeof is_private !== 'boolean') return res.status(400).json({ error: 'is_private (boolean) required' });
+    try {
+        const canShare = await permify.checkPermission(nodeId, userId, 'can_share');
+        if (!canShare) return res.status(403).json({ error: 'Only the node owner can change privacy' });
+
+        await permify.writePrivacyAttribute(nodeId, is_private);
+        // Bust tenant-wide cache — privacy change affects all active grants simultaneously
+        await redis.incr(`perm_version:${tenantId}`);
+        res.json({ nodeId, is_private });
+    } catch (err) {
+        console.error('[/api/nodes/privacy]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/user/resolve', authMiddleware, async (req, res) => {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    try {
+        const users = await clerkClient.users.getUserList({ emailAddress: [email] });
+        if (!users.data.length) return res.status(404).json({ error: 'No Cortex-Drive account found for that email' });
+        const u = users.data[0];
+        res.json({
+            sub: u.id,
+            email: u.emailAddresses[0]?.emailAddress,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.emailAddresses[0]?.emailAddress,
+        });
+    } catch (err) {
+        console.error('[/api/user/resolve]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
+    const nodeId = req.headers['x-guest-share-anchor'];
+    if (!nodeId) return res.status(400).json({ error: 'Invalid or missing share token' });
+    const tenantId = req.headers['x-tenant-id'] || '';
+    const bentoUrl = process.env.BENTO_URL || 'http://localhost:8000';
+    try {
+        const resp = await fetch(`${bentoUrl}/get_node_details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+                'x-user-id': 'guest-auth',
+                'x-guest-share-anchor': nodeId,
+            },
+            body: JSON.stringify({ node_id: nodeId }),
+        });
+        const data = await resp.json();
+        res.json(data);
+    } catch (err) {
+        console.error('[/api/share/preview]', err.message);
+        res.status(500).json({ error: 'Failed to fetch node preview' });
     }
 });
 

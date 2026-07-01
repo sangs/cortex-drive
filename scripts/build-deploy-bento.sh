@@ -42,10 +42,12 @@ gcloud run deploy cortex-bento \
     --timeout 600 \
     --min-instances 0 \
     --max-instances 3 \
+    --set-env-vars "PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION}" \
     --set-secrets "NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,\
 NEO4J_PASSWORD=NEO4J_PASSWORD:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,\
 TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
-REDIS_URL=REDIS_URL:latest"
+REDIS_URL=REDIS_URL:latest,\
+PERMIFY_API_URL=PERMIFY_API_URL:latest"
 
 echo ""
 echo "✓ cortex-bento deployed (internal ingress)"

@@ -34,6 +34,12 @@ export API_DOMAIN="https://api.cortex-drive.com"
 # ── Cloud SQL (OpenFGA datastore) ─────────────────────────────────────────────
 export CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:cortex-openfga-db"
 
+# ── Permify ────────────────────────────────────────────────────────────────────
+# Schema version is returned by /schemas/write and required on all /data/write calls.
+# Update this value whenever scripts/openfga/authorization_schema.perm is reloaded.
+# Current version loaded: 2026-06-30
+export PERMIFY_SCHEMA_VERSION="d922hd29io6g008ivglg"
+
 # ── Clerk publishable key (read from gitignored clerk-prod env file) ──────────
 # Never hardcoded here — sourced from the existing file on this machine.
 CLERK_ENV_FILE="${REPO}/cortex-chat-ui/.env.local.clerk-prod"

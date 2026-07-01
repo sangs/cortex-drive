@@ -79,7 +79,7 @@ class IngestionEngine:
         # 7. Post-Processing Enrichment (GDS, KNN, etc.)
         self._trigger_enrichment(validated_ep)
 
-        # 8. Register all new nodes in OpenFGA (idempotent — existing tuples are no-ops)
+        # 8. Register all new nodes in Permify (owner + tenant_viewer + parent tuples + privacy attrs)
         all_node_ids = [ep_node_id] + graph_node_ids + meta_node_ids
         self._register_with_openfga([nid for nid in all_node_ids if nid])
 
@@ -361,33 +361,45 @@ class IngestionEngine:
         return node_ids
 
     def _register_with_openfga(self, node_ids: list[str]) -> None:
-        """Register newly ingested nodes in OpenFGA. Idempotent — existing tuples are no-ops."""
-        if not os.environ.get("OPENFGA_STORE_ID"):
-            return  # OpenFGA not configured, skip
+        """Register newly ingested nodes in Permify. Idempotent — existing tuples are no-ops.
+
+        Writes per node: owner + tenant_viewer tuples.
+        Writes per composition edge: parent tuple (child.parent = parent_node).
+        Writes per PreparatoryNote: is_private=true attribute.
+        """
+        if not os.environ.get("PERMIFY_API_URL"):
+            return
         owner_sub = os.environ.get("OWNER_USER_ID", "")
         if not owner_sub:
-            print("[ingestion] OWNER_USER_ID not set — skipping OpenFGA registration")
+            print("[ingestion] OWNER_USER_ID not set — skipping Permify registration")
             return
 
         import sys
         sys.path.insert(0, os.path.dirname(__file__))
-        from openfga_utils import register_node_owner, make_tenant_wide
+        from permify_utils import register_node_owner, make_tenant_wide, write_parent_tuple, write_privacy_attribute
+        from schema_guard import COMPOSITION_RELATIONSHIPS
+
+        # Fetch node labels and composition edges for the new node_ids
+        node_labels, composition_edges, private_node_ids = self._fetch_node_metadata(node_ids)
 
         async def _register_all():
             for nid in node_ids:
                 await register_node_owner(nid, owner_sub)
                 await make_tenant_wide(nid, self.tenant_id)
+            for parent_id, child_id in composition_edges:
+                await write_parent_tuple(child_node_id=child_id, parent_node_id=parent_id)
+            for nid in private_node_ids:
+                await write_privacy_attribute(node_id=nid, is_private=True)
 
         try:
             asyncio.run(_register_all())
-            print(f"[ingestion] Registered {len(node_ids)} node(s) in OpenFGA.")
+            print(f"[ingestion] Registered {len(node_ids)} node(s), "
+                  f"{len(composition_edges)} parent tuple(s), "
+                  f"{len(private_node_ids)} privacy attribute(s) in Permify.")
         except RuntimeError as e:
-            # Already inside an event loop (e.g. called from async context)
-            print(f"[ingestion] OpenFGA registration skipped — event loop conflict: {e}")
+            print(f"[ingestion] Permify registration skipped — event loop conflict: {e}")
             return
 
-        # Increment generation counter once after the full batch — not per-node —
-        # so consumers invalidate their permission caches in one step.
         try:
             import redis as redis_lib
             _r = redis_lib.Redis.from_url(
@@ -400,6 +412,47 @@ class IngestionEngine:
             print(f"[ingestion] Incremented perm_version for tenant {self.tenant_id}.")
         except Exception as e:
             print(f"[ingestion] perm_version increment failed (non-fatal): {e}")
+
+    def _fetch_node_metadata(
+        self, node_ids: list[str]
+    ) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[str]]:
+        """Query Neo4j for labels, composition edges, and private nodes among new node_ids.
+
+        Returns:
+          node_labels: {node_id: [label, ...]}
+          composition_edges: [(parent_id, child_id), ...]  — edges to write as parent tuples
+          private_node_ids: [node_id, ...]  — PreparatoryNote nodes needing is_private=true
+        """
+        from schema_guard import COMPOSITION_RELATIONSHIPS
+        ids = [nid for nid in node_ids if nid]
+        if not ids:
+            return {}, [], []
+
+        rel_pattern = "|".join(COMPOSITION_RELATIONSHIPS)
+        query = f"""
+            UNWIND $ids AS nid
+            MATCH (n {{node_id: nid}})
+            OPTIONAL MATCH (n)-[r:{rel_pattern}]->(child)
+            WHERE child.node_id IS NOT NULL
+              AND NOT child.tenant_id IN ['SYSTEM', 'PUBLIC']
+            RETURN n.node_id AS node_id, labels(n) AS node_labels,
+                   child.node_id AS child_id
+        """
+        node_labels: dict[str, list[str]] = {}
+        composition_edges: list[tuple[str, str]] = []
+        private_node_ids: list[str] = []
+
+        with self.driver.session() as session:
+            for rec in session.run(query, ids=ids):
+                nid = rec["node_id"]
+                lbls = rec["node_labels"] or []
+                node_labels[nid] = lbls
+                if "PreparatoryNote" in lbls:
+                    private_node_ids.append(nid)
+                if rec["child_id"]:
+                    composition_edges.append((nid, rec["child_id"]))
+
+        return node_labels, composition_edges, private_node_ids
 
     def _trigger_enrichment(self, ep):
         # Placeholder for legacy steps 7-10 (GDS projections, KNN scoring)

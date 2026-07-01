@@ -1748,6 +1748,26 @@ class ExpertTools:
             traceback.print_exc()
             return json.dumps({"error": str(e)})
 
+    def get_composition_subtree(self, root_node_id: str, max_depth: int = 5) -> dict:
+        """BFS over COMPOSITION_RELATIONSHIPS to compute the subtree of a root node.
+
+        Returns child_node_ids (shareable) and private_node_ids (is_private=true, excluded from shares).
+        Used by the gateway /api/share/infer and /api/share/user endpoints.
+        """
+        from schema_guard import COMPOSITION_RELATIONSHIPS
+        rels = "|".join(COMPOSITION_RELATIONSHIPS)
+        query = f"""
+            MATCH (root {{node_id: $root_id, tenant_id: $tenant_id}})
+            MATCH (root)-[:{rels}*1..{max_depth}]->(child)
+            WHERE child.node_id IS NOT NULL
+              AND NOT child.tenant_id IN ['SYSTEM', 'PUBLIC']
+            RETURN DISTINCT child.node_id AS node_id, child.is_private AS is_private
+        """
+        result = self._exec_query(query, root_id=root_node_id, tenant_id=self.tenant_id)
+        child_node_ids   = [r["node_id"] for r in result.records if not r.get("is_private")]
+        private_node_ids = [r["node_id"] for r in result.records if r.get("is_private")]
+        return {"child_node_ids": child_node_ids, "private_node_ids": private_node_ids}
+
     def close(self):
         """Close the Neo4j driver"""
         if self.driver:
