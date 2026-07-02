@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Link2, UserPlus, Users, Check, Copy, Trash2, Loader2, ChevronDown } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
@@ -261,7 +262,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         { id: 'manage', label: 'Manage Access', icon: <Users className="w-3.5 h-3.5" /> },
     ];
 
-    return (
+    return ReactDOM.createPortal(
         <AnimatePresence>
             <motion.div
                 initial={{ opacity: 0 }}
@@ -510,6 +511,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     )}
                 </motion.div>
             </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }

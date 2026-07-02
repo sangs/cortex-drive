@@ -267,7 +267,7 @@ export default function DashboardPage() {
                 const name = extractValue(seedDetails, nameKeys);
                 if (!name) return;
 
-                const id = seedDetails.element_id || seedDetails.id || name; // Prioritize element_id for Neo4j stability
+                const id = seedDetails.node_id || seedDetails.id || name;
                 
                 // Identify normalized time marker
                 const timeValue = extractValue(seedDetails, dateKeys);
@@ -323,7 +323,7 @@ export default function DashboardPage() {
                         
                         const type = (targetName.toLowerCase().includes('mcp') || targetName.toLowerCase().includes('baml')) ? 'Episode' : (targetType || 'Node');
                         const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
-                        const targetId = rel.element_id || rel.target_id || rel.id || targetName; 
+                        const targetId = rel.target_id || rel.id || targetName;
                         
                         // Pass temporal metadata to relationship targets
                         const relTimeValue = extractValue(rel, ['date', 'year', 'startDate']);
@@ -547,7 +547,7 @@ export default function DashboardPage() {
             bentoAbortController.current = new AbortController();
 
             // Stale-While-Revalidate: show cached full data immediately if available.
-            const cacheKey = freshNode.element_id || freshNode.id || freshNode.name;
+            const cacheKey = freshNode.node_id || freshNode.id || freshNode.name;
             if (bentoCache.current.has(cacheKey)) {
                 setSelectedNode({ ...freshNode, ...bentoCache.current.get(cacheKey) });
                 return;
@@ -568,7 +568,7 @@ export default function DashboardPage() {
                     },
                     body: JSON.stringify({
                         node_name: freshNode.name,
-                        node_id: freshNode.element_id || freshNode.id
+                        node_id: freshNode.node_id
                     }),
                     signal: bentoAbortController.current.signal
                 });
@@ -604,7 +604,7 @@ export default function DashboardPage() {
                         });
                     } else if (payload?.error) {
                         console.warn('[BENTO] Hydration rejected for', freshNode.name,
-                                     '| node_id:', freshNode.element_id || freshNode.id,
+                                     '| node_id:', freshNode.node_id,
                                      '| error:', payload.error);
                     }
                 }

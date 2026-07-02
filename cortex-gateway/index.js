@@ -631,7 +631,7 @@ app.get('/api/share', authMiddleware, async (req, res) => {
 
     const expireDays = Math.min(Math.max(parseInt(req.query.expireDays) || 30, 1), 90);
     const token = signShareToken(tenantId, nodeId, expireDays);
-    const shareUrl = `${req.protocol}://${req.get('host')}/discovery?share=${token}`;
+    const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/discovery?share=${token}`;
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const expirySeconds = expireDays * 86400;
     const issuedAt = Date.now();
