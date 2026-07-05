@@ -25,7 +25,8 @@ import {
     GripVertical,
     Square,
     X,
-    RefreshCw
+    RefreshCw,
+    Share2
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -34,6 +35,7 @@ import { useMCP } from "@/hooks/use-mcp";
 // 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
 const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
+const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
 import {
     CAREER_BACKBONE,
@@ -76,6 +78,7 @@ export default function DashboardPage() {
     const [hasMounted, setHasMounted] = useState(false);
     const [nodeExpansionDepth, setNodeExpansionDepth] = useState<Map<string, number>>(new Map());
     const [domainSignal, setDomainSignal] = useState<string>('career');
+    const [graphShareModalOpen, setGraphShareModalOpen] = useState(false);
     const [focusedNodeIds, setFocusedNodeIds] = useState<Set<string> | null>(null);
     const expansionCache = useRef<Map<string, any>>(new Map());
     const expandedNodes = useRef<Set<string>>(new Set());
@@ -1171,7 +1174,7 @@ export default function DashboardPage() {
                                 </div>
 
                                 {graphData.nodes.length > 0 && (
-                                    <button 
+                                    <button
                                         onClick={() => {
                                             setGraphData({ nodes: [], links: [] });
                                             setSelectedNode(null);
@@ -1184,6 +1187,16 @@ export default function DashboardPage() {
                                     >
                                         <Trash2 className="w-4 h-4" />
                                         Clear Visual Map
+                                    </button>
+                                )}
+
+                                {graphData.nodes.length > 0 && (
+                                    <button
+                                        onClick={() => setGraphShareModalOpen(true)}
+                                        className="bg-white/80 hover:bg-indigo-50 border border-border hover:border-indigo-200 text-slate-600 hover:text-indigo-600 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg"
+                                    >
+                                        <Share2 className="w-4 h-4" />
+                                        Share Graph
                                     </button>
                                 )}
                             </div>
@@ -1213,6 +1226,12 @@ export default function DashboardPage() {
                                     />
                                 </div>
                             )}
+
+                            <GraphShareModal
+                                graphData={graphData}
+                                open={graphShareModalOpen}
+                                onClose={() => setGraphShareModalOpen(false)}
+                            />
                         </div>
 
                         {/* Visual Ontology Legend */}
