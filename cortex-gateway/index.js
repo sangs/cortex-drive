@@ -788,16 +788,36 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/share/group', authMiddleware, async (req, res) => {
-    const { node_id, groupId, expiresAt } = req.body;
-    if (!node_id || !groupId) return res.status(400).json({ error: 'node_id and groupId required' });
-    const fga = getFgaClient();
-    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    const { rootNodeId, groupId, expiresAt, depthSelection = 5 } = req.body;
+    if (!rootNodeId || !groupId) return res.status(400).json({ error: 'rootNodeId and groupId required' });
+    const tenantId = req.headers['x-tenant-id'];
+    const issuedBy = req.headers['x-user-id'];
     try {
-        const { shareNodeWithGroup } = require('./utils/openfga_gateway');
-        await shareNodeWithGroup(fga, node_id, groupId, expiresAt || null);
-        const tenantId = req.headers['x-tenant-id'];
+        const bento = process.env.BENTO_URL || 'http://localhost:8000';
+        const subtreeResp = await fetch(`${bento}/get_composition_subtree`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+            body: JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
+        });
+        const subtree = subtreeResp.ok ? await subtreeResp.json() : { child_node_ids: [], private_node_ids: [] };
+        const { child_node_ids: childNodeIds = [], private_node_ids: privateNodeIds = [] } = subtree;
+
+        await permify.shareNodeWithGroup(rootNodeId, groupId, expiresAt || null);
+
+        const COMPOSITION_RELS = ['HAS_EPISODE', 'HAS_SOURCE', 'CONTAINS', 'HAS_REFERENCE', 'HAS_PRIVATE_NOTE'];
+        const grantResult = await db.query(
+            `INSERT INTO share_grants
+               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
+                child_node_ids, already_accessible_ids, private_node_ids,
+                issued_by, expires_at, grant_type, subject_type, group_id)
+             VALUES ($1, $2, 'shared_viewer', $3, $4, $5, '{}', $6, $7, $8, 'node', 'group', $9)
+             RETURNING grant_id`,
+            [rootNodeId, `group:${groupId}#member`, depthSelection, COMPOSITION_RELS,
+             childNodeIds, privateNodeIds, issuedBy, expiresAt || null, groupId]
+        );
+
         await redis.incr(`perm_version:${tenantId}`);
-        res.json({ ok: true });
+        res.json({ grantId: grantResult.rows[0].grant_id, childNodeIds, privateNodeIds });
     } catch (err) {
         console.error('[/api/share/group]', err.message);
         res.status(500).json({ error: err.message });
@@ -856,8 +876,17 @@ app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
         if (!rows.length) return res.status(404).json({ error: 'Grant not found or already revoked' });
         const { root_node_id, subject } = rows[0];
 
-        // Delete ONE shared_viewer tuple on the root
-        await permify.revokeNodeAccess(root_node_id, subject, 'shared_viewer');
+        // For graph_island grants, revoke one tuple per node; for node grants, revoke on root only
+        const { rows: [fullGrant] } = await db.query(
+            `SELECT grant_type, child_node_ids FROM share_grants WHERE grant_id = $1`,
+            [grant_id]
+        );
+        const revokeTargets = fullGrant?.grant_type === 'graph_island'
+            ? (fullGrant.child_node_ids || [root_node_id])
+            : [root_node_id];
+        await Promise.all(revokeTargets.map(nodeId =>
+            permify.revokeNodeAccess(nodeId, subject, 'shared_viewer')
+        ));
 
         // Bust affected user's cache immediately
         const sub = subject.startsWith('user:') ? subject.slice(5) : null;
@@ -939,6 +968,168 @@ app.get('/api/user/resolve', authMiddleware, async (req, res) => {
         });
     } catch (err) {
         console.error('[/api/user/resolve]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Custom Group Management ─────────────────────────────────────────────────
+
+app.post('/api/groups', authMiddleware, async (req, res) => {
+    const { name, slug, description } = req.body;
+    const orgId    = req.headers['x-tenant-id'];
+    const issuedBy = req.headers['x-user-id'];
+    if (!name || !slug) return res.status(400).json({ error: 'name and slug required' });
+    const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    try {
+        const { rows } = await db.query(
+            `INSERT INTO groups (org_id, name, slug, description, created_by)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING group_id, name, slug, created_at`,
+            [orgId, name, cleanSlug, description || null, issuedBy]
+        );
+        res.status(201).json(rows[0]);
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ error: 'A group with that slug already exists in your org' });
+        console.error('[POST /api/groups]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/groups', authMiddleware, async (req, res) => {
+    const orgId = req.headers['x-tenant-id'];
+    try {
+        const { rows } = await db.query(
+            `SELECT g.group_id, g.name, g.slug, g.description, g.created_at,
+                    COUNT(gm.user_sub)::int AS member_count
+             FROM groups g
+             LEFT JOIN group_members gm ON gm.group_id = g.group_id
+             WHERE g.org_id = $1
+             GROUP BY g.group_id
+             ORDER BY g.name`,
+            [orgId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('[GET /api/groups]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/groups/:id', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const orgId  = req.headers['x-tenant-id'];
+    try {
+        const { rows: [group] } = await db.query(
+            `SELECT group_id, name, slug, description, created_at FROM groups WHERE group_id = $1 AND org_id = $2`,
+            [id, orgId]
+        );
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+        const { rows: members } = await db.query(
+            `SELECT user_sub, user_org_id, added_by, added_at FROM group_members WHERE group_id = $1 ORDER BY added_at`,
+            [id]
+        );
+        res.json({ ...group, members });
+    } catch (err) {
+        console.error('[GET /api/groups/:id]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/groups/:id/members', authMiddleware, async (req, res) => {
+    const { id }    = req.params;
+    const { userSub, userOrgId } = req.body;
+    const addedBy  = req.headers['x-user-id'];
+    const tenantId = req.headers['x-tenant-id'];
+    if (!userSub) return res.status(400).json({ error: 'userSub required' });
+    try {
+        await db.query(
+            `INSERT INTO group_members (group_id, user_sub, user_org_id, added_by)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (group_id, user_sub) DO NOTHING`,
+            [id, userSub, userOrgId || null, addedBy]
+        );
+        if (permify.configured()) {
+            await permify.addGroupMember(id, userSub);
+        }
+        await Promise.all([
+            redis.del(`perm:${userSub}`),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+        res.status(201).json({ ok: true, groupId: id, userSub });
+    } catch (err) {
+        console.error('[POST /api/groups/:id/members]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/groups/:id/members/:sub', authMiddleware, async (req, res) => {
+    const { id, sub } = req.params;
+    const tenantId    = req.headers['x-tenant-id'];
+    try {
+        const { rowCount } = await db.query(
+            `DELETE FROM group_members WHERE group_id = $1 AND user_sub = $2`,
+            [id, sub]
+        );
+        if (rowCount === 0) return res.status(404).json({ error: 'Member not found in group' });
+        if (permify.configured()) {
+            await permify.removeGroupMember(id, sub);
+        }
+        await Promise.all([
+            redis.del(`perm:${sub}`),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DELETE /api/groups/:id/members/:sub]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Graph Island Sharing ─────────────────────────────────────────────────────
+
+// Share all visible graph nodes with a named user OR a custom group.
+// Writes one Permify shared_viewer tuple per node + one share_grants audit row.
+app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
+    const { nodeIds, targetSub, groupId, expiresAt } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    const issuedBy = req.headers['x-user-id'];
+
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) {
+        return res.status(400).json({ error: 'nodeIds (non-empty array) required' });
+    }
+    if ((!targetSub && !groupId) || (targetSub && groupId)) {
+        return res.status(400).json({ error: 'Provide either targetSub or groupId, not both' });
+    }
+
+    const subject     = targetSub ? `user:${targetSub}` : `group:${groupId}#member`;
+    const subjectType = targetSub ? 'user' : 'group';
+
+    try {
+        await Promise.all(nodeIds.map(nodeId =>
+            targetSub
+                ? permify.shareNodeWithUser(nodeId, targetSub, expiresAt || null)
+                : permify.shareNodeWithGroup(nodeId, groupId, expiresAt || null)
+        ));
+
+        const rootNodeId = nodeIds[0];
+        const grantResult = await db.query(
+            `INSERT INTO share_grants
+               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
+                child_node_ids, already_accessible_ids, private_node_ids,
+                issued_by, expires_at, grant_type, subject_type, group_id)
+             VALUES ($1, $2, 'shared_viewer', 0, '{}', $3, '{}', '{}', $4, $5, 'graph_island', $6, $7)
+             RETURNING grant_id`,
+            [rootNodeId, subject, nodeIds, issuedBy, expiresAt || null, subjectType, groupId || null]
+        );
+
+        await Promise.all([
+            ...(targetSub ? [redis.del(`perm:${targetSub}`)] : []),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+
+        res.json({ grantId: grantResult.rows[0].grant_id, totalNodes: nodeIds.length });
+    } catch (err) {
+        console.error('[/api/share/graph-island]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
