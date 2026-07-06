@@ -477,7 +477,7 @@ async function getCloudRunToken(targetUrl) {
 }
 
 const app = express();
-app.use(express.json()); // Handle JSON bodies for /query
+app.use(express.json({ limit: '10mb' })); // 10mb covers large graph snapshots for public link sharing
 
 const port = process.env.PORT || 4000;
 const mcpServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:8080';

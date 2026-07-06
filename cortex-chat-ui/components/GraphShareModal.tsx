@@ -51,6 +51,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     const [linkGenerating, setLinkGenerating] = useState(false);
     const [generatedUrl, setGeneratedUrl] = useState('');
     const [linkCopied, setLinkCopied] = useState(false);
+    const [linkError, setLinkError] = useState('');
 
     const nodeIds = graphData.nodes
         .map(n => n.node_id || n.id)
@@ -88,7 +89,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     useEffect(() => {
         setEmail(''); setResolvedUser(null); setResolveError('');
         setUserSuccess(''); setGroupSuccess('');
-        setGeneratedUrl(''); setLinkCopied(false);
+        setGeneratedUrl(''); setLinkCopied(false); setLinkError('');
     }, [tab]);
 
     if (!open) return null;
@@ -134,14 +135,38 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     async function generateLink() {
         if (nodeIds.length === 0) return;
         setLinkGenerating(true);
+        setLinkError('');
         try {
             const headers = await authHeaders();
-            const body: any = { nodeIds, graphData, title: linkTitle || undefined };
+            // Strip ECharts metadata — keep only display fields to minimise payload
+            const cleanNodes = graphData.nodes.map((n: any) => ({
+                id: n.id || n.node_id,
+                node_id: n.node_id || n.id,
+                name: n.name,
+                type: n.type,
+                description: n.description,
+                links: n.links,
+                link_titles: n.link_titles,
+            }));
+            const cleanLinks = graphData.links.map((l: any) => ({
+                source: typeof l.source === 'object' ? (l.source?.id || l.source?.node_id) : l.source,
+                target: typeof l.target === 'object' ? (l.target?.id || l.target?.node_id) : l.target,
+                type: l.type,
+            }));
+            const body: any = { nodeIds, graphData: { nodes: cleanNodes, links: cleanLinks }, title: linkTitle || undefined };
             if (linkExpiry > 0) body.expiresAt = new Date(Date.now() + linkExpiry * 86400000).toISOString();
             const resp = await fetch(`${GATEWAY}/api/share/graph-link`, { method: 'POST', headers, body: JSON.stringify(body) });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                setLinkError(err.error || `Server error (${resp.status})`);
+                return;
+            }
             const data = await resp.json();
             if (data.shareUrl) setGeneratedUrl(data.shareUrl);
-        } catch { /* non-fatal */ } finally { setLinkGenerating(false); }
+            else setLinkError('No URL returned — try again.');
+        } catch (e: any) {
+            setLinkError(e?.message || 'Network error — try again.');
+        } finally { setLinkGenerating(false); }
     }
 
     async function copyLink() {
@@ -320,6 +345,10 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                     {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>)}
                                 </select>
                             </div>
+
+                            {linkError && (
+                                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{linkError}</p>
+                            )}
 
                             {!generatedUrl ? (
                                 <button onClick={generateLink} disabled={linkGenerating || nodeIds.length === 0}
