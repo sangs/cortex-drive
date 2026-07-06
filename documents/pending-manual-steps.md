@@ -152,11 +152,35 @@ groups, create group form, member management per group. Uses `GET /api/groups`,
 **Status:** ⚠️ Monitor — PERMIFY_SCHEMA_VERSION is set in deploy script but
 verify it matches the live schema version after any Permify schema changes.
 
-**How to check:**
+**Auth note:** Permify Cloud Run is `--no-allow-unauthenticated`. The bearer
+token must be a **GCP OIDC identity token** (not a Clerk token). Fetch it with
+`gcloud auth print-identity-token --audiences=<permify-url>`.
+
+**Full two-sided check:**
 ```bash
-gcloud run services describe cortex-gateway --region=us-central1 \
+# Side A — what version the gateway is currently deploying with
+gcloud run services describe cortex-gateway \
+  --region=us-central1 --project=cortex-drive-496915 \
   --format="value(spec.template.spec.containers[0].env)" | grep PERMIFY_SCHEMA
+
+# Side B — what the live Permify head schema version actually is
+PERMIFY_URL=$(gcloud run services describe cortex-permify \
+  --region=us-central1 --project=cortex-drive-496915 \
+  --format='value(status.url)')
+TOKEN=$(gcloud auth print-identity-token --audiences="$PERMIFY_URL")
+curl -s "$PERMIFY_URL/v1/tenants/cortex-drive/schemas/list" \
+  -H "Authorization: Bearer $TOKEN" | jq '.head'
 ```
+
+If both version strings match → in sync, no action needed.
+If they differ → update `PERMIFY_SCHEMA_VERSION` in `scripts/build-deploy-gateway.sh`
+to the version returned by Side B, then redeploy the gateway:
+```bash
+source scripts/cloud-env.sh && bash scripts/build-deploy-gateway.sh
+```
+
+**Trigger:** Only check after editing the Permify schema directly in the
+Permify console. Code-only gateway changes do not affect the schema version.
 
 ---
 
