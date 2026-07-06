@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ExternalLink, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -29,7 +29,7 @@ function typeBadgeClass(type: string) {
     return TYPE_COLORS[type] || 'text-slate-400 bg-slate-500/10 border-slate-500/20';
 }
 
-export default function DiscoveryPage() {
+function DiscoveryContent() {
     const params = useSearchParams();
     const token = params.get('share');
 
@@ -158,5 +158,13 @@ export default function DiscoveryPage() {
                 )}
             </main>
         </div>
+    );
+}
+
+export default function DiscoveryPage() {
+    return (
+        <Suspense>
+            <DiscoveryContent />
+        </Suspense>
     );
 }
