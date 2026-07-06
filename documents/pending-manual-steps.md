@@ -152,10 +152,11 @@ groups, create group form, member management per group. Uses `GET /api/groups`,
 verify it matches the live schema version after any Permify schema changes.
 
 **Auth note:** Permify Cloud Run is `--no-allow-unauthenticated`. The bearer
-token must be a **GCP OIDC identity token** (not a Clerk token). Fetch it with
-`gcloud auth print-identity-token --audiences=<permify-url>`.
+token must be a **GCP OIDC identity token** (not a Clerk token). Use
+`gcloud auth print-identity-token` (no `--audiences` flag — that flag only
+works with service accounts, not user accounts).
 
-**Full two-sided check:**
+**Full two-sided check (verified working 2026-07-06):**
 ```bash
 # Side A — what version the gateway is currently deploying with
 gcloud run services describe cortex-gateway \
@@ -163,13 +164,18 @@ gcloud run services describe cortex-gateway \
   --format="value(spec.template.spec.containers[0].env)" | grep PERMIFY_SCHEMA
 
 # Side B — what the live Permify head schema version actually is
+# Note: schemas/list requires POST in Permify v0.9+
 PERMIFY_URL=$(gcloud run services describe cortex-permify \
   --region=us-central1 --project=cortex-drive-496915 \
   --format='value(status.url)')
-TOKEN=$(gcloud auth print-identity-token --audiences="$PERMIFY_URL")
-curl -s "$PERMIFY_URL/v1/tenants/cortex-drive/schemas/list" \
-  -H "Authorization: Bearer $TOKEN" | jq '.head'
+TOKEN=$(gcloud auth print-identity-token)
+curl -s -X POST "$PERMIFY_URL/v1/tenants/cortex-drive/schemas/list" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq '.head'
 ```
+
+**Last verified:** 2026-07-06 — both sides: `d922hd29io6g008ivglg` ✅
 
 If both version strings match → in sync, no action needed.
 If they differ → update `PERMIFY_SCHEMA_VERSION` in `scripts/build-deploy-gateway.sh`
