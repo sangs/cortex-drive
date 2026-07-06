@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
+import { useParams } from 'next/navigation';
 import { Lock, ExternalLink, X, Calendar, Eye } from 'lucide-react';
 import { useUser } from '@clerk/nextjs';
 
@@ -25,7 +26,8 @@ interface GraphMeta {
     nodeCount: number;
 }
 
-export default function GraphViewPage({ params }: { params: { token: string } }) {
+export default function GraphViewPage() {
+    const params = useParams<{ token: string }>();
     const { user } = useUser();
     const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
     const [meta, setMeta] = useState<GraphMeta | null>(null);
