@@ -406,10 +406,16 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                             {linkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                                         </button>
                                     </div>
-                                    <button onClick={() => { setGeneratedUrl(''); setLinkTitle(''); setLinkExpiry(0); }}
-                                        className="w-full text-xs text-slate-500 hover:text-slate-300 transition-colors">
-                                        Generate another link
-                                    </button>
+                                    <div className="flex items-center justify-between">
+                                        <button onClick={() => { setGeneratedUrl(''); setLinkTitle(''); setLinkExpiry(0); }}
+                                            className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+                                            Generate another link
+                                        </button>
+                                        <a href="/settings/sharing" target="_blank" rel="noopener noreferrer"
+                                            className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                                            Manage all links →
+                                        </a>
+                                    </div>
                                 </div>
                             )}
 

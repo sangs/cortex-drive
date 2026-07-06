@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useUser, useAuth, UserButton, OrganizationSwitcher } from "@clerk/nextjs";
 import { 
     BrainCircuit, 
@@ -1033,7 +1034,9 @@ export default function DashboardPage() {
                                         </span>
                                     </div>
                                 </div>
-                                <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
+                                <Link href="/settings/sharing" title="Sharing & Access">
+                                    <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
+                                </Link>
                             </div>
                         </div>
                     ) : (
