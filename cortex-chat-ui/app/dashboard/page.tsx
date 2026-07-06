@@ -105,6 +105,23 @@ export default function DashboardPage() {
         setHasMounted(true);
     }, []);
 
+    // Pull model safety net: activate any pending grants for this user on first load per session.
+    // The webhook fast-path handles the normal case (sign-up triggers activation immediately).
+    // This covers: webhook failed, app was down at sign-up time, or any other edge case.
+    useEffect(() => {
+        if (!user || typeof sessionStorage === 'undefined') return;
+        if (sessionStorage.getItem('pending_activated')) return;
+        getToken().then(token => {
+            if (!token) return;
+            fetch(`${process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000'}/api/auth/activate-pending`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+            })
+                .then(() => sessionStorage.setItem('pending_activated', '1'))
+                .catch(() => {}); // fire-and-forget, non-fatal
+        });
+    }, [user, getToken]);
+
     // Helper to parse tool data into graph format
     const parseDataToGraph = (rawData: any, existingData?: any, backboneOnly: boolean = false, backboneSet?: Set<string>) => {
         try {

@@ -342,6 +342,7 @@ const gatewaySystemPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_syste
 const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_security_guest.md'), 'utf-8');
 const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
 const { createClerkClient, verifyToken } = require('@clerk/backend');
+const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
 const OpenAI = require('openai');
 const NodeCache = require('node-cache');
@@ -477,6 +478,19 @@ async function getCloudRunToken(targetUrl) {
 }
 
 const app = express();
+
+// Capture raw body for webhook routes BEFORE express.json parses them.
+// svix signature verification requires the original bytes, not a parsed object.
+app.use((req, res, next) => {
+    if (req.path.startsWith('/api/webhooks/')) {
+        const chunks = [];
+        req.on('data', chunk => chunks.push(chunk));
+        req.on('end', () => { req.rawBody = Buffer.concat(chunks); next(); });
+    } else {
+        next();
+    }
+});
+
 app.use(express.json({ limit: '10mb' })); // 10mb covers large graph snapshots for public link sharing
 
 const port = process.env.PORT || 4000;
@@ -584,6 +598,7 @@ const authMiddleware = async (req, res, next) => {
             req.headers['x-tenant-id'] = tenantId;
             // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but OpenFGA
             // tuples are keyed on the production sub. Same override pattern as TENANT_ID.
+            req.headers['x-raw-user-id'] = decoded.sub || ''; // always the real Clerk sub — used by activate-pending
             req.headers['x-user-id'] = process.env.OWNER_USER_ID || decoded.sub || '';
             
             // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
@@ -620,6 +635,164 @@ const authMiddleware = async (req, res, next) => {
 
     return res.status(401).send({ error: 'Unauthorized: Authentication required (JWT or API Key)' });
 };
+
+// ─── Pending Grant Helpers ────────────────────────────────────────────────────
+
+/**
+ * Find all pending share_grants for an email address, write Permify tuples,
+ * and flip them to 'active'. Called by both the webhook fast-path and the
+ * pull-model safety net on first login.
+ */
+async function activatePendingGrants(email, userSub) {
+    if (!email || !userSub) return;
+    const normalizedEmail = email.toLowerCase().trim();
+    const { rows } = await db.query(
+        `SELECT * FROM share_grants WHERE pending_email = $1 AND status = 'pending'`,
+        [normalizedEmail]
+    );
+    if (rows.length === 0) return;
+    console.log(`[pending-grants] Activating ${rows.length} grant(s) for ${normalizedEmail} → ${userSub}`);
+    for (const grant of rows) {
+        try {
+            if (grant.grant_type === 'graph_island') {
+                // N tuples — one per stored node id
+                await Promise.all((grant.child_node_ids || []).map(id =>
+                    permify.shareNodeWithUser(id, userSub, grant.expires_at || null)
+                ));
+            } else {
+                // Single-node grant — one tuple on root; composition rels give access to children
+                await permify.shareNodeWithUser(grant.root_node_id, userSub, grant.expires_at || null);
+            }
+            await db.query(
+                `UPDATE share_grants
+                 SET status = 'active', subject = $1, user_email = $2, pending_email = NULL
+                 WHERE grant_id = $3`,
+                [`user:${userSub}`, normalizedEmail, grant.grant_id]
+            );
+            await redis.del(`perm:${userSub}`);
+            console.log(`[pending-grants] Activated grant ${grant.grant_id}`);
+        } catch (err) {
+            console.error(`[pending-grants] Failed for grant ${grant.grant_id}:`, err.message);
+        }
+    }
+}
+
+/**
+ * Send a Resend transactional email notifying a pending recipient they were shared with.
+ * No-op if RESEND_API_KEY is not configured — safe to call at any time.
+ */
+async function sendInviteEmail({ toEmail, sharerName, nodeCount, isGraph }) {
+    if (!process.env.RESEND_API_KEY) return;
+    const appUrl = process.env.APP_URL || 'https://app.cortex-drive.com';
+    const what = isGraph
+        ? `a knowledge graph (${nodeCount} nodes)`
+        : `a knowledge graph node`;
+    try {
+        await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                from: 'Cortex-Drive <noreply@cortex-drive.com>',
+                to: [toEmail],
+                subject: `${sharerName} shared ${what} with you`,
+                html: `
+                    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#080a0f;color:#e2e8f0;border-radius:16px">
+                        <h2 style="color:#fff;margin:0 0 16px">${sharerName} shared their knowledge graph with you</h2>
+                        <p style="color:#94a3b8;margin:0 0 8px">${what.charAt(0).toUpperCase() + what.slice(1)} ${nodeCount === 1 ? 'has' : 'have'} been shared with you on Cortex-Drive.</p>
+                        <p style="color:#94a3b8;margin:0 0 24px">Sign up to access it — your access will be granted automatically when you create your account.</p>
+                        <a href="${appUrl}/sign-up" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">Sign up for Cortex-Drive →</a>
+                        <p style="color:#475569;font-size:12px;margin-top:32px">If you didn't expect this, you can ignore this email.</p>
+                    </div>
+                `,
+            }),
+        });
+        console.log(`[resend/invite] Sent invite to ${toEmail}`);
+    } catch (err) {
+        console.error('[resend/invite]', err.message); // non-fatal
+    }
+}
+
+// ─── Clerk Webhook ─────────────────────────────────────────────────────────────
+// Fast path: Clerk fires user.created → provision pending grants immediately.
+// Signature verified with svix using CLERK_WEBHOOK_SECRET.
+// Register the endpoint in Clerk dashboard → Webhooks → Add endpoint.
+// URL: https://api.cortex-drive.com/api/webhooks/clerk
+// Event: user.created
+
+app.post('/api/webhooks/clerk', async (req, res) => {
+    const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
+    if (!WEBHOOK_SECRET) {
+        console.log('[webhook/clerk] CLERK_WEBHOOK_SECRET not set — skipping');
+        return res.status(200).json({ skipped: true });
+    }
+    const svixId        = req.headers['svix-id'];
+    const svixTimestamp = req.headers['svix-timestamp'];
+    const svixSignature = req.headers['svix-signature'];
+    if (!svixId || !svixTimestamp || !svixSignature) {
+        return res.status(400).json({ error: 'Missing svix headers' });
+    }
+    let event;
+    try {
+        const wh = new SvixWebhook(WEBHOOK_SECRET);
+        event = wh.verify(req.rawBody || req.body, {
+            'svix-id':        svixId,
+            'svix-timestamp': svixTimestamp,
+            'svix-signature': svixSignature,
+        });
+    } catch (err) {
+        console.error('[webhook/clerk] Signature verification failed:', err.message);
+        return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    if (event.type === 'user.created') {
+        const { id: userSub, email_addresses, primary_email_address_id } = event.data;
+        const primaryEmail =
+            email_addresses?.find(e => e.id === primary_email_address_id)?.email_address
+            || email_addresses?.[0]?.email_address;
+        console.log(`[webhook/clerk] user.created: ${primaryEmail} → ${userSub}`);
+        if (primaryEmail && userSub) {
+            // Fire-and-forget — respond 200 immediately so Clerk doesn't retry
+            activatePendingGrants(primaryEmail, userSub).catch(e =>
+                console.error('[webhook/clerk activation]', e.message)
+            );
+        }
+    }
+    res.status(200).json({ received: true });
+});
+
+// ─── Pull Model: Pending Grant Activation ─────────────────────────────────────
+// Safety net called from the dashboard on first load each session.
+// Handles cases where the Clerk webhook failed or app was down at sign-up time.
+// Uses x-raw-user-id (real Clerk sub) to avoid OWNER_USER_ID substitution.
+// Rate-limited per user via Redis TTL (1 hour) to avoid hammering the DB.
+
+app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {
+    const userSub  = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
+    const cacheKey = `pending_activated:${userSub}`;
+    try {
+        const cached = await redis.get(cacheKey);
+        if (cached) return res.json({ skipped: true });
+
+        // Resolve this user's primary email from Clerk (one-time Clerk API call per hour)
+        const user = await clerkClient.users.getUser(userSub);
+        const email =
+            user.emailAddresses?.find(e => e.id === user.primaryEmailAddressId)?.emailAddress
+            || user.emailAddresses?.[0]?.emailAddress;
+
+        if (email) {
+            await activatePendingGrants(email, userSub);
+        }
+
+        await redis.set(cacheKey, '1', 'EX', 3600); // recheck after 1h
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/auth/activate-pending]', err.message);
+        res.json({ ok: false }); // non-fatal — return 200 so frontend doesn't surface an error
+    }
+});
 
 /**
  * Endpoints
@@ -732,11 +905,44 @@ app.post('/api/share/infer', authMiddleware, async (req, res) => {
 
 // Share a node (and its full composition subtree) with a user.
 // Writes ONE Permify shared_viewer tuple on the root + one share_grants audit record.
+// If the recipient has no Clerk account yet, pass pendingEmail instead of targetSub —
+// the grant is stored as 'pending' and activated on sign-up (webhook) or first login (pull model).
 app.post('/api/share/user', authMiddleware, async (req, res) => {
-    const { rootNodeId, targetSub, expiresAt, depthSelection = 5 } = req.body;
-    const tenantId = req.headers['x-tenant-id'];
-    const issuedBy = req.headers['x-user-id'];
-    if (!rootNodeId || !targetSub) return res.status(400).json({ error: 'rootNodeId and targetSub required' });
+    const { rootNodeId, targetSub, pendingEmail, expiresAt, depthSelection = 5 } = req.body;
+    const tenantId  = req.headers['x-tenant-id'];
+    const issuedBy  = req.headers['x-user-id'];
+    const issuerSub = req.headers['x-raw-user-id'] || issuedBy;
+
+    if (!rootNodeId || (!targetSub && !pendingEmail)) {
+        return res.status(400).json({ error: 'rootNodeId and (targetSub or pendingEmail) required' });
+    }
+
+    // ── Pending grant path ── (recipient has no Cortex-Drive account yet)
+    if (pendingEmail && !targetSub) {
+        try {
+            const grantResult = await db.query(
+                `INSERT INTO share_grants
+                   (root_node_id, subject, relation, depth_ui_selection, composition_rels,
+                    child_node_ids, already_accessible_ids, private_node_ids,
+                    issued_by, expires_at, status, pending_email)
+                 VALUES ($1, '', 'shared_viewer', $2, '{}', '{}', '{}', '{}', $3, $4, 'pending', $5)
+                 RETURNING grant_id`,
+                [rootNodeId, depthSelection, issuedBy, expiresAt || null, pendingEmail.toLowerCase().trim()]
+            );
+            // Resolve issuer's display name for the invite email
+            let sharerName = issuedBy;
+            try {
+                const issuer = await clerkClient.users.getUser(issuerSub);
+                sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
+                    || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
+            } catch { /* non-fatal */ }
+            await sendInviteEmail({ toEmail: pendingEmail, sharerName, nodeCount: 1, isGraph: false });
+            return res.json({ pending: true, grantId: grantResult.rows[0].grant_id });
+        } catch (err) {
+            console.error('[/api/share/user pending]', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    }
     try {
         // 1. BFS subtree snapshot for audit + dedup preview
         const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -1087,18 +1293,48 @@ app.delete('/api/groups/:id/members/:sub', authMiddleware, async (req, res) => {
 
 // ─── Graph Island Sharing ─────────────────────────────────────────────────────
 
-// Share all visible graph nodes with a named user OR a custom group.
+// Share all visible graph nodes with a named user, a custom group, or a pending email.
 // Writes one Permify shared_viewer tuple per node + one share_grants audit row.
+// pendingEmail: store grant as 'pending', activate on webhook / pull model.
 app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
-    const { nodeIds, targetSub, groupId, expiresAt } = req.body;
-    const tenantId = req.headers['x-tenant-id'];
-    const issuedBy = req.headers['x-user-id'];
+    const { nodeIds, targetSub, groupId, pendingEmail, expiresAt } = req.body;
+    const tenantId  = req.headers['x-tenant-id'];
+    const issuedBy  = req.headers['x-user-id'];
+    const issuerSub = req.headers['x-raw-user-id'] || issuedBy;
 
     if (!Array.isArray(nodeIds) || nodeIds.length === 0) {
         return res.status(400).json({ error: 'nodeIds (non-empty array) required' });
     }
-    if ((!targetSub && !groupId) || (targetSub && groupId)) {
-        return res.status(400).json({ error: 'Provide either targetSub or groupId, not both' });
+    const recipientCount = [targetSub, groupId, pendingEmail].filter(Boolean).length;
+    if (recipientCount !== 1) {
+        return res.status(400).json({ error: 'Provide exactly one of targetSub, groupId, or pendingEmail' });
+    }
+
+    // ── Pending grant path ──
+    if (pendingEmail) {
+        try {
+            const rootNodeId  = nodeIds[0];
+            const grantResult = await db.query(
+                `INSERT INTO share_grants
+                   (root_node_id, subject, relation, depth_ui_selection, composition_rels,
+                    child_node_ids, already_accessible_ids, private_node_ids,
+                    issued_by, expires_at, grant_type, subject_type, status, pending_email)
+                 VALUES ($1, '', 'shared_viewer', 0, '{}', $2, '{}', '{}', $3, $4, 'graph_island', 'user', 'pending', $5)
+                 RETURNING grant_id`,
+                [rootNodeId, nodeIds, issuedBy, expiresAt || null, pendingEmail.toLowerCase().trim()]
+            );
+            let sharerName = issuedBy;
+            try {
+                const issuer = await clerkClient.users.getUser(issuerSub);
+                sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
+                    || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
+            } catch { /* non-fatal */ }
+            await sendInviteEmail({ toEmail: pendingEmail, sharerName, nodeCount: nodeIds.length, isGraph: true });
+            return res.json({ pending: true, grantId: grantResult.rows[0].grant_id, totalNodes: nodeIds.length });
+        } catch (err) {
+            console.error('[/api/share/graph-island pending]', err.message);
+            return res.status(500).json({ error: err.message });
+        }
     }
 
     const subject     = targetSub ? `user:${targetSub}` : `group:${groupId}#member`;

@@ -101,8 +101,8 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const resp = await fetch(`${GATEWAY}/api/user/resolve?email=${encodeURIComponent(email)}`, { headers });
             if (resp.ok) setResolvedUser(await resp.json());
-            else { const err = await resp.json(); setResolveError(err.error || 'User not found'); }
-        } catch { setResolveError('Could not reach server'); } finally { setResolving(false); }
+            else setResolveError('not_found'); // sentinel — triggers invite UI below
+        } catch { setResolveError('error'); } finally { setResolving(false); }
     }
 
     async function shareWithUser() {
@@ -116,6 +116,19 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const data = await resp.json();
             setUserSuccess(`Graph shared with ${resolvedUser.name}. ${data.totalNodes} nodes shared.`);
             setEmail(''); setResolvedUser(null);
+        } catch { /* non-fatal */ } finally { setUserSharing(false); }
+    }
+
+    async function sendInvite() {
+        if (!email || nodeIds.length === 0) return;
+        setUserSharing(true);
+        try {
+            const headers = await authHeaders();
+            const body: any = { nodeIds, pendingEmail: email };
+            if (userExpiry > 0) body.expiresAt = new Date(Date.now() + userExpiry * 86400000).toISOString();
+            await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
+            setUserSuccess(`Invite sent to ${email}. They'll get access when they sign up.`);
+            setEmail(''); setResolveError('');
         } catch { /* non-fatal */ } finally { setUserSharing(false); }
     }
 
@@ -245,15 +258,39 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                 {resolving && <Loader2 className="w-4 h-4 text-slate-500 animate-spin self-center" />}
                             </div>
                             {resolvedUser && <p className="text-xs text-emerald-400 font-medium">→ {resolvedUser.name}</p>}
-                            {resolveError && <p className="text-xs text-red-400">{resolveError}</p>}
+                            {resolveError === 'error' && <p className="text-xs text-red-400">Could not reach server — try again.</p>}
 
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs text-slate-400">Expires:</span>
-                                <select value={userExpiry} onChange={e => setUserExpiry(Number(e.target.value))}
-                                    className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none cursor-pointer">
-                                    {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>)}
-                                </select>
-                            </div>
+                            {/* No account found — offer invite instead of failing */}
+                            {resolveError === 'not_found' && (
+                                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-2">
+                                    <p className="text-[11px] font-bold text-amber-400">No Cortex-Drive account found</p>
+                                    <p className="text-[10px] text-slate-400 leading-snug">Send an invite? They'll get access automatically the moment they sign up — no action needed on your end.</p>
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-slate-400">Expires:</span>
+                                            <select value={userExpiry} onChange={e => setUserExpiry(Number(e.target.value))}
+                                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none cursor-pointer">
+                                                {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>)}
+                                            </select>
+                                        </div>
+                                        <button onClick={sendInvite} disabled={userSharing}
+                                            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all disabled:opacity-40">
+                                            {userSharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                                            Send Invite
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {!resolveError && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-slate-400">Expires:</span>
+                                    <select value={userExpiry} onChange={e => setUserExpiry(Number(e.target.value))}
+                                        className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none cursor-pointer">
+                                        {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>)}
+                                    </select>
+                                </div>
+                            )}
 
                             {userSuccess && (
                                 <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
@@ -261,12 +298,16 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                 </p>
                             )}
 
-                            <button onClick={shareWithUser} disabled={!resolvedUser || userSharing || nodeIds.length === 0}
-                                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40">
-                                {userSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
-                                Share Graph
-                            </button>
-                            <p className="text-[10px] text-slate-500">Recipients must sign in to Cortex-Drive to access the shared graph.</p>
+                            {!resolveError && (
+                                <>
+                                    <button onClick={shareWithUser} disabled={!resolvedUser || userSharing || nodeIds.length === 0}
+                                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40">
+                                        {userSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                                        Share Graph
+                                    </button>
+                                    <p className="text-[10px] text-slate-500">Recipients must sign in to Cortex-Drive to access the shared graph.</p>
+                                </>
+                            )}
                         </div>
                     )}
 
