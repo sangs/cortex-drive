@@ -158,6 +158,123 @@ that was written by this grant — no ambiguity, no orphaned tuples.
 
 ---
 
+## Design Decision: Guest Graph Links (Public Token-Based Sharing)
+**Added:** 2026-07-06
+
+### Problem
+
+All Permify-backed sharing (`shared_viewer` tuples) requires the recipient to have a
+CortexDrive account (a Clerk `user_sub`). For recruiter/evaluator audiences who have
+never heard of CortexDrive, this is a hard wall. A public graph link — like a Loom
+recording link — lets anyone with the URL view the shared graph without any account.
+
+### Decision: Token-Based, No Permify Involvement
+
+A separate `graph_share_links` table stores a random 256-bit URL-safe token alongside a
+frozen snapshot of the node UUIDs that were on the canvas at share time. The token IS
+the authorization — no Permify tuples are written.
+
+```sql
+CREATE TABLE graph_share_links (
+    link_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    share_token     TEXT NOT NULL UNIQUE,   -- crypto.randomBytes(32).toString('base64url')
+    node_ids        UUID[] NOT NULL,        -- frozen at share time; immutable after creation
+    title           TEXT,                   -- optional: "Sangeetha Career Graph — Q3 2026"
+    owner_sub       TEXT NOT NULL,
+    org_id          TEXT NOT NULL,
+    expires_at      TIMESTAMPTZ,            -- NULL = never expires
+    revoked_at      TIMESTAMPTZ,            -- NULL = active; set on DELETE /api/share/graph-link/:id
+    view_count      INTEGER NOT NULL DEFAULT 0,
+    last_viewed_at  TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**Why not HMAC?** The node content is not in the token. The token is a lookup key into
+`graph_share_links` where the node set is stored. HMAC would add no security benefit
+and would complicate revocation (can't revoke a content-derived HMAC without re-hashing).
+
+**Why node IDs are frozen (not live):** The public link represents the graph state at the
+moment of sharing — like a Loom recording. This prevents a scenario where a graph is
+silently expanded after the link is shared, exposing content the sharer did not intend.
+The node **content** is live (queried from Neo4j at access time); only the **set** is frozen.
+
+**Why no Permify:** Anonymous principals have no Clerk `user_sub`. Introducing a synthetic
+anonymous subject into Permify would pollute the tuple store and complicate revocation.
+The token-in-DB pattern is simpler, equally secure, and easier to reason about.
+
+**Share URL shape:** `https://app.cortex-drive.com/graph-view/<token>`
+
+**Frontend route:** `/graph-view/[token]` — public, no Clerk middleware. Full interactive
+force-directed graph (read-only). Node detail drawer on click. "Open in CortexDrive →" CTA.
+
+**Rate limiting:** 100 requests/hour per token. Prevents scraping of knowledge graph content.
+
+**Coexistence with Permify sharing:** A given graph can have both a public link AND
+individual/group Permify grants simultaneously. They are independent. Revoking the public
+link (`revoked_at = now()`) does not affect any Permify grants, and vice versa.
+
+---
+
+## Design Decision: Pending Grant Resolution — Pull Model
+**Added:** 2026-07-06
+
+### Problem
+
+Option B (invite + deferred grant) requires provisioning Permify tuples when a user
+signs up who was pre-shared with before they had an account. The natural trigger is a
+Clerk `user.created` webhook. But:
+
+1. CortexDrive runs on Cloud Run scale-to-zero — it is not guaranteed to be up when
+   a user happens to sign up.
+2. Clerk webhooks have a fixed retry window. Failed deliveries are lost.
+3. Adding webhook infrastructure (signature verification, Cloud Tasks queue for
+   guaranteed delivery) is significant engineering cost at startup scale.
+
+### Decision: Pull Model on Login (Canonical); Webhook as Future Optimization
+
+**Schema addition to `share_grants`:**
+```sql
+ALTER TABLE share_grants
+    ADD COLUMN IF NOT EXISTS pending_email TEXT,  -- set when user_sub is unknown at grant time
+    ADD COLUMN IF NOT EXISTS user_sub      TEXT;  -- nullable until grant is activated
+```
+The `subject` column continues to store the Permify subject string for active grants.
+`pending_email` + `status = 'pending'` identifies unresolved grants.
+
+**Pull model flow:**
+```
+1. POST /api/share/user with email that has no Clerk account:
+   → INSERT share_grants (pending_email, status='pending', user_sub=NULL, ...)
+   → Send transactional email via Resend: "You've been shared with. Sign in at [link]."
+
+2. User signs up → creates Clerk account → first authenticated gateway request:
+   → Gateway resolves email from Clerk JWT
+   → SELECT FROM share_grants WHERE pending_email = $email AND status = 'pending'
+   → If found: write Permify tuples, UPDATE status = 'active', SET user_sub = $sub
+   → redis.del(`perm:${sub}`)
+
+3. User's next graph query: access is provisioned.
+```
+
+**Why transactional email (Resend) over Clerk organization invitations:**
+Clerk org invitations tie the invitation to org membership, which conflates sharing
+access with organizational identity. CortexDrive's sharing model is cross-org (a
+recruiter from a different company should not become a member of the sharer's Clerk org).
+Resend email gives full control over content and CortexDrive branding.
+
+**Cost at startup scale:** Zero additional infrastructure. The pull check is a single
+indexed SELECT on `pending_email`. It runs once per login session — it is not on every
+request hot path. On cache miss the cost is one SQL query; on cache hit (no pending
+grants) it is zero queries if a Redis flag is set after the first clean check.
+
+**Webhook as fast-path (future):** When reliability demands increase, add Clerk webhooks
+that call `POST /api/internal/activate-pending-grants` with Clerk's svix signature
+verification. The pull model stays in place as the guaranteed fallback. The two models
+are additive, not mutually exclusive.
+
+---
+
 ## Enterprise Systems Consulted
 
 ---
