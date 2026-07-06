@@ -794,6 +794,49 @@ app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {
     }
 });
 
+// Admin-only sweep: scan ALL pending grants, look up each pending_email in Clerk,
+// and activate those whose recipients have already signed up.
+// Use case: admin logs in and provisions any users whose webhook delivery was missed
+// (e.g., gateway was cold/restarting at the moment they signed up).
+// Gated on x-schema-readable header (set by authMiddleware for org:admin role).
+app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) => {
+    if (req.headers['x-schema-readable'] !== 'true') {
+        return res.status(403).json({ error: 'Admin role required' });
+    }
+    try {
+        const { rows: pending } = await db.query(
+            `SELECT DISTINCT pending_email FROM share_grants WHERE status = 'pending' AND pending_email IS NOT NULL`
+        );
+        if (pending.length === 0) return res.json({ swept: 0, activated: 0, stillPending: 0 });
+
+        let activated = 0;
+        let stillPending = 0;
+
+        for (const { pending_email: email } of pending) {
+            try {
+                const users = await clerkClient.users.getUserList({ emailAddress: [email] });
+                if (users.data.length > 0) {
+                    const clerkUser = users.data[0];
+                    await activatePendingGrants(email, clerkUser.id);
+                    activated++;
+                    console.log(`[admin-sweep] Activated grants for ${email} → ${clerkUser.id}`);
+                } else {
+                    stillPending++;
+                    console.log(`[admin-sweep] ${email} has not signed up yet — skipping`);
+                }
+            } catch (err) {
+                console.error(`[admin-sweep] Error processing ${email}:`, err.message);
+                stillPending++;
+            }
+        }
+
+        res.json({ swept: pending.length, activated, stillPending });
+    } catch (err) {
+        console.error('[/api/auth/activate-pending/sweep]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 /**
  * Endpoints
  */

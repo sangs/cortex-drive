@@ -106,19 +106,28 @@ export default function DashboardPage() {
     }, []);
 
     // Pull model safety net: activate any pending grants for this user on first load per session.
-    // The webhook fast-path handles the normal case (sign-up triggers activation immediately).
-    // This covers: webhook failed, app was down at sign-up time, or any other edge case.
+    // Admins additionally run a full sweep — provisioning grants for any user who signed up
+    // but whose webhook delivery was missed (cold start, transient failure, etc.).
     useEffect(() => {
         if (!user || typeof sessionStorage === 'undefined') return;
         if (sessionStorage.getItem('pending_activated')) return;
-        getToken().then(token => {
+        const gw = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+        getToken().then(async token => {
             if (!token) return;
-            fetch(`${process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000'}/api/auth/activate-pending`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-            })
-                .then(() => sessionStorage.setItem('pending_activated', '1'))
-                .catch(() => {}); // fire-and-forget, non-fatal
+            const headers = { Authorization: `Bearer ${token}` };
+            // 1. Always activate grants for this user
+            await fetch(`${gw}/api/auth/activate-pending`, { method: 'POST', headers }).catch(() => {});
+            // 2. If admin: sweep all pending grants across all users
+            const isAdmin = (user as any).organizationMemberships?.some(
+                (m: any) => m.role === 'org:admin' || m.role === 'admin'
+            );
+            if (isAdmin) {
+                fetch(`${gw}/api/auth/activate-pending/sweep`, { method: 'POST', headers })
+                    .then(r => r.json())
+                    .then(d => { if (d.activated > 0) console.log(`[admin-sweep] Activated ${d.activated} pending grant(s)`); })
+                    .catch(() => {});
+            }
+            sessionStorage.setItem('pending_activated', '1');
         });
     }, [user, getToken]);
 
