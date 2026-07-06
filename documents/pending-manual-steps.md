@@ -4,13 +4,13 @@ Steps that require action outside the codebase (Clerk dashboard, GCP console,
 DNS panel, third-party accounts). Each step is marked with its current status
 and exact instructions.
 
-Last updated: 2026-07-06
+Last updated: 2026-07-06 (status updated 2026-07-06 — A, B, D complete)
 
 ---
 
 ## A — Clerk Webhook (user.created → provision pending grants)
 
-**Status:** ❌ Not configured — CLERK_WEBHOOK_SECRET secret does not exist in GCP.
+**Status:** ✅ Done (2026-07-06)
 
 **What it does:** When a new user signs up via Clerk, Cortex-Drive immediately
 provisions any pending share grants for their email without waiting for first login.
@@ -53,8 +53,7 @@ first dashboard load and covers the same cases within ~1 minute of first login.
 
 ## B — Resend Email (invite notifications for pending grants)
 
-**Status:** ❌ Not configured — RESEND_API_KEY secret does not exist in GCP.
-Invite emails are silently skipped until this key is set.
+**Status:** ✅ Done (2026-07-06)
 
 **What it does:** When you share with an email that has no Cortex-Drive account,
 CortexDrive sends a branded transactional email: "Sangeetha shared a knowledge
@@ -195,3 +194,6 @@ Permify console. Code-only gateway changes do not affect the schema version.
 | Migration 005: share_grants pending_email + user_email | 2026-07-06 | via Cloud SQL Auth Proxy |
 | All 4 Cloud Run services deployed | 2026-07-06 | gateway-00019, ui-00015 |
 | Permify 683 tuples migrated | 2026-06 | see how-to-google-cloud-operations.md |
+| A: Clerk webhook configured + CLERK_WEBHOOK_SECRET in Secret Manager | 2026-07-06 | endpoint: /api/webhooks/clerk, event: user.created |
+| B: Resend domain verified + RESEND_API_KEY in Secret Manager | 2026-07-06 | sending domain: cortex-drive.com |
+| D: Domain email (Microsoft 365 for cortex-drive.com) | 2026-07-06 | prerequisite for Resend domain verification |
