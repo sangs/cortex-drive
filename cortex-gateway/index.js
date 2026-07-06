@@ -1134,6 +1134,104 @@ app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
     }
 });
 
+// --- Public Graph Links (Loom-style) ---
+
+app.post('/api/share/graph-link', authMiddleware, async (req, res) => {
+    const userSub  = req.headers['x-user-id'];
+    const tenantId = req.headers['x-tenant-id'];
+    const { nodeIds, graphData, title, expiresAt } = req.body;
+    if (!nodeIds?.length || !graphData) return res.status(400).json({ error: 'nodeIds and graphData required' });
+    try {
+        const token = crypto.randomBytes(32).toString('base64url');
+        const result = await db.query(
+            `INSERT INTO graph_share_links (share_token, node_ids, graph_snapshot, title, owner_sub, org_id, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING link_id`,
+            [token, nodeIds, JSON.stringify(graphData), title || null, userSub, tenantId, expiresAt || null]
+        );
+        const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/graph-view/${token}`;
+        res.json({ shareUrl, linkId: result.rows[0].link_id });
+    } catch (err) {
+        console.error('[/api/share/graph-link POST]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/share/graph-link/:token', async (req, res) => {
+    const { token } = req.params;
+    try {
+        const row = await db.query(
+            `SELECT * FROM graph_share_links
+             WHERE share_token = $1
+               AND revoked_at IS NULL
+               AND (expires_at IS NULL OR expires_at > NOW())`,
+            [token]
+        );
+        if (!row.rows.length) return res.status(404).json({ error: 'Link not found or expired' });
+        const link = row.rows[0];
+        // increment view stats (fire-and-forget)
+        db.query(
+            `UPDATE graph_share_links SET view_count = view_count + 1, last_viewed_at = NOW() WHERE link_id = $1`,
+            [link.link_id]
+        ).catch(() => {});
+        // resolve owner display name from Clerk (best-effort)
+        let ownerName = 'CortexDrive';
+        try {
+            const owner = await clerkClient.users.getUser(link.owner_sub);
+            ownerName = `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || ownerName;
+        } catch {}
+        const snapshot = typeof link.graph_snapshot === 'string'
+            ? JSON.parse(link.graph_snapshot)
+            : link.graph_snapshot;
+        res.json({
+            meta: { title: link.title, ownerName, createdAt: link.created_at, nodeCount: link.node_ids.length },
+            nodes: snapshot.nodes || [],
+            links: snapshot.links || [],
+        });
+    } catch (err) {
+        console.error('[/api/share/graph-link/:token]', err.message);
+        res.status(500).json({ error: 'Failed to load graph' });
+    }
+});
+
+app.get('/api/share/graph-links', authMiddleware, async (req, res) => {
+    const userSub = req.headers['x-user-id'];
+    try {
+        const result = await db.query(
+            `SELECT link_id, title,
+                    array_length(node_ids, 1) AS node_count,
+                    created_at, expires_at, revoked_at, view_count, last_viewed_at,
+                    share_token,
+                    CASE WHEN revoked_at IS NOT NULL THEN 'revoked'
+                         WHEN expires_at IS NOT NULL AND expires_at < NOW() THEN 'expired'
+                         ELSE 'active' END AS status
+             FROM graph_share_links WHERE owner_sub = $1 ORDER BY created_at DESC`,
+            [userSub]
+        );
+        const frontendUrl = process.env.FRONTEND_URL || 'https://app.cortex-drive.com';
+        res.json(result.rows.map(r => ({ ...r, shareUrl: `${frontendUrl}/graph-view/${r.share_token}` })));
+    } catch (err) {
+        console.error('[/api/share/graph-links]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/share/graph-link/:linkId', authMiddleware, async (req, res) => {
+    const userSub = req.headers['x-user-id'];
+    const { linkId } = req.params;
+    try {
+        const result = await db.query(
+            `UPDATE graph_share_links SET revoked_at = NOW()
+             WHERE link_id = $1 AND owner_sub = $2 AND revoked_at IS NULL RETURNING link_id`,
+            [linkId, userSub]
+        );
+        if (!result.rows.length) return res.status(404).json({ error: 'Link not found' });
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/share/graph-link DELETE]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
     const nodeId = req.headers['x-guest-share-anchor'];
     if (!nodeId) return res.status(400).json({ error: 'Invalid or missing share token' });

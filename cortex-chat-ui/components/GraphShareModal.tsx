@@ -3,12 +3,12 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, UserPlus, Building2, Check, Loader2, Share2 } from 'lucide-react';
+import { X, UserPlus, Building2, Check, Loader2, Share2, Link2, Copy } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
-type GraphTab = 'user' | 'group';
+type GraphTab = 'user' | 'group' | 'link';
 
 const EXPIRY_OPTIONS = [
     { label: 'No expiry', days: 0 },
@@ -44,6 +44,13 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     const [groupExpiry, setGroupExpiry] = useState(0);
     const [groupSharing, setGroupSharing] = useState(false);
     const [groupSuccess, setGroupSuccess] = useState('');
+
+    // --- Public Link tab state ---
+    const [linkTitle, setLinkTitle] = useState('');
+    const [linkExpiry, setLinkExpiry] = useState(0);
+    const [linkGenerating, setLinkGenerating] = useState(false);
+    const [generatedUrl, setGeneratedUrl] = useState('');
+    const [linkCopied, setLinkCopied] = useState(false);
 
     const nodeIds = graphData.nodes
         .map(n => n.node_id || n.id)
@@ -81,6 +88,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     useEffect(() => {
         setEmail(''); setResolvedUser(null); setResolveError('');
         setUserSuccess(''); setGroupSuccess('');
+        setGeneratedUrl(''); setLinkCopied(false);
     }, [tab]);
 
     if (!open) return null;
@@ -123,9 +131,30 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
         } catch { /* non-fatal */ } finally { setGroupSharing(false); }
     }
 
+    async function generateLink() {
+        if (nodeIds.length === 0) return;
+        setLinkGenerating(true);
+        try {
+            const headers = await authHeaders();
+            const body: any = { nodeIds, graphData, title: linkTitle || undefined };
+            if (linkExpiry > 0) body.expiresAt = new Date(Date.now() + linkExpiry * 86400000).toISOString();
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const data = await resp.json();
+            if (data.shareUrl) setGeneratedUrl(data.shareUrl);
+        } catch { /* non-fatal */ } finally { setLinkGenerating(false); }
+    }
+
+    async function copyLink() {
+        if (!generatedUrl) return;
+        await navigator.clipboard.writeText(generatedUrl);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+    }
+
     const tabs = [
-        { id: 'user'  as GraphTab, label: 'Share with Person', icon: <UserPlus className="w-3.5 h-3.5" /> },
-        { id: 'group' as GraphTab, label: 'Share with Group',  icon: <Building2 className="w-3.5 h-3.5" /> },
+        { id: 'user'  as GraphTab, label: 'Person',      icon: <UserPlus className="w-3.5 h-3.5" /> },
+        { id: 'group' as GraphTab, label: 'Group',        icon: <Building2 className="w-3.5 h-3.5" /> },
+        { id: 'link'  as GraphTab, label: 'Public Link',  icon: <Link2 className="w-3.5 h-3.5" /> },
     ];
 
     return ReactDOM.createPortal(
@@ -267,6 +296,57 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                     <p className="text-[10px] text-slate-500">Recipients must sign in to Cortex-Drive to access the shared graph.</p>
                                 </>
                             )}
+                        </div>
+                    )}
+
+                    {/* ── PUBLIC LINK TAB ── */}
+                    {tab === 'link' && (
+                        <div className="space-y-4">
+                            <div>
+                                <input
+                                    type="text"
+                                    value={linkTitle}
+                                    onChange={e => setLinkTitle(e.target.value)}
+                                    placeholder="Link title (optional)"
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all"
+                                />
+                                <p className="text-[10px] text-slate-500 mt-1.5">e.g. "Career Graph — Q3 2026 Application"</p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-400">Expires:</span>
+                                <select value={linkExpiry} onChange={e => setLinkExpiry(Number(e.target.value))}
+                                    className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none cursor-pointer">
+                                    {EXPIRY_OPTIONS.map(o => <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>)}
+                                </select>
+                            </div>
+
+                            {!generatedUrl ? (
+                                <button onClick={generateLink} disabled={linkGenerating || nodeIds.length === 0}
+                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40">
+                                    {linkGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                                    Generate Public Link
+                                </button>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2 bg-white/5 border border-emerald-500/30 rounded-xl px-3 py-2.5">
+                                        <p className="flex-1 text-xs text-emerald-300 truncate font-mono">{generatedUrl}</p>
+                                        <button onClick={copyLink}
+                                            className="shrink-0 p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all">
+                                            {linkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                        </button>
+                                    </div>
+                                    <button onClick={() => { setGeneratedUrl(''); setLinkTitle(''); setLinkExpiry(0); }}
+                                        className="w-full text-xs text-slate-500 hover:text-slate-300 transition-colors">
+                                        Generate another link
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-1">
+                                <p className="text-[11px] font-bold text-amber-400">Anyone with this link can view the graph</p>
+                                <p className="text-[10px] text-slate-500">No sign-in required. The graph snapshot is frozen at the time you generate this link. Good for sharing with recruiters or hiring managers.</p>
+                            </div>
                         </div>
                     )}
                 </motion.div>
