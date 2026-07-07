@@ -1,6 +1,6 @@
 # Authorization Reference Architecture — CortexDrive
 **Created:** 2026-06-29
-**Last updated:** 2026-07-02 — Group sharing and graph island sharing decisions added
+**Last updated:** 2026-07-06 — Graph snapshot model corrected, pending grant schema updated, webhook live
 **Relates to:**
 - `permission-resolution-caching-architecture-2026-06-23.md` — Redis caching layer design
 - `zanzibar-authorization-architecture-2026-04-28.md` — original Zanzibar migration plan
@@ -46,9 +46,9 @@ three levels.
 ├────────────────────────────────────────────────────────────────────────┤
 │  LEVEL 3 — Runtime Permission Cache (Redis, Upstash)                  │
 │  What:  Pre-materialized flat list of node UUIDs the user can see,   │
-│         derived from OpenFGA listObjects()                            │
+│         derived from Permify LookupEntity()                           │
 │  Who:   Gateway/MCP populates on miss; invalidated on grant/revoke   │
-│  Query: "What can user X see right now, without calling OpenFGA?"    │
+│  Query: "What can user X see right now, without calling Permify?"    │
 │  TTL:   300s (or invalidated by perm_version counter change)         │
 │  Key:   perm:{userId}                                                 │
 └────────────────────────────────────────────────────────────────────────┘
@@ -62,7 +62,7 @@ consumers: Level 1 is for system debugging; Level 2 is for product-level audit U
 (the Manage Access tab, the share history panel, compliance exports).
 
 Level 3 is a performance layer only. It is never the source of truth. If Redis is
-flushed, the system falls back to Level 1 (OpenFGA) with no data loss.
+flushed, the system falls back to Level 1 (Permify) with no data loss.
 
 ---
 
@@ -117,13 +117,18 @@ CREATE TABLE share_grants (
     expires_at      TIMESTAMPTZ,
     revoked_at      TIMESTAMPTZ,
     revoked_by      TEXT,
+    pending_email   TEXT,                        -- set when recipient has no Clerk account at share time
+    user_email      TEXT,                        -- stored email once grant is activated (for display)
     status          TEXT NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active', 'revoked', 'expired'))
+                    CHECK (status IN ('pending', 'active', 'revoked', 'expired'))
+    -- 'pending': pending_email set, user_sub NULL, Permify tuples not yet written
+    -- 'active':  user_sub set, Permify tuples written, access live
 );
 CREATE INDEX ON share_grants (root_node_id, status);
 CREATE INDEX ON share_grants (subject, status);
 CREATE INDEX ON share_grants (group_id, status);
 CREATE INDEX ON share_grants (issued_by);
+CREATE INDEX ON share_grants (pending_email) WHERE status = 'pending';
 ```
 
 **`groups` and `group_members` schema (new, 2026-07-02):**
@@ -178,7 +183,8 @@ the authorization — no Permify tuples are written.
 CREATE TABLE graph_share_links (
     link_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     share_token     TEXT NOT NULL UNIQUE,   -- crypto.randomBytes(32).toString('base64url')
-    node_ids        UUID[] NOT NULL,        -- frozen at share time; immutable after creation
+    node_ids        UUID[] NOT NULL,        -- frozen node ID set (for indexing/audit)
+    graph_snapshot  JSONB NOT NULL,         -- full graph frozen at share time: {nodes[], links[]}
     title           TEXT,                   -- optional: "Sangeetha Career Graph — Q3 2026"
     owner_sub       TEXT NOT NULL,
     org_id          TEXT NOT NULL,
@@ -190,14 +196,24 @@ CREATE TABLE graph_share_links (
 );
 ```
 
-**Why not HMAC?** The node content is not in the token. The token is a lookup key into
-`graph_share_links` where the node set is stored. HMAC would add no security benefit
-and would complicate revocation (can't revoke a content-derived HMAC without re-hashing).
+**Why not HMAC?** The token is a lookup key into `graph_share_links` where the snapshot
+is stored. HMAC would add no security benefit and would complicate revocation.
 
-**Why node IDs are frozen (not live):** The public link represents the graph state at the
-moment of sharing — like a Loom recording. This prevents a scenario where a graph is
-silently expanded after the link is shared, exposing content the sharer did not intend.
-The node **content** is live (queried from Neo4j at access time); only the **set** is frozen.
+**Why the full graph snapshot is stored (not just node IDs):** The snapshot captures the
+complete ECharts-ready node and link data — including display fields (name, type,
+description, links, link_titles) and edge topology — at the moment the sharer clicks
+"Generate Link." This is a true Loom-style frozen recording.
+
+⚠️ **Critical distinction from the original design intent:** The public view does NOT
+query Neo4j at access time. It reads `graph_snapshot` directly from Cloud SQL. The
+"frozen node set, live content" framing was the initial design; the implementation
+stores the full snapshot for three reasons:
+1. No Neo4j auth surface exposed to anonymous token holders
+2. The view is exactly what the sharer intended — not affected by subsequent graph edits
+3. Faster: one DB row fetch vs. a Neo4j query per token access
+
+The node **data** (descriptions, links) is therefore also frozen, not live. This is the
+correct behaviour for a public sharing primitive.
 
 **Why no Permify:** Anonymous principals have no Clerk `user_sub`. Introducing a synthetic
 anonymous subject into Permify would pollute the tuple store and complicate revocation.
@@ -268,10 +284,11 @@ indexed SELECT on `pending_email`. It runs once per login session — it is not 
 request hot path. On cache miss the cost is one SQL query; on cache hit (no pending
 grants) it is zero queries if a Redis flag is set after the first clean check.
 
-**Webhook as fast-path (future):** When reliability demands increase, add Clerk webhooks
-that call `POST /api/internal/activate-pending-grants` with Clerk's svix signature
-verification. The pull model stays in place as the guaranteed fallback. The two models
-are additive, not mutually exclusive.
+**Webhook as fast-path (implemented 2026-07-06):** `POST /api/webhooks/clerk` is live.
+svix signature verification (`CLERK_WEBHOOK_SECRET` in Secret Manager). Fires on
+`user.created`. Calls `activatePendingGrants(email, userSub)` — same function as the
+pull model. The pull model remains the guaranteed fallback for any delivery failure.
+The two paths are additive: webhook fires first; pull model covers any gap on first login.
 
 ---
 
