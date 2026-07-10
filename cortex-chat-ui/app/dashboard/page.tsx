@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useUser, useAuth, UserButton, OrganizationSwitcher } from "@clerk/nextjs";
 import { 
     BrainCircuit, 
@@ -25,7 +26,8 @@ import {
     GripVertical,
     Square,
     X,
-    RefreshCw
+    RefreshCw,
+    Share2
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -34,6 +36,7 @@ import { useMCP } from "@/hooks/use-mcp";
 // 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
 const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
+const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
 import {
     CAREER_BACKBONE,
@@ -76,6 +79,7 @@ export default function DashboardPage() {
     const [hasMounted, setHasMounted] = useState(false);
     const [nodeExpansionDepth, setNodeExpansionDepth] = useState<Map<string, number>>(new Map());
     const [domainSignal, setDomainSignal] = useState<string>('career');
+    const [graphShareModalOpen, setGraphShareModalOpen] = useState(false);
     const [focusedNodeIds, setFocusedNodeIds] = useState<Set<string> | null>(null);
     const expansionCache = useRef<Map<string, any>>(new Map());
     const expandedNodes = useRef<Set<string>>(new Set());
@@ -97,10 +101,75 @@ export default function DashboardPage() {
     const [isBentoHydrating, setIsBentoHydrating] = useState(false);
     const [legendOpen, setLegendOpen] = useState(false);
     const [accessScope, setAccessScope] = useState<string | null>(null);
+    const [isActivating, setIsActivating] = useState(true);
 
+    // Restore dashboard state from sessionStorage on mount (survives settings navigation).
     useEffect(() => {
+        try {
+            const saved = sessionStorage.getItem('cortex_dashboard');
+            if (saved) {
+                const s = JSON.parse(saved);
+                if (s.messages?.length)              setMessages(s.messages);
+                if (s.graphData?.nodes?.length)      setGraphData(s.graphData);
+                if (s.domainSignal)                  setDomainSignal(s.domainSignal);
+                if (typeof s.autoClear === 'boolean') setAutoClear(s.autoClear);
+                if (s.viewMode)                      setViewMode(s.viewMode as 'brain' | 'spine');
+                if (typeof s.chatWidth === 'number') setChatWidth(s.chatWidth);
+            }
+        } catch { /* non-fatal */ }
         setHasMounted(true);
     }, []);
+
+    // Persist key dashboard state to sessionStorage whenever it changes.
+    useEffect(() => {
+        if (!hasMounted) return;
+        if (!messages.length && !graphData.nodes.length) return;
+        try {
+            const safeLinks = graphData.links.map(l => ({
+                ...l,
+                source: typeof l.source === 'object' && l.source !== null ? (l.source as any).id ?? l.source : l.source,
+                target: typeof l.target === 'object' && l.target !== null ? (l.target as any).id ?? l.target : l.target,
+            }));
+            sessionStorage.setItem('cortex_dashboard', JSON.stringify({
+                messages,
+                graphData: { nodes: graphData.nodes, links: safeLinks },
+                domainSignal,
+                autoClear,
+                viewMode,
+                chatWidth,
+            }));
+        } catch { /* non-fatal — quota exceeded or circular ref */ }
+    }, [messages, graphData, domainSignal, autoClear, viewMode, chatWidth, hasMounted]);
+
+    // Pull model safety net: activate any pending grants for this user on first load per session.
+    // Admins additionally run a full sweep — provisioning grants for any user who signed up
+    // but whose webhook delivery was missed (cold start, transient failure, etc.).
+    useEffect(() => {
+        if (!user || typeof sessionStorage === 'undefined') return;
+        if (sessionStorage.getItem('pending_activated')) {
+            setIsActivating(false); // already ran this session — unblock immediately
+            return;
+        }
+        const gw = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+        getToken().then(async token => {
+            if (!token) { setIsActivating(false); return; }
+            const headers = { Authorization: `Bearer ${token}` };
+            // 1. Always activate grants for this user — await so send is blocked until done
+            await fetch(`${gw}/api/auth/activate-pending`, { method: 'POST', headers }).catch(() => {});
+            // 2. If admin: sweep all pending grants across all users (fire-and-forget)
+            const isAdmin = (user as any).organizationMemberships?.some(
+                (m: any) => m.role === 'org:admin' || m.role === 'admin'
+            );
+            if (isAdmin) {
+                fetch(`${gw}/api/auth/activate-pending/sweep`, { method: 'POST', headers })
+                    .then(r => r.json())
+                    .then(d => { if (d.activated > 0) console.log(`[admin-sweep] Activated ${d.activated} pending grant(s)`); })
+                    .catch(() => {});
+            }
+            sessionStorage.setItem('pending_activated', '1');
+            setIsActivating(false); // unblock send button — Permify writes are complete
+        }).catch(() => setIsActivating(false)); // unblock on auth failure too
+    }, [user, getToken]);
 
     // Helper to parse tool data into graph format
     const parseDataToGraph = (rawData: any, existingData?: any, backboneOnly: boolean = false, backboneSet?: Set<string>) => {
@@ -267,7 +336,7 @@ export default function DashboardPage() {
                 const name = extractValue(seedDetails, nameKeys);
                 if (!name) return;
 
-                const id = seedDetails.element_id || seedDetails.id || name; // Prioritize element_id for Neo4j stability
+                const id = seedDetails.node_id || seedDetails.id || name;
                 
                 // Identify normalized time marker
                 const timeValue = extractValue(seedDetails, dateKeys);
@@ -323,7 +392,7 @@ export default function DashboardPage() {
                         
                         const type = (targetName.toLowerCase().includes('mcp') || targetName.toLowerCase().includes('baml')) ? 'Episode' : (targetType || 'Node');
                         const relType = extractValue(rel, ['rel_type', 'relationship', 'type']) || 'RELATED_TO';
-                        const targetId = rel.element_id || rel.target_id || rel.id || targetName; 
+                        const targetId = rel.target_id || rel.id || targetName;
                         
                         // Pass temporal metadata to relationship targets
                         const relTimeValue = extractValue(rel, ['date', 'year', 'startDate']);
@@ -437,7 +506,7 @@ export default function DashboardPage() {
     };
 
     const handleSend = async () => {
-        if (!input.trim() || !isConnected || isProcessing) return;
+        if (!input.trim() || !isConnected || isProcessing || isActivating) return;
 
         const userMsg = input;
         const currentMessages = [...messages];
@@ -518,6 +587,7 @@ export default function DashboardPage() {
     };
 
     const startNewAnalysis = () => {
+        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
         setMessages([
             {
                 role: "assistant",
@@ -547,7 +617,7 @@ export default function DashboardPage() {
             bentoAbortController.current = new AbortController();
 
             // Stale-While-Revalidate: show cached full data immediately if available.
-            const cacheKey = freshNode.element_id || freshNode.id || freshNode.name;
+            const cacheKey = freshNode.node_id || freshNode.id || freshNode.name;
             if (bentoCache.current.has(cacheKey)) {
                 setSelectedNode({ ...freshNode, ...bentoCache.current.get(cacheKey) });
                 return;
@@ -568,7 +638,7 @@ export default function DashboardPage() {
                     },
                     body: JSON.stringify({
                         node_name: freshNode.name,
-                        node_id: freshNode.element_id || freshNode.id
+                        node_id: freshNode.node_id
                     }),
                     signal: bentoAbortController.current.signal
                 });
@@ -604,7 +674,7 @@ export default function DashboardPage() {
                         });
                     } else if (payload?.error) {
                         console.warn('[BENTO] Hydration rejected for', freshNode.name,
-                                     '| node_id:', freshNode.element_id || freshNode.id,
+                                     '| node_id:', freshNode.node_id,
                                      '| error:', payload.error);
                     }
                 }
@@ -1004,7 +1074,9 @@ export default function DashboardPage() {
                                         </span>
                                     </div>
                                 </div>
-                                <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
+                                <Link href="/settings/sharing" title="Sharing & Access">
+                                    <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
+                                </Link>
                             </div>
                         </div>
                     ) : (
@@ -1066,7 +1138,7 @@ export default function DashboardPage() {
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                                disabled={!isConnected || isProcessing}
+                                disabled={!isConnected || isProcessing || isActivating}
                                 placeholder="Command your Cognitive Graph..."
                                 className="w-full bg-white border-0 p-5 pr-28 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground font-medium"
                             />
@@ -1089,7 +1161,7 @@ export default function DashboardPage() {
                                     </button>
                                     <button
                                         onClick={handleSend}
-                                        disabled={!isConnected || !input.trim()}
+                                        disabled={!isConnected || !input.trim() || isActivating}
                                         className="p-2 bg-primary hover:bg-primary/90 text-white rounded-xl transition-all shadow-lg disabled:opacity-50"
                                     >
                                         <SendHorizontal className="w-5 h-5" />
@@ -1171,7 +1243,7 @@ export default function DashboardPage() {
                                 </div>
 
                                 {graphData.nodes.length > 0 && (
-                                    <button 
+                                    <button
                                         onClick={() => {
                                             setGraphData({ nodes: [], links: [] });
                                             setSelectedNode(null);
@@ -1184,6 +1256,16 @@ export default function DashboardPage() {
                                     >
                                         <Trash2 className="w-4 h-4" />
                                         Clear Visual Map
+                                    </button>
+                                )}
+
+                                {graphData.nodes.length > 0 && (
+                                    <button
+                                        onClick={() => setGraphShareModalOpen(true)}
+                                        className="bg-white/80 hover:bg-indigo-50 border border-border hover:border-indigo-200 text-slate-600 hover:text-indigo-600 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg"
+                                    >
+                                        <Share2 className="w-4 h-4" />
+                                        Share Graph
                                     </button>
                                 )}
                             </div>
@@ -1213,6 +1295,12 @@ export default function DashboardPage() {
                                     />
                                 </div>
                             )}
+
+                            <GraphShareModal
+                                graphData={graphData}
+                                open={graphShareModalOpen}
+                                onClose={() => setGraphShareModalOpen(false)}
+                            />
                         </div>
 
                         {/* Visual Ontology Legend */}

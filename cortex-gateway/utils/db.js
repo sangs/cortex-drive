@@ -39,15 +39,13 @@ async function getPool() {
       password: dbPass,
     });
   } else if (instanceConnectionName) {
-    // Cloud Run — use Cloud SQL connector (Unix socket via connector library)
-    const { Connector } = require('@google-cloud/cloud-sql-connector');
-    const connector = new Connector();
-    const clientOpts = await connector.getOptions({
-      instanceConnectionName,
-      ipType: 'PRIVATE',
-    });
+    // Cloud Run — connect via the Unix socket created by the Cloud Run sidecar
+    // (enabled by --add-cloudsql-instances in build-deploy-gateway.sh).
+    // Do NOT use @google-cloud/cloud-sql-connector here — it requires either a
+    // private IP (which this instance does not have) or Cloud Run's built-in
+    // socket is the correct path anyway.
     _pool = new Pool({
-      ...clientOpts,
+      host:     `/cloudsql/${instanceConnectionName}`,
       database: dbName,
       user:     dbUser,
       password: dbPass,

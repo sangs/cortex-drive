@@ -118,11 +118,11 @@ class ExpertTools:
              collect(DISTINCT neighbor) AS neighbors,
              collect(DISTINCT r) AS rels,
              collect(DISTINCT {
-                id: elementId(neighbor),
+                id: neighbor.node_id,
                 name: neighbor.name,
                 type: labels(neighbor)[0],
                 relationship: type(r),
-                target_id: elementId(neighbor)
+                target_id: neighbor.node_id
              }) AS relationships,
              collect(DISTINCT tech.name) AS technologies,
              collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date, rel_title: coalesce(r.title, r.role)} ELSE null END)) AS relDates
@@ -184,7 +184,6 @@ class ExpertTools:
                 endYear:     CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.endYear END,
                 isPresent: coalesce(node.isPresent, bestDate.rel_end = 'Present', node.endDate = 'Present', false),
                 role: coalesce(bestDate.rel_title, node.role),
-                element_id: elementId(node),
                 labels: labels(node),
                 display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
                 type: CASE
@@ -985,11 +984,11 @@ class ExpertTools:
 
     def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
-        Fetch all properties and labels for a specific node by its 'element_id' or 'name'.
+        Fetch all properties and labels for a specific node by its stable node_id UUID or name.
         """
         query = """
         MATCH (n)
-        WHERE (elementId(n) = $node_id OR toLower(n.name) = toLower($node_name))
+        WHERE (n.node_id = $node_id OR toLower(n.name) = toLower($node_name))
           AND (""" + self._get_security_clause("n") + """)
         
         OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)
@@ -1010,7 +1009,6 @@ class ExpertTools:
                technologies,
                narratives,
                guests,
-               elementId(n) AS element_id,
                n.node_id AS node_id,
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
@@ -1034,7 +1032,7 @@ class ExpertTools:
 
     def expand_node_topology(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
-        Explore the 1-hop neighborhood of a node by element_id or name.
+        Explore the 1-hop neighborhood of a node by node_id or name.
         """
         import json as _json
         from domain_registry import DISCOVERY_LABELS
@@ -1042,7 +1040,7 @@ class ExpertTools:
         _traversal_rels = _json.dumps(TRAVERSAL_RELATIONSHIPS)
         query = f"""
         MATCH (node)-[r]-(neighbor)
-        WHERE (node.name = $node_name OR elementId(node) = $node_id)
+        WHERE (node.name = $node_name OR node.node_id = $node_id)
           AND ({self._get_security_clause("node")})
           AND type(r) IN {_traversal_rels}
           AND ({self._get_security_clause("neighbor")})
@@ -1252,7 +1250,7 @@ class ExpertTools:
                 WITH node, score
                 ORDER BY score DESC
                 LIMIT 10
-                RETURN collect(node {{ .*, element_id: elementId(node), labels: labels(node), temporal_boost: score * 100 }}) AS nodes, [] AS links
+                RETURN collect(node {{ .*, labels: labels(node), temporal_boost: score * 100 }}) AS nodes, [] AS links
                 """
                 result = self._exec_query(
                     fallback_query,

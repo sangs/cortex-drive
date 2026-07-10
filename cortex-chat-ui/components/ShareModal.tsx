@@ -1,19 +1,22 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Link2, UserPlus, Users, Check, Copy, Trash2, Loader2, ChevronDown } from 'lucide-react';
+import { X, Link2, UserPlus, Users, Building2, Check, Copy, Trash2, Loader2, ChevronDown } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
-type Tab = 'guest' | 'person' | 'manage';
+type Tab = 'guest' | 'person' | 'group' | 'manage';
 
 interface ActiveGrant {
-    user: string;
+    grant_id: string;
+    subject: string;
     relation: string;
-    condition?: { context?: { expires_at?: string } } | null;
-    expired: boolean;
+    expires_at?: string | null;
+    issued_at?: string;
+    status: string;
 }
 
 interface RevokedEntry {
@@ -98,6 +101,15 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const [historyLoading, setHistoryLoading] = useState(false);
     const [revoking, setRevoking] = useState<string | null>(null);
 
+    // --- Share with group state ---
+    const [groups, setGroups] = useState<{ group_id: string; name: string; member_count: number }[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(false);
+    const [selectedGroupId, setSelectedGroupId] = useState('');
+    const [selectedGroupCount, setSelectedGroupCount] = useState(0);
+    const [groupExpiry, setGroupExpiry] = useState(0);
+    const [groupSharing, setGroupSharing] = useState(false);
+    const [groupShareSuccess, setGroupShareSuccess] = useState('');
+
     const nodeId = node?.node_id || node?.id || node?.name;
 
     const authHeaders = useCallback(async () => {
@@ -136,11 +148,28 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         }
     }, [nodeId, authHeaders]);
 
+    const loadGroups = useCallback(async () => {
+        setGroupsLoading(true);
+        try {
+            const headers = await authHeaders();
+            const resp = await fetch(`${GATEWAY}/api/groups`, { headers });
+            if (resp.ok) {
+                const data = await resp.json();
+                setGroups(data);
+                if (data.length > 0) {
+                    setSelectedGroupId(data[0].group_id);
+                    setSelectedGroupCount(data[0].member_count);
+                }
+            }
+        } catch { /* non-fatal */ } finally { setGroupsLoading(false); }
+    }, [authHeaders]);
+
     useEffect(() => {
         if (!open) return;
         if (tab === 'guest') loadGuestLinks();
+        if (tab === 'group') loadGroups();
         if (tab === 'manage') loadHistory();
-    }, [open, tab, loadGuestLinks, loadHistory]);
+    }, [open, tab, loadGuestLinks, loadGroups, loadHistory]);
 
     // Reset per-tab state when switching tabs
     useEffect(() => {
@@ -151,6 +180,9 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         setResolvedUser(null);
         setResolveError('');
         setShareSuccess('');
+        setSelectedGroupId('');
+        setSelectedGroupCount(0);
+        setGroupShareSuccess('');
     }, [tab]);
 
     if (!open || !node) return null;
@@ -215,7 +247,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         setSharing(true);
         try {
             const headers = await authHeaders();
-            const body: any = { node_id: nodeId, targetSub: resolvedUser.sub };
+            const body: any = { rootNodeId: nodeId, targetSub: resolvedUser.sub };
             if (personExpiry > 0) {
                 body.expiresAt = new Date(Date.now() + personExpiry * 86400000).toISOString();
             }
@@ -226,15 +258,31 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         } catch { /* non-fatal */ } finally { setSharing(false); }
     }
 
+    // --- Share with group actions ---
+    async function shareWithGroup() {
+        if (!selectedGroupId) return;
+        setGroupSharing(true);
+        try {
+            const headers = await authHeaders();
+            const body: any = { rootNodeId: nodeId, groupId: selectedGroupId };
+            if (groupExpiry > 0) {
+                body.expiresAt = new Date(Date.now() + groupExpiry * 86400000).toISOString();
+            }
+            await fetch(`${GATEWAY}/api/share/group`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const g = groups.find(g => g.group_id === selectedGroupId);
+            setGroupShareSuccess(`Shared with group "${g?.name}"`);
+        } catch { /* non-fatal */ } finally { setGroupSharing(false); }
+    }
+
     // --- Manage access actions ---
-    async function revokeAccess(subject: string, relation: string) {
-        setRevoking(`${subject}:${relation}`);
+    async function revokeAccess(grantId: string) {
+        setRevoking(grantId);
         try {
             const headers = await authHeaders();
             await fetch(`${GATEWAY}/api/share/revoke`, {
                 method: 'DELETE',
                 headers,
-                body: JSON.stringify({ node_id: nodeId, subject, relation }),
+                body: JSON.stringify({ grant_id: grantId }),
             });
             await loadHistory();
         } catch { /* non-fatal */ } finally { setRevoking(null); }
@@ -250,18 +298,19 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
             });
         } else {
             const orgGrant = active.find(g => g.relation === 'tenant_viewer');
-            if (orgGrant) await revokeAccess(orgGrant.user, 'tenant_viewer');
+            if (orgGrant) await revokeAccess(orgGrant.grant_id);
         }
         await loadHistory();
     }
 
     const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-        { id: 'guest', label: 'Guest Link', icon: <Link2 className="w-3.5 h-3.5" /> },
+        { id: 'guest',  label: 'Guest Link',        icon: <Link2 className="w-3.5 h-3.5" /> },
         { id: 'person', label: 'Share with Person', icon: <UserPlus className="w-3.5 h-3.5" /> },
-        { id: 'manage', label: 'Manage Access', icon: <Users className="w-3.5 h-3.5" /> },
+        { id: 'group',  label: 'Share with Group',  icon: <Building2 className="w-3.5 h-3.5" /> },
+        { id: 'manage', label: 'Manage Access',     icon: <Users className="w-3.5 h-3.5" /> },
     ];
 
-    return (
+    return ReactDOM.createPortal(
         <AnimatePresence>
             <motion.div
                 initial={{ opacity: 0 }}
@@ -423,7 +472,72 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                 Share
                             </button>
 
-                            <p className="text-[10px] text-slate-500">Recipient must have a Cortex-Drive account. Access is controlled via OpenFGA.</p>
+                            <p className="text-[10px] text-slate-500">Recipient must have a Cortex-Drive account. Recipients must sign in to access.</p>
+                        </div>
+                    )}
+
+                    {/* ── SHARE WITH GROUP TAB ── */}
+                    {tab === 'group' && (
+                        <div className="space-y-4">
+                            {groupsLoading ? (
+                                <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-500 animate-spin" /></div>
+                            ) : groups.length === 0 ? (
+                                <p className="text-xs text-slate-500 text-center py-4">No groups yet. Create one at Settings → Groups.</p>
+                            ) : (
+                                <>
+                                    <select
+                                        value={selectedGroupId}
+                                        onChange={e => {
+                                            setSelectedGroupId(e.target.value);
+                                            const g = groups.find(g => g.group_id === e.target.value);
+                                            setSelectedGroupCount(g?.member_count ?? 0);
+                                        }}
+                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500/50 transition-all cursor-pointer"
+                                    >
+                                        {groups.map(g => (
+                                            <option key={g.group_id} value={g.group_id} className="bg-[#0f1117]">
+                                                {g.name} ({g.member_count} member{g.member_count !== 1 ? 's' : ''})
+                                            </option>
+                                        ))}
+                                    </select>
+
+                                    {selectedGroupId && (
+                                        <p className="text-[11px] text-indigo-400">
+                                            Access will be granted to all {selectedGroupCount} group member{selectedGroupCount !== 1 ? 's' : ''}.
+                                        </p>
+                                    )}
+
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-400">Expires:</span>
+                                        <select
+                                            value={groupExpiry}
+                                            onChange={e => setGroupExpiry(Number(e.target.value))}
+                                            className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 outline-none cursor-pointer"
+                                        >
+                                            {PERSON_EXPIRY_OPTIONS.map(o => (
+                                                <option key={o.days} value={o.days} className="bg-[#0f1117]">{o.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    {groupShareSuccess && (
+                                        <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                                            <Check className="w-3.5 h-3.5" />{groupShareSuccess}
+                                        </p>
+                                    )}
+
+                                    <button
+                                        onClick={shareWithGroup}
+                                        disabled={!selectedGroupId || groupSharing}
+                                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40"
+                                    >
+                                        {groupSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />}
+                                        Share with Group
+                                    </button>
+
+                                    <p className="text-[10px] text-slate-500">Recipients must sign in to Cortex-Drive to access the shared node.</p>
+                                </>
+                            )}
                         </div>
                     )}
 
@@ -453,26 +567,26 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Who Has Access</p>
                                             <div className="space-y-2">
                                                 {active.filter(g => g.relation !== 'owner').map((g, i) => (
-                                                    <div key={i} className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">
+                                                    <div key={g.grant_id} className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-[11px] text-slate-300 truncate">{g.user.replace(/^(user|org|group):/, '')}</p>
+                                                            <p className="text-[11px] text-slate-300 truncate">{g.subject?.replace(/^(user|org|group):/, '')}</p>
                                                             <div className="flex items-center gap-2 mt-0.5">
                                                                 <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${relationColor(g.relation)}`}>
                                                                     {formatRelation(g.relation)}
                                                                 </span>
-                                                                {g.condition?.context?.expires_at && (
+                                                                {g.expires_at && (
                                                                     <span className="text-[10px] text-slate-500">
-                                                                        exp {new Date(g.condition.context.expires_at).toLocaleDateString()}
+                                                                        exp {new Date(g.expires_at).toLocaleDateString()}
                                                                     </span>
                                                                 )}
                                                             </div>
                                                         </div>
                                                         <button
-                                                            onClick={() => revokeAccess(g.user, g.relation)}
-                                                            disabled={revoking === `${g.user}:${g.relation}`}
+                                                            onClick={() => revokeAccess(g.grant_id)}
+                                                            disabled={revoking === g.grant_id}
                                                             className="p-1.5 ml-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0"
                                                         >
-                                                            {revoking === `${g.user}:${g.relation}`
+                                                            {revoking === g.grant_id
                                                                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                                                 : <Trash2 className="w-3.5 h-3.5" />}
                                                         </button>
@@ -510,6 +624,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     )}
                 </motion.div>
             </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }
