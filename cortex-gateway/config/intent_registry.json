@@ -53,6 +53,29 @@
       ]
     },
     {
+      "label": "thought_leadership_lookup",
+      "domain_signal": "career",
+      "backbone": "CAREER_BACKBONE",
+      "blocked_tools": [],
+      "tool_sequence": [],
+      "prototypes": [
+        "what did publish",
+        "published in",
+        "wrote an article",
+        "authored",
+        "infoq",
+        "articles written",
+        "blog posts",
+        "thought leadership publications",
+        "what has been published",
+        "conference talk",
+        "conference presentation",
+        "speaking at",
+        "what was written",
+        "publications by"
+      ]
+    },
+    {
       "label": "cross_domain_influence",
       "domain_signal": "cross_domain",
       "backbone": null,

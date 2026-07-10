@@ -719,11 +719,18 @@ async function sendClerkOrgInvitation(toEmail, inviterName = 'A Cortex-Drive mem
         } else {
             // Create Clerk account directly — bypasses all sign-up mode restrictions.
             // Random password is set but never used — the user signs in via the token link.
+            // Derive a display name from the email local-part so the UI shows a name instead
+            // of the "Agent Identity" fallback (user?.fullName || "Agent Identity" in dashboard).
             const randomPassword = require('crypto').randomBytes(32).toString('hex');
+            const emailLocalPart = toEmail.split('@')[0];
+            const derivedFirstName = emailLocalPart
+                .replace(/[._-]+/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
             const newUser = await clerkClient.users.createUser({
                 emailAddress:        [toEmail],
                 password:            randomPassword,
                 skipPasswordChecks:  true,
+                firstName:           derivedFirstName,
             });
             userId = newUser.id;
             console.log(`[clerk/invite] Created Clerk account for ${toEmail}: ${userId}`);
