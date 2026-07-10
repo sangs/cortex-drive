@@ -14,6 +14,10 @@ const DOMAIN_ALLOWED_TYPES = {
 // Tools that return large graph payloads — LLM only needs a compact summary.
 // Full graph data is already accumulated in accumulatedGraph before truncation.
 const GRAPH_HEAVY_TOOLS = new Set(['search_enterprise_graph', 'get_cluster_context', 'connect_knowledge_on_demand']);
+
+// Relationship types included in the composition subtree BFS snapshot.
+// Stored in share_grants.composition_rels for audit. Must match Bento server behavior.
+const COMPOSITION_RELS = ['HAS_EPISODE', 'HAS_SOURCE', 'CONTAINS', 'HAS_REFERENCE', 'HAS_PRIVATE_NOTE'];
 // Max chars sent to LLM for knowledge/text tools (chunks, resume narratives).
 const MAX_KNOWLEDGE_CONTENT_CHARS = 8000;
 
@@ -396,38 +400,25 @@ function getFgaClient(bearerToken = null) {
 }
 
 /**
- * Returns the list of node_id UUIDs the user can see via OpenFGA.
- * Returns null when OpenFGA is not configured (triggers legacy tenant_id mode in MCP).
- * Fetches a Cloud Run OIDC token so cortex-openfga (--no-allow-unauthenticated) accepts
- * the request — same pattern used for cortex-mcp and cortex-bento calls.
+ * Returns the list of node_id UUIDs the user can see via Permify LookupEntity.
+ * Returns null when Permify is not configured (triggers legacy tenant_id mode in MCP).
+ * agentSessionId parameter is reserved for future agent-scoped queries; current
+ * call sites always pass only userId.
  */
 async function getAllowedNodeIds(userId, agentSessionId = null) {
-    if (!process.env.OPENFGA_STORE_ID) return null; // legacy mode
-    const openfgaUrl = process.env.OPENFGA_API_URL || 'http://localhost:8082';
-    const oidcToken = await getCloudRunToken(openfgaUrl);
-    const fga = getFgaClient(oidcToken);
-    if (!fga) return null;
-
-    const principal = agentSessionId ? `agent:${agentSessionId}` : `user:${userId}`;
+    if (!permify.configured()) return null; // legacy mode — no PERMIFY_API_URL set
     try {
-        const resp = await fga.listObjects({
-            user: principal,
-            relation: 'can_view',
-            type: 'node',
-            context: { current_time: new Date().toISOString() },
-        });
-        // Strip 'node:' prefix — object IDs are plain UUIDs (n.node_id), no further decoding needed
-        const ids = (resp.objects || []).map(o => o.replace('node:', ''));
-        console.log(`[FGA] ${principal} can_view ${ids.length} nodes`);
+        const ids = await permify.listViewableNodeIds(userId);
+        console.log(`[PERMIFY] user:${userId} can_view ${ids.length} nodes`);
         return ids;
     } catch (err) {
-        console.warn('[FGA] listObjects failed (non-fatal):', err.message);
-        return null; // fall back to legacy mode on FGA errors
+        console.warn('[PERMIFY] listViewableNodeIds failed (non-fatal):', err.message);
+        return null; // fall back to legacy mode on Permify errors
     }
 }
 
 /**
- * Resolve allowed_ids for a user — Redis cache first, OpenFGA fallback on miss.
+ * Resolve allowed_ids for a user — Redis cache first, Permify fallback on miss.
  * Writes result to Redis with 300s TTL. Also reads the per-tenant generation counter
  * so callers can detect stale permission sets mid-request.
  * Returns { allowedIds, permVersion } — both null-safe.
@@ -442,10 +433,10 @@ async function resolveAndCachePermissions(userId, tenantId) {
             return { allowedIds: JSON.parse(cached), permVersion: version || '0' };
         }
     } catch (redisErr) {
-        console.warn(`${LOG_PERM_CACHE} Redis read failed, falling back to OpenFGA:`, redisErr.message);
+        console.warn(`${LOG_PERM_CACHE} Redis read failed, falling back to Permify:`, redisErr.message);
     }
 
-    // Cache miss — resolve from OpenFGA
+    // Cache miss — resolve from Permify
     const allowedIds = await getAllowedNodeIds(userId);
     const permVersion = await redis.get(versionKey).catch(() => '0') || '0';
 
@@ -639,79 +630,249 @@ const authMiddleware = async (req, res, next) => {
 // ─── Pending Grant Helpers ────────────────────────────────────────────────────
 
 /**
- * Find all pending share_grants for an email address, write Permify tuples,
- * and flip them to 'active'. Called by both the webhook fast-path and the
- * pull-model safety net on first login.
+ * Activate all pending invitations for a newly signed-up user.
+ * Reads from the unified `invitations` table (share and group types).
+ * Called by the Clerk webhook fast-path and the pull-model safety net on first login.
  */
 async function activatePendingGrants(email, userSub) {
     if (!email || !userSub) return;
     const normalizedEmail = email.toLowerCase().trim();
-    const { rows } = await db.query(
-        `SELECT * FROM share_grants WHERE pending_email = $1 AND status = 'pending'`,
+
+    const { rows: invites } = await db.query(
+        `SELECT i.invitation_id, i.invitation_type, i.resource_id, i.expires_at,
+                sg.child_node_ids, sg.grant_type
+         FROM invitations i
+         LEFT JOIN share_grants sg
+             ON i.invitation_type = 'share' AND sg.grant_id::text = i.resource_id
+         WHERE i.invited_email = $1 AND i.status = 'pending'`,
         [normalizedEmail]
     );
-    if (rows.length === 0) return;
-    console.log(`[pending-grants] Activating ${rows.length} grant(s) for ${normalizedEmail} → ${userSub}`);
-    for (const grant of rows) {
+
+    if (invites.length > 0) {
+        console.log(`[pending-grants] Activating ${invites.length} invitation(s) for ${normalizedEmail} → ${userSub}`);
+    }
+
+    for (const inv of invites) {
         try {
-            if (grant.grant_type === 'graph_island') {
-                // N tuples — one per stored node id
-                await Promise.all((grant.child_node_ids || []).map(id =>
-                    permify.shareNodeWithUser(id, userSub, grant.expires_at || null)
+            if (inv.invitation_type === 'share') {
+                const nodeIds = inv.child_node_ids || [];
+                await Promise.all(nodeIds.map(id =>
+                    permify.shareNodeWithUser(id, userSub, inv.expires_at || null)
                 ));
+                await db.query(
+                    `INSERT INTO role_assignments
+                       (resource_type, resource_id, assignee_type, assignee_id,
+                        assignee_email, assigned_by, expires_at)
+                     VALUES ('grant', $1, 'user', $2, $3, 'system:invite-activation', $4)`,
+                    [inv.resource_id, userSub, normalizedEmail, inv.expires_at]
+                );
+                console.log(`[pending-grants] Activated share grant ${inv.resource_id} for ${userSub}`);
             } else {
-                // Single-node grant — one tuple on root; composition rels give access to children
-                await permify.shareNodeWithUser(grant.root_node_id, userSub, grant.expires_at || null);
+                // group invitation
+                await db.query(
+                    `INSERT INTO group_members (group_id, user_sub, added_by, email)
+                     VALUES ($1, $2, 'system:invite-activation', $3)
+                     ON CONFLICT (group_id, user_sub) DO NOTHING`,
+                    [inv.resource_id, userSub, normalizedEmail]
+                );
+                if (permify.configured()) {
+                    await permify.addGroupMember(inv.resource_id, userSub);
+                }
+                console.log(`[pending-grants] Added ${userSub} to group ${inv.resource_id}`);
             }
             await db.query(
-                `UPDATE share_grants
-                 SET status = 'active', subject = $1, user_email = $2, pending_email = NULL
-                 WHERE grant_id = $3`,
-                [`user:${userSub}`, normalizedEmail, grant.grant_id]
+                `UPDATE invitations SET status = 'accepted', accepted_at = now()
+                 WHERE invitation_id = $1`,
+                [inv.invitation_id]
             );
             await redis.del(`perm:${userSub}`);
-            console.log(`[pending-grants] Activated grant ${grant.grant_id}`);
         } catch (err) {
-            console.error(`[pending-grants] Failed for grant ${grant.grant_id}:`, err.message);
+            console.error(`[pending-grants] Failed invite ${inv.invitation_id}:`, err.message);
         }
     }
+
+    // Clean up Clerk allowlist — user has signed up, no longer needed
+    await removeFromClerkAllowlist(normalizedEmail).catch(() => {});
+    return invites.length;
 }
 
 /**
  * Send a Resend transactional email notifying a pending recipient they were shared with.
  * No-op if RESEND_API_KEY is not configured — safe to call at any time.
  */
-async function sendInviteEmail({ toEmail, sharerName, nodeCount, isGraph }) {
-    if (!process.env.RESEND_API_KEY) return;
+// Provisions a new invited user end-to-end without depending on Clerk's sign-up flow:
+// 1. Creates the Clerk account programmatically (bypasses all sign-up restrictions)
+// 2. Adds to Clerk org immediately
+// 3. Activates pending CortexDrive grants directly (doesn't wait for webhook)
+// 4. Issues a sign-in token (single-use magic link, no password required)
+// 5. Delivers via Resend — user clicks → signs in → lands on dashboard with full access
+// If the user already has a Clerk account, skips creation and just sends the sign-in link.
+async function sendClerkOrgInvitation(toEmail, inviterName = 'A Cortex-Drive member') {
+    const orgId  = process.env.CLERK_ORG_ID || 'org_3E0FtIXiFM6DHwXg05sEVvq2mi0';
     const appUrl = process.env.APP_URL || 'https://app.cortex-drive.com';
-    const what = isGraph
-        ? `a knowledge graph (${nodeCount} nodes)`
-        : `a knowledge graph node`;
     try {
-        await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                from: 'Cortex-Drive <noreply@cortex-drive.com>',
-                to: [toEmail],
-                subject: `${sharerName} shared ${what} with you`,
-                html: `
-                    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#080a0f;color:#e2e8f0;border-radius:16px">
-                        <h2 style="color:#fff;margin:0 0 16px">${sharerName} shared their knowledge graph with you</h2>
-                        <p style="color:#94a3b8;margin:0 0 8px">${what.charAt(0).toUpperCase() + what.slice(1)} ${nodeCount === 1 ? 'has' : 'have'} been shared with you on Cortex-Drive.</p>
-                        <p style="color:#94a3b8;margin:0 0 24px">Sign up to access it — your access will be granted automatically when you create your account.</p>
-                        <a href="${appUrl}/sign-up" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">Sign up for Cortex-Drive →</a>
-                        <p style="color:#475569;font-size:12px;margin-top:32px">If you didn't expect this, you can ignore this email.</p>
-                    </div>
-                `,
-            }),
+        let userId;
+        const existing = await clerkClient.users.getUserList({ emailAddress: [toEmail] });
+        if (existing.data.length > 0) {
+            userId = existing.data[0].id;
+            console.log(`[clerk/invite] ${toEmail} already has Clerk account ${userId} — sending sign-in link`);
+        } else {
+            // Create Clerk account directly — bypasses all sign-up mode restrictions.
+            // Random password is set but never used — the user signs in via the token link.
+            const randomPassword = require('crypto').randomBytes(32).toString('hex');
+            const newUser = await clerkClient.users.createUser({
+                emailAddress:        [toEmail],
+                password:            randomPassword,
+                skipPasswordChecks:  true,
+            });
+            userId = newUser.id;
+            console.log(`[clerk/invite] Created Clerk account for ${toEmail}: ${userId}`);
+
+            // Add to org immediately (webhook may also do this, but fire it here too)
+            await clerkClient.organizations.createOrganizationMembership({
+                organizationId: orgId,
+                userId,
+                role: 'org:member',
+            }).then(() =>
+                console.log(`[clerk/invite] Added ${userId} to org`)
+            ).catch(e =>
+                console.warn('[clerk/invite] Org membership:', e.message)
+            );
+
+            // Activate pending grants directly in case the user.created webhook fires
+            // after we send the email and the user signs in before the webhook arrives
+            activatePendingGrants(toEmail, userId).catch(e =>
+                console.error('[clerk/invite] activatePendingGrants:', e.message)
+            );
+        }
+
+        // Issue a single-use sign-in token — user clicks the link to sign in without
+        // a password, regardless of Clerk's sign-up or authentication restrictions
+        const signInToken = await clerkClient.signInTokens.createSignInToken({
+            userId,
+            expiresInSeconds: 60 * 60 * 24 * 7, // 7 days
         });
-        console.log(`[resend/invite] Sent invite to ${toEmail}`);
+        const signInUrl = `${appUrl}/sign-in?__clerk_ticket=${signInToken.token}`;
+
+        if (process.env.RESEND_API_KEY) {
+            await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    from: 'Cortex-Drive <noreply@cortex-drive.com>',
+                    to:   [toEmail],
+                    subject: `${inviterName} invited you to Cortex-Drive`,
+                    html: `
+                        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#080a0f;color:#e2e8f0;border-radius:16px">
+                            <h2 style="color:#fff;margin:0 0 16px">${inviterName} invited you to Cortex-Drive</h2>
+                            <p style="color:#94a3b8;margin:0 0 8px">You've been given access to a shared knowledge graph on Cortex-Drive.</p>
+                            <p style="color:#94a3b8;margin:0 0 24px">Click below to sign in — your account has been created and access will be granted automatically.</p>
+                            <a href="${signInUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">Sign in to Cortex-Drive →</a>
+                            <p style="color:#475569;font-size:12px;margin-top:32px">This link expires in 7 days. If you didn't expect this, you can ignore this email.</p>
+                        </div>
+                    `,
+                }),
+            });
+            console.log(`[clerk/invite] Resend sign-in link sent to ${toEmail}`);
+        } else {
+            console.warn(`[clerk/invite] RESEND_API_KEY not set — account created but email not sent for ${toEmail}`);
+        }
     } catch (err) {
-        console.error('[resend/invite]', err.message); // non-fatal
+        const detail = err.errors ? JSON.stringify(err.errors) : err.message;
+        console.error('[clerk/invite]', detail); // non-fatal — pull model is the fallback
+    }
+}
+
+// ─── Clerk Allowlist Helpers ───────────────────────────────────────────────────
+// Stubbed out: Clerk allowlist API requires a paid plan (returns 402 Payment Required
+// on the current plan). Access control is enforced entirely by Permify — users who
+// sign up without an invite can authenticate but see zero nodes (accessScope=restricted).
+// Re-enable by restoring the Clerk API calls if the plan is upgraded.
+
+async function addToClerkAllowlist(_email) { /* no-op — see comment above */ }
+
+async function hasOtherPendingInvites(email) {
+    const { rows } = await db.query(
+        `SELECT 1 FROM invitations WHERE invited_email = $1 AND status = 'pending' LIMIT 1`,
+        [email]
+    );
+    return rows.length > 0;
+}
+
+async function removeFromClerkAllowlist(_email) { /* no-op — see comment above */ }
+
+// ─── Grant Reuse Helpers ───────────────────────────────────────────────────────
+// Grant = content bundle (what was shared). Multiple audience members can share
+// one grant. findOrCreateGrant ensures one grant per (issuer, root_node, type).
+
+async function findOrCreateGrant(issuedBy, rootNodeId, nodeIds, grantType, expiresAt) {
+    const { rows: [existing] } = await db.query(
+        `SELECT grant_id, child_node_ids FROM share_grants
+         WHERE issued_by = $1 AND root_node_id = $2 AND grant_type = $3 AND status = 'active'
+         ORDER BY issued_at DESC LIMIT 1`,
+        [issuedBy, rootNodeId, grantType]
+    );
+
+    if (existing) {
+        const incomingSet = new Set(nodeIds);
+        const existingSet = new Set(existing.child_node_ids || []);
+        const exactMatch  = incomingSet.size === existingSet.size
+                         && [...incomingSet].every(id => existingSet.has(id));
+
+        if (exactMatch) {
+            return { grantId: existing.grant_id, reused: true, nodesChanged: false };
+        }
+        // Graph changed — update content bundle and refresh Permify for existing audience
+        await db.query(
+            `UPDATE share_grants SET child_node_ids = $1 WHERE grant_id = $2`,
+            [nodeIds, existing.grant_id]
+        );
+        await refreshPermifyForGrant(existing.grant_id, existing.child_node_ids || [], nodeIds);
+        return { grantId: existing.grant_id, reused: true, nodesChanged: true };
+    }
+
+    const { rows: [newGrant] } = await db.query(
+        `INSERT INTO share_grants
+           (root_node_id, grant_type, depth_ui_selection, composition_rels,
+            child_node_ids, already_accessible_ids, private_node_ids, issued_by, expires_at)
+         VALUES ($1, $2, 0, $3, $4, '{}', '{}', $5, $6)
+         RETURNING grant_id`,
+        [rootNodeId, grantType, COMPOSITION_RELS, nodeIds, issuedBy, expiresAt || null]
+    );
+    return { grantId: newGrant.grant_id, reused: false, nodesChanged: false };
+}
+
+async function refreshPermifyForGrant(grantId, oldNodeIds, newNodeIds) {
+    const { rows: audience } = await db.query(
+        `SELECT assignee_type, assignee_id FROM role_assignments
+         WHERE resource_type = 'grant' AND resource_id = $1 AND status = 'active'`,
+        [grantId]
+    );
+    if (audience.length === 0) return;
+
+    const oldSet  = new Set(oldNodeIds);
+    const newSet  = new Set(newNodeIds);
+    const added   = newNodeIds.filter(id => !oldSet.has(id));
+    const removed = oldNodeIds.filter(id => !newSet.has(id));
+
+    for (const member of audience) {
+        if (added.length > 0) {
+            await Promise.all(added.map(nodeId =>
+                member.assignee_type === 'group'
+                    ? permify.shareNodeWithGroup(nodeId, member.assignee_id, null).catch(() => {})
+                    : permify.shareNodeWithUser(nodeId, member.assignee_id, null).catch(() => {})
+            ));
+        }
+        if (removed.length > 0) {
+            const subject = member.assignee_type === 'group'
+                ? `group:${member.assignee_id}#member` : member.assignee_id;
+            await Promise.all(removed.map(nodeId =>
+                permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
+            ));
+        }
     }
 }
 
@@ -754,10 +915,23 @@ app.post('/api/webhooks/clerk', async (req, res) => {
             || email_addresses?.[0]?.email_address;
         console.log(`[webhook/clerk] user.created: ${primaryEmail} → ${userSub}`);
         if (primaryEmail && userSub) {
+            const orgId = process.env.CLERK_ORG_ID || 'org_3E0FtIXiFM6DHwXg05sEVvq2mi0';
             // Fire-and-forget — respond 200 immediately so Clerk doesn't retry
-            activatePendingGrants(primaryEmail, userSub).catch(e =>
-                console.error('[webhook/clerk activation]', e.message)
-            );
+            Promise.all([
+                activatePendingGrants(primaryEmail, userSub).catch(e =>
+                    console.error('[webhook/clerk activation]', e.message)
+                ),
+                clerkClient.organizations.createOrganizationMembership({
+                    organizationId: orgId,
+                    userId: userSub,
+                    role: 'org:member',
+                }).then(() =>
+                    console.log(`[webhook/clerk] Added ${userSub} to org ${orgId}`)
+                ).catch(e =>
+                    // Non-fatal: user may already be a member
+                    console.warn('[webhook/clerk] Org membership:', e.message)
+                ),
+            ]);
         }
     }
     res.status(200).json({ received: true });
@@ -773,7 +947,11 @@ app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {
     const userSub  = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
     const cacheKey = `pending_activated:${userSub}`;
     try {
-        const cached = await redis.get(cacheKey);
+        // Redis gate is best-effort — a miss or error means run activation anyway.
+        // enableOfflineQueue:false causes ioredis to throw on cold-start before the
+        // connection is established; treating that as a cache miss is correct behavior.
+        let cached = null;
+        try { cached = await redis.get(cacheKey); } catch { /* non-fatal — treat as miss */ }
         if (cached) return res.json({ skipped: true });
 
         // Resolve this user's primary email from Clerk (one-time Clerk API call per hour)
@@ -782,12 +960,18 @@ app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {
             user.emailAddresses?.find(e => e.id === user.primaryEmailAddressId)?.emailAddress
             || user.emailAddresses?.[0]?.emailAddress;
 
+        let activatedCount = 0;
         if (email) {
-            await activatePendingGrants(email, userSub);
+            activatedCount = await activatePendingGrants(email, userSub);
         }
 
-        await redis.set(cacheKey, '1', 'EX', 3600); // recheck after 1h
-        res.json({ ok: true });
+        // Only set the gate when invitations were actually found and processed.
+        // If set unconditionally on a clean (no-invite) login, future invites sent
+        // within the 1hr window would never activate — user stays locked out.
+        if (activatedCount > 0) {
+            try { await redis.set(cacheKey, '1', 'EX', 3600); } catch { /* non-fatal */ }
+        }
+        res.json({ ok: true, activated: activatedCount });
     } catch (err) {
         console.error('[/api/auth/activate-pending]', err.message);
         res.json({ ok: false }); // non-fatal — return 200 so frontend doesn't surface an error
@@ -805,14 +989,14 @@ app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) =>
     }
     try {
         const { rows: pending } = await db.query(
-            `SELECT DISTINCT pending_email FROM share_grants WHERE status = 'pending' AND pending_email IS NOT NULL`
+            `SELECT DISTINCT invited_email FROM invitations WHERE status = 'pending'`
         );
         if (pending.length === 0) return res.json({ swept: 0, activated: 0, stillPending: 0 });
 
         let activated = 0;
         let stillPending = 0;
 
-        for (const { pending_email: email } of pending) {
+        for (const { invited_email: email } of pending) {
             try {
                 const users = await clerkClient.users.getUserList({ emailAddress: [email] });
                 if (users.data.length > 0) {
@@ -946,10 +1130,8 @@ app.post('/api/share/infer', authMiddleware, async (req, res) => {
     }
 });
 
-// Share a node (and its full composition subtree) with a user.
-// Writes ONE Permify shared_viewer tuple on the root + one share_grants audit record.
-// If the recipient has no Clerk account yet, pass pendingEmail instead of targetSub —
-// the grant is stored as 'pending' and activated on sign-up (webhook) or first login (pull model).
+// Share a node (and its composition subtree) with a user or via pending invite.
+// Audience tracked in role_assignments. Grant reuse: one grant per (issuer, root, type).
 app.post('/api/share/user', authMiddleware, async (req, res) => {
     const { rootNodeId, targetSub, pendingEmail, expiresAt, depthSelection = 5 } = req.body;
     const tenantId  = req.headers['x-tenant-id'];
@@ -960,76 +1142,69 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'rootNodeId and (targetSub or pendingEmail) required' });
     }
 
-    // ── Pending grant path ── (recipient has no Cortex-Drive account yet)
-    if (pendingEmail && !targetSub) {
-        try {
-            const grantResult = await db.query(
-                `INSERT INTO share_grants
-                   (root_node_id, subject, relation, depth_ui_selection, composition_rels,
-                    child_node_ids, already_accessible_ids, private_node_ids,
-                    issued_by, expires_at, status, pending_email)
-                 VALUES ($1, '', 'shared_viewer', $2, '{}', '{}', '{}', '{}', $3, $4, 'pending', $5)
-                 RETURNING grant_id`,
-                [rootNodeId, depthSelection, issuedBy, expiresAt || null, pendingEmail.toLowerCase().trim()]
+    try {
+        let childNodeIds   = [rootNodeId];
+        let privateNodeIds = [];
+
+        if (targetSub) {
+            const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+            const subtree = await fetch(`${bento}/get_composition_subtree`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+                body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
+            }).then(r => r.json());
+            childNodeIds   = subtree.child_node_ids || [rootNodeId];
+            privateNodeIds = subtree.private_node_ids || [];
+        }
+
+        const { grantId, reused } = await findOrCreateGrant(
+            issuedBy, rootNodeId, childNodeIds, 'node', expiresAt
+        );
+
+        if (pendingEmail) {
+            const normalizedEmail = pendingEmail.toLowerCase().trim();
+            await db.query(
+                `INSERT INTO invitations
+                   (org_id, invitation_type, resource_id, invited_email, invited_by, expires_at)
+                 VALUES ($1, 'share', $2, $3, $4, $5)
+                 ON CONFLICT (invitation_type, resource_id, invited_email) WHERE status = 'pending'
+                 DO UPDATE SET invited_at = now(), expires_at = $5`,
+                [tenantId, grantId, normalizedEmail, issuedBy, expiresAt || null]
             );
-            // Resolve issuer's display name for the invite email
             let sharerName = issuedBy;
             try {
                 const issuer = await clerkClient.users.getUser(issuerSub);
                 sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
                     || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
             } catch { /* non-fatal */ }
-            await sendInviteEmail({ toEmail: pendingEmail, sharerName, nodeCount: 1, isGraph: false });
-            return res.json({ pending: true, grantId: grantResult.rows[0].grant_id });
-        } catch (err) {
-            console.error('[/api/share/user pending]', err.message);
-            return res.status(500).json({ error: err.message });
+            await sendClerkOrgInvitation(normalizedEmail, sharerName);
+            return res.json({ pending: true, grantId, reused });
         }
-    }
-    try {
-        // 1. BFS subtree snapshot for audit + dedup preview
-        const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
-        const subtree = await fetch(`${bento}/get_composition_subtree`, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
-            body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
-        }).then(r => r.json());
-        const { child_node_ids: childNodeIds, private_node_ids: privateNodeIds } = subtree;
 
-        // 2. Dedup — what the target can already see
-        const currentIds    = await permify.listViewableNodeIds(targetSub) || [];
-        const currentSet    = new Set(currentIds);
-        const alreadyAccessible = childNodeIds.filter(id => currentSet.has(id));
-
-        // 3. Write ONE shared_viewer tuple on the root node
         await permify.shareNodeWithUser(rootNodeId, targetSub, expiresAt || null);
 
-        // 4. Persist audit record in Cloud SQL
-        const COMPOSITION_RELS = ['HAS_EPISODE','HAS_SOURCE','CONTAINS','HAS_REFERENCE','HAS_PRIVATE_NOTE'];
-        const grantResult = await db.query(
-            `INSERT INTO share_grants
-               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
-                child_node_ids, already_accessible_ids, private_node_ids, issued_by, expires_at)
-             VALUES ($1, $2, 'shared_viewer', $3, $4, $5, $6, $7, $8, $9)
-             RETURNING grant_id`,
-            [rootNodeId, `user:${targetSub}`, depthSelection, COMPOSITION_RELS,
-             childNodeIds, alreadyAccessible, privateNodeIds, issuedBy, expiresAt || null]
-        );
-        const grantId = grantResult.rows[0].grant_id;
+        let targetEmail = null;
+        try {
+            const u = await clerkClient.users.getUser(targetSub);
+            targetEmail = u.emailAddresses?.[0]?.emailAddress || null;
+        } catch { /* non-fatal */ }
 
-        // 5. Bust recipient cache so grant takes effect immediately
+        await db.query(
+            `INSERT INTO role_assignments
+               (resource_type, resource_id, assignee_type, assignee_id, assignee_email, assigned_by, expires_at)
+             SELECT 'grant', $1, 'user', $2, $3, $4, $5
+             WHERE NOT EXISTS (
+               SELECT 1 FROM role_assignments
+               WHERE resource_type = 'grant' AND resource_id = $1
+                 AND assignee_type = 'user' AND assignee_id = $2 AND status = 'active'
+             )`,
+            [grantId, targetSub, targetEmail, issuedBy, expiresAt || null]
+        );
         await Promise.all([
             redis.del(`perm:${targetSub}`),
             redis.incr(`perm_version:${tenantId}`),
         ]);
-
-        res.json({
-            grantId,
-            childNodeIds,
-            alreadyAccessible,
-            privateNodeIds,
-            newNodes: childNodeIds.length - alreadyAccessible.length,
-        });
+        res.json({ grantId, reused, childNodeIds, privateNodeIds });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
         res.status(500).json({ error: err.message });
@@ -1049,103 +1224,137 @@ app.post('/api/share/group', authMiddleware, async (req, res) => {
             body: JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
         });
         const subtree = subtreeResp.ok ? await subtreeResp.json() : { child_node_ids: [], private_node_ids: [] };
-        const { child_node_ids: childNodeIds = [], private_node_ids: privateNodeIds = [] } = subtree;
+        const { child_node_ids: childNodeIds = [rootNodeId], private_node_ids: privateNodeIds = [] } = subtree;
+
+        const { grantId, reused } = await findOrCreateGrant(
+            issuedBy, rootNodeId, childNodeIds, 'node', expiresAt
+        );
 
         await permify.shareNodeWithGroup(rootNodeId, groupId, expiresAt || null);
 
-        const COMPOSITION_RELS = ['HAS_EPISODE', 'HAS_SOURCE', 'CONTAINS', 'HAS_REFERENCE', 'HAS_PRIVATE_NOTE'];
-        const grantResult = await db.query(
-            `INSERT INTO share_grants
-               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
-                child_node_ids, already_accessible_ids, private_node_ids,
-                issued_by, expires_at, grant_type, subject_type, group_id)
-             VALUES ($1, $2, 'shared_viewer', $3, $4, $5, '{}', $6, $7, $8, 'node', 'group', $9)
-             RETURNING grant_id`,
-            [rootNodeId, `group:${groupId}#member`, depthSelection, COMPOSITION_RELS,
-             childNodeIds, privateNodeIds, issuedBy, expiresAt || null, groupId]
+        await db.query(
+            `INSERT INTO role_assignments
+               (resource_type, resource_id, assignee_type, assignee_id, assigned_by, expires_at)
+             SELECT 'grant', $1, 'group', $2, $3, $4
+             WHERE NOT EXISTS (
+               SELECT 1 FROM role_assignments
+               WHERE resource_type = 'grant' AND resource_id = $1
+                 AND assignee_type = 'group' AND assignee_id = $2 AND status = 'active'
+             )`,
+            [grantId, groupId, issuedBy, expiresAt || null]
         );
-
         await redis.incr(`perm_version:${tenantId}`);
-        res.json({ grantId: grantResult.rows[0].grant_id, childNodeIds, privateNodeIds });
+        res.json({ grantId, reused, childNodeIds, privateNodeIds });
     } catch (err) {
         console.error('[/api/share/group]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// Preview what access will be lost if a grant is revoked — no writes.
-app.get('/api/share/revoke-preview/:grant_id', authMiddleware, async (req, res) => {
+// Grant-level revocation: removes access for ALL audience members atomically.
+app.delete('/api/share/grants/:grant_id', authMiddleware, async (req, res) => {
     const { grant_id } = req.params;
+    const tenantId  = req.headers['x-tenant-id'];
+    const revokedBy = req.headers['x-user-id'] || 'unknown';
     try {
-        const { rows } = await db.query(
-            `SELECT * FROM share_grants WHERE grant_id = $1 AND status = 'active'`,
+        const { rows: [grant] } = await db.query(
+            `SELECT child_node_ids FROM share_grants WHERE grant_id = $1 AND status = 'active'`,
             [grant_id]
         );
-        if (!rows.length) return res.status(404).json({ error: 'Grant not found or already revoked' });
-        const grant = rows[0];
+        if (!grant) return res.status(404).json({ error: 'Grant not found or already revoked' });
 
-        // Other active grants covering the same subject
-        const { rows: others } = await db.query(
-            `SELECT child_node_ids FROM share_grants
-             WHERE subject = $1 AND status = 'active' AND grant_id <> $2`,
-            [grant.subject, grant_id]
+        const { rows: audience } = await db.query(
+            `SELECT assignment_id, assignee_type, assignee_id FROM role_assignments
+             WHERE resource_type = 'grant' AND resource_id = $1 AND status = 'active'`,
+            [grant_id]
         );
-        const otherCoverage  = new Set(others.flatMap(r => r.child_node_ids));
-        const willLoseAccess   = grant.child_node_ids.filter(id => !otherCoverage.has(id));
-        const willRetainAccess = grant.child_node_ids.filter(id =>  otherCoverage.has(id));
 
-        res.json({
-            grantId:         grant_id,
-            rootNodeId:      grant.root_node_id,
-            subject:         grant.subject,
-            willLoseAccess,
-            willRetainAccess,
-        });
+        // Revoke all Permify tuples for all audience × all nodes
+        for (const member of audience) {
+            const subject = member.assignee_type === 'group'
+                ? `group:${member.assignee_id}#member` : member.assignee_id;
+            await Promise.all((grant.child_node_ids || []).map(nodeId =>
+                permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
+            ));
+        }
+
+        await db.query(
+            `UPDATE role_assignments SET status = 'revoked', revoked_at = now(), revoked_by = $1
+             WHERE resource_type = 'grant' AND resource_id = $2`,
+            [revokedBy, grant_id]
+        );
+        const { rows: cancelledInvites } = await db.query(
+            `UPDATE invitations SET status = 'cancelled'
+             WHERE invitation_type = 'share' AND resource_id = $1 AND status = 'pending'
+             RETURNING invited_email`,
+            [grant_id]
+        );
+        await db.query(
+            `UPDATE share_grants SET status = 'revoked', revoked_at = now(), revoked_by = $1
+             WHERE grant_id = $2`,
+            [revokedBy, grant_id]
+        );
+
+        // Clean up Clerk allowlist for any cancelled pending invitations
+        for (const { invited_email } of cancelledInvites) {
+            removeFromClerkAllowlist(invited_email).catch(() => {});
+        }
+
+        // Bust caches for all user-type audience members
+        const userSubs = audience
+            .filter(m => m.assignee_type === 'user')
+            .map(m => m.assignee_id);
+        await Promise.all([
+            ...userSubs.map(sub => redis.del(`perm:${sub}`)),
+            redis.incr(`perm_version:${tenantId}`),
+        ]);
+        res.json({ revoked: true, audienceCount: audience.length });
     } catch (err) {
-        console.error('[/api/share/revoke-preview]', err.message);
+        console.error('[DELETE /api/share/grants/:grant_id]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// Revoke a share by grant_id. Deletes ONE Permify shared_viewer tuple on the root.
-// Parent tuples are never deleted — they are graph structure, not policy.
-app.delete('/api/share/revoke', authMiddleware, async (req, res) => {
-    const { grant_id } = req.body;
-    if (!grant_id) return res.status(400).json({ error: 'grant_id required' });
-    const tenantId = req.headers['x-tenant-id'];
+// Per-audience revocation: removes one audience member's access while others retain theirs.
+app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware, async (req, res) => {
+    const { grant_id, assignment_id } = req.params;
+    const tenantId  = req.headers['x-tenant-id'];
     const revokedBy = req.headers['x-user-id'] || 'unknown';
     try {
-        const { rows } = await db.query(
-            `UPDATE share_grants
-             SET status = 'revoked', revoked_at = now(), revoked_by = $1
-             WHERE grant_id = $2 AND status = 'active'
-             RETURNING root_node_id, subject`,
-            [revokedBy, grant_id]
+        const { rows: [assignment] } = await db.query(
+            `SELECT assignee_type, assignee_id FROM role_assignments
+             WHERE assignment_id = $1 AND resource_id = $2 AND resource_type = 'grant' AND status = 'active'`,
+            [assignment_id, grant_id]
         );
-        if (!rows.length) return res.status(404).json({ error: 'Grant not found or already revoked' });
-        const { root_node_id, subject } = rows[0];
+        if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
 
-        // For graph_island grants, revoke one tuple per node; for node grants, revoke on root only
-        const { rows: [fullGrant] } = await db.query(
-            `SELECT grant_type, child_node_ids FROM share_grants WHERE grant_id = $1`,
+        const { rows: [grant] } = await db.query(
+            `SELECT child_node_ids FROM share_grants WHERE grant_id = $1`,
             [grant_id]
         );
-        const revokeTargets = fullGrant?.grant_type === 'graph_island'
-            ? (fullGrant.child_node_ids || [root_node_id])
-            : [root_node_id];
-        await Promise.all(revokeTargets.map(nodeId =>
-            permify.revokeNodeAccess(nodeId, subject, 'shared_viewer')
-        ));
+        const subject = assignment.assignee_type === 'group'
+            ? `group:${assignment.assignee_id}#member` : assignment.assignee_id;
 
-        // Bust affected user's cache immediately
-        const sub = subject.startsWith('user:') ? subject.slice(5) : null;
-        await Promise.all([
-            ...(sub ? [redis.del(`perm:${sub}`)] : []),
-            redis.incr(`perm_version:${tenantId}`),
-        ]);
-        res.json({ ok: true, revokedGrantId: grant_id });
+        await Promise.all((grant?.child_node_ids || []).map(nodeId =>
+            permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
+        ));
+        await db.query(
+            `UPDATE role_assignments SET status = 'revoked', revoked_at = now(), revoked_by = $1
+             WHERE assignment_id = $2`,
+            [revokedBy, assignment_id]
+        );
+
+        if (assignment.assignee_type === 'user') {
+            await Promise.all([
+                redis.del(`perm:${assignment.assignee_id}`),
+                redis.incr(`perm_version:${tenantId}`),
+            ]);
+        } else {
+            await redis.incr(`perm_version:${tenantId}`);
+        }
+        res.json({ revoked: true });
     } catch (err) {
-        console.error('[/api/share/revoke]', err.message);
+        console.error('[DELETE /api/share/grants/:grant_id/audience/:assignment_id]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -1165,7 +1374,7 @@ app.get('/api/share/history/:node_id', authMiddleware, async (req, res) => {
     const { node_id } = req.params;
     try {
         const { rows } = await db.query(
-            `SELECT grant_id, subject, relation, depth_ui_selection,
+            `SELECT grant_id, grant_type, depth_ui_selection,
                     child_node_ids, already_accessible_ids, private_node_ids,
                     issued_by, issued_at, expires_at, revoked_at, revoked_by, status
              FROM share_grants
@@ -1277,7 +1486,20 @@ app.get('/api/groups/:id', authMiddleware, async (req, res) => {
             `SELECT user_sub, user_org_id, added_by, added_at FROM group_members WHERE group_id = $1 ORDER BY added_at`,
             [id]
         );
-        res.json({ ...group, members });
+        // Enrich members with Clerk display info (best-effort batch)
+        const enriched = await Promise.all(members.map(async m => {
+            try {
+                const u = await clerkClient.users.getUser(m.user_sub);
+                return {
+                    ...m,
+                    display_name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || null,
+                    email: u.emailAddresses?.[0]?.emailAddress || null,
+                };
+            } catch {
+                return { ...m, display_name: null, email: null };
+            }
+        }));
+        res.json({ ...group, members: enriched });
     } catch (err) {
         console.error('[GET /api/groups/:id]', err.message);
         res.status(500).json({ error: err.message });
@@ -1334,11 +1556,171 @@ app.delete('/api/groups/:id/members/:sub', authMiddleware, async (req, res) => {
     }
 });
 
+// ─── Group Invitations ────────────────────────────────────────────────────────
+// Unified invite endpoint: resolves email → adds directly if Clerk user exists,
+// creates a pending group_invitation + sends email if not.
+
+app.post('/api/groups/:id/invite', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const { email } = req.body;
+    const orgId    = req.headers['x-tenant-id'];
+    const addedBy  = req.headers['x-user-id'];
+    const issuerSub = req.headers['x-raw-user-id'] || addedBy;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    try {
+        // Verify group belongs to this org
+        const { rows: [group] } = await db.query(
+            `SELECT group_id, name FROM groups WHERE group_id = $1 AND org_id = $2`,
+            [id, orgId]
+        );
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+
+        // Try to resolve the email in Clerk
+        const clerkUsers = await clerkClient.users.getUserList({ emailAddress: [normalizedEmail] });
+        if (clerkUsers.data.length > 0) {
+            // User exists — add directly as a member
+            const userSub = clerkUsers.data[0].id;
+            await db.query(
+                `INSERT INTO group_members (group_id, user_sub, user_org_id, added_by, email)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (group_id, user_sub) DO NOTHING`,
+                [id, userSub, orgId, addedBy, normalizedEmail]
+            );
+            if (permify.configured()) await permify.addGroupMember(id, userSub);
+            await Promise.all([
+                redis.del(`perm:${userSub}`),
+                redis.incr(`perm_version:${orgId}`),
+            ]);
+            const u = clerkUsers.data[0];
+            return res.status(201).json({
+                added: true,
+                member: {
+                    user_sub: userSub,
+                    email: normalizedEmail,
+                    display_name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || null,
+                    added_at: new Date().toISOString(),
+                },
+            });
+        }
+
+        // User not in Clerk — create pending invitation
+        const { rows: [inv] } = await db.query(
+            `INSERT INTO invitations (org_id, invitation_type, resource_id, invited_email, invited_by)
+             VALUES ($1, 'group', $2, $3, $4)
+             ON CONFLICT (invitation_type, resource_id, invited_email) WHERE status = 'pending'
+             DO UPDATE SET invited_at = now(), invited_by = $4
+             RETURNING invitation_id, invited_at`,
+            [orgId, id, normalizedEmail, addedBy]
+        );
+
+        // Resolve inviter display name for email
+        let inviterName = addedBy;
+        try {
+            const issuer = await clerkClient.users.getUser(issuerSub);
+            inviterName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
+                || issuer.emailAddresses?.[0]?.emailAddress || addedBy;
+        } catch { /* non-fatal */ }
+
+        await sendClerkOrgInvitation(normalizedEmail, inviterName);
+
+        res.status(201).json({
+            invited: true,
+            invitation: {
+                invitation_id: inv.invitation_id,
+                invited_email: normalizedEmail,
+                invited_at: inv.invited_at,
+                status: 'pending',
+            },
+        });
+    } catch (err) {
+        console.error('[POST /api/groups/:id/invite]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// List pending invitations for a group
+app.get('/api/groups/:id/invitations', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const orgId  = req.headers['x-tenant-id'];
+    try {
+        const { rows: [group] } = await db.query(
+            `SELECT group_id FROM groups WHERE group_id = $1 AND org_id = $2`, [id, orgId]
+        );
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+        const { rows } = await db.query(
+            `SELECT invitation_id, invited_email AS pending_email, invited_by, invited_at, status
+             FROM invitations
+             WHERE invitation_type = 'group' AND resource_id = $1 AND status = 'pending'
+             ORDER BY invited_at DESC`,
+            [id]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('[GET /api/groups/:id/invitations]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Resend a group invitation email
+app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, async (req, res) => {
+    const { id, inv_id } = req.params;
+    const issuerSub = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
+    const orgId     = req.headers['x-tenant-id'];
+    try {
+        const { rows: [inv] } = await db.query(
+            `SELECT i.invited_email AS pending_email, g.name AS group_name
+             FROM invitations i
+             JOIN groups g ON g.group_id::text = i.resource_id
+             WHERE i.invitation_id = $1 AND i.resource_id = $2 AND g.org_id = $3
+               AND i.invitation_type = 'group' AND i.status = 'pending'`,
+            [inv_id, id, orgId]
+        );
+        if (!inv) return res.status(404).json({ error: 'Invitation not found' });
+
+        let inviterName = issuerSub;
+        try {
+            const issuer = await clerkClient.users.getUser(issuerSub);
+            inviterName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
+                || issuer.emailAddresses?.[0]?.emailAddress || issuerSub;
+        } catch { /* non-fatal */ }
+
+        await sendClerkOrgInvitation(inv.pending_email, inviterName);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[POST /api/groups/:id/invitations/:inv_id/resend]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Cancel a group invitation
+app.delete('/api/groups/:id/invitations/:inv_id', authMiddleware, async (req, res) => {
+    const { id, inv_id } = req.params;
+    const orgId = req.headers['x-tenant-id'];
+    try {
+        const { rows } = await db.query(
+            `UPDATE invitations SET status = 'cancelled'
+             WHERE invitation_id = $1 AND resource_id = $2 AND invitation_type = 'group'
+               AND resource_id IN (SELECT group_id::text FROM groups WHERE org_id = $3)
+             RETURNING invitation_id, invited_email`,
+            [inv_id, id, orgId]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Invitation not found' });
+        if (rows[0].invited_email) {
+            removeFromClerkAllowlist(rows[0].invited_email).catch(() => {});
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DELETE /api/groups/:id/invitations/:inv_id]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── Graph Island Sharing ─────────────────────────────────────────────────────
 
-// Share all visible graph nodes with a named user, a custom group, or a pending email.
-// Writes one Permify shared_viewer tuple per node + one share_grants audit row.
-// pendingEmail: store grant as 'pending', activate on webhook / pull model.
+// Share all visible graph nodes with a user, group, or pending email.
+// Uses findOrCreateGrant for dedup. Audience tracked in role_assignments.
 app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
     const { nodeIds, targetSub, groupId, pendingEmail, expiresAt } = req.body;
     const tenantId  = req.headers['x-tenant-id'];
@@ -1353,18 +1735,21 @@ app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'Provide exactly one of targetSub, groupId, or pendingEmail' });
     }
 
-    // ── Pending grant path ──
-    if (pendingEmail) {
-        try {
-            const rootNodeId  = nodeIds[0];
-            const grantResult = await db.query(
-                `INSERT INTO share_grants
-                   (root_node_id, subject, relation, depth_ui_selection, composition_rels,
-                    child_node_ids, already_accessible_ids, private_node_ids,
-                    issued_by, expires_at, grant_type, subject_type, status, pending_email)
-                 VALUES ($1, '', 'shared_viewer', 0, '{}', $2, '{}', '{}', $3, $4, 'graph_island', 'user', 'pending', $5)
-                 RETURNING grant_id`,
-                [rootNodeId, nodeIds, issuedBy, expiresAt || null, pendingEmail.toLowerCase().trim()]
+    try {
+        const rootNodeId = nodeIds[0];
+        const { grantId, reused } = await findOrCreateGrant(
+            issuedBy, rootNodeId, nodeIds, 'graph_island', expiresAt
+        );
+
+        if (pendingEmail) {
+            const normalizedEmail = pendingEmail.toLowerCase().trim();
+            await db.query(
+                `INSERT INTO invitations
+                   (org_id, invitation_type, resource_id, invited_email, invited_by, expires_at)
+                 VALUES ($1, 'share', $2, $3, $4, $5)
+                 ON CONFLICT (invitation_type, resource_id, invited_email) WHERE status = 'pending'
+                 DO UPDATE SET invited_at = now(), expires_at = $5`,
+                [tenantId, grantId, normalizedEmail, issuedBy, expiresAt || null]
             );
             let sharerName = issuedBy;
             try {
@@ -1372,41 +1757,43 @@ app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
                 sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
                     || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
             } catch { /* non-fatal */ }
-            await sendInviteEmail({ toEmail: pendingEmail, sharerName, nodeCount: nodeIds.length, isGraph: true });
-            return res.json({ pending: true, grantId: grantResult.rows[0].grant_id, totalNodes: nodeIds.length });
-        } catch (err) {
-            console.error('[/api/share/graph-island pending]', err.message);
-            return res.status(500).json({ error: err.message });
+            await sendClerkOrgInvitation(normalizedEmail, sharerName);
+            return res.json({ pending: true, grantId, totalNodes: nodeIds.length, reused });
         }
-    }
 
-    const subject     = targetSub ? `user:${targetSub}` : `group:${groupId}#member`;
-    const subjectType = targetSub ? 'user' : 'group';
-
-    try {
+        // Write Permify tuples for the new audience member
         await Promise.all(nodeIds.map(nodeId =>
             targetSub
                 ? permify.shareNodeWithUser(nodeId, targetSub, expiresAt || null)
                 : permify.shareNodeWithGroup(nodeId, groupId, expiresAt || null)
         ));
 
-        const rootNodeId = nodeIds[0];
-        const grantResult = await db.query(
-            `INSERT INTO share_grants
-               (root_node_id, subject, relation, depth_ui_selection, composition_rels,
-                child_node_ids, already_accessible_ids, private_node_ids,
-                issued_by, expires_at, grant_type, subject_type, group_id)
-             VALUES ($1, $2, 'shared_viewer', 0, '{}', $3, '{}', '{}', $4, $5, 'graph_island', $6, $7)
-             RETURNING grant_id`,
-            [rootNodeId, subject, nodeIds, issuedBy, expiresAt || null, subjectType, groupId || null]
-        );
+        const assigneeType = targetSub ? 'user' : 'group';
+        const assigneeId   = targetSub || groupId;
+        let   assigneeEmail = null;
+        if (targetSub) {
+            try {
+                const u = await clerkClient.users.getUser(targetSub);
+                assigneeEmail = u.emailAddresses?.[0]?.emailAddress || null;
+            } catch { /* non-fatal */ }
+        }
 
+        await db.query(
+            `INSERT INTO role_assignments
+               (resource_type, resource_id, assignee_type, assignee_id, assignee_email, assigned_by, expires_at)
+             SELECT 'grant', $1, $2, $3, $4, $5, $6
+             WHERE NOT EXISTS (
+               SELECT 1 FROM role_assignments
+               WHERE resource_type = 'grant' AND resource_id = $1
+                 AND assignee_type = $2 AND assignee_id = $3 AND status = 'active'
+             )`,
+            [grantId, assigneeType, assigneeId, assigneeEmail, issuedBy, expiresAt || null]
+        );
         await Promise.all([
             ...(targetSub ? [redis.del(`perm:${targetSub}`)] : []),
             redis.incr(`perm_version:${tenantId}`),
         ]);
-
-        res.json({ grantId: grantResult.rows[0].grant_id, totalNodes: nodeIds.length });
+        res.json({ grantId, totalNodes: nodeIds.length, reused });
     } catch (err) {
         console.error('[/api/share/graph-island]', err.message);
         res.status(500).json({ error: err.message });
@@ -1507,6 +1894,153 @@ app.delete('/api/share/graph-link/:linkId', authMiddleware, async (req, res) => 
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/graph-link DELETE]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// List all active grants issued by the current user — grouped shape (one grant, N audience rows).
+app.get('/api/share/grants', authMiddleware, async (req, res) => {
+    const issuedBy = req.headers['x-user-id'];
+    try {
+        const { rows: grants } = await db.query(
+            `SELECT sg.grant_id, sg.root_node_id, sg.grant_type,
+                    array_length(sg.child_node_ids, 1) AS node_count,
+                    sg.issued_at, sg.expires_at, sg.status
+             FROM share_grants sg
+             WHERE sg.issued_by = $1 AND sg.status = 'active'
+             ORDER BY sg.issued_at DESC`,
+            [issuedBy]
+        );
+
+        if (grants.length === 0) return res.json([]);
+
+        const grantIds = grants.map(g => g.grant_id);
+
+        const { rows: audience } = await db.query(
+            `SELECT ra.assignment_id, ra.resource_id AS grant_id,
+                    ra.assignee_type, ra.assignee_id, ra.assignee_email, ra.status,
+                    ra.assigned_at, ra.expires_at,
+                    g.name AS group_name,
+                    (SELECT COUNT(user_sub)::int FROM group_members WHERE group_id::text = ra.assignee_id) AS member_count
+             FROM role_assignments ra
+             LEFT JOIN groups g ON ra.assignee_type = 'group' AND g.group_id::text = ra.assignee_id
+             WHERE ra.resource_type = 'grant' AND ra.resource_id = ANY($1) AND ra.status = 'active'`,
+            [grantIds]
+        );
+
+        const { rows: pendingInv } = await db.query(
+            `SELECT invitation_id, resource_id AS grant_id,
+                    invited_email, invited_at, expires_at
+             FROM invitations
+             WHERE invitation_type = 'share' AND resource_id = ANY($1) AND status = 'pending'`,
+            [grantIds]
+        );
+
+        const audienceByGrant = {};
+        for (const row of audience) {
+            if (!audienceByGrant[row.grant_id]) audienceByGrant[row.grant_id] = [];
+            audienceByGrant[row.grant_id].push(row);
+        }
+        const pendingByGrant = {};
+        for (const row of pendingInv) {
+            if (!pendingByGrant[row.grant_id]) pendingByGrant[row.grant_id] = [];
+            pendingByGrant[row.grant_id].push(row);
+        }
+
+        const result = grants.map(g => ({
+            ...g,
+            audience:        audienceByGrant[g.grant_id] || [],
+            pending_audience: pendingByGrant[g.grant_id]  || [],
+        }));
+
+        res.json(result);
+    } catch (err) {
+        console.error('[GET /api/share/grants]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// List all pending invites issued by the current user (reads from pending_invites view)
+app.get('/api/share/pending', authMiddleware, async (req, res) => {
+    const issuedBy = req.headers['x-user-id'];
+    try {
+        const { rows } = await db.query(
+            `SELECT invitation_id,
+                    invitation_type        AS record_type,
+                    invitation_id::text    AS id,
+                    CASE WHEN invitation_type = 'share' THEN resource_id ELSE NULL END AS grant_id,
+                    invitation_id::text    AS invitation_id_col,
+                    CASE WHEN invitation_type = 'group' THEN resource_id ELSE NULL END AS group_id,
+                    group_name,
+                    invited_email          AS pending_email,
+                    invited_at             AS issued_at,
+                    expires_at,
+                    grant_type,
+                    node_count
+             FROM pending_invites
+             WHERE invited_by = $1
+             ORDER BY invited_at DESC`,
+            [issuedBy]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('[GET /api/share/pending]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Resend invite email for a pending share invitation
+app.post('/api/share/resend-invite/:grant_id', authMiddleware, async (req, res) => {
+    const { grant_id } = req.params;
+    const issuerSub = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
+    const issuedBy  = req.headers['x-user-id'];
+    try {
+        const { rows } = await db.query(
+            `SELECT i.invited_email, sg.grant_type, sg.child_node_ids
+             FROM invitations i
+             JOIN share_grants sg ON sg.grant_id::text = i.resource_id
+             WHERE i.resource_id = $1 AND i.invitation_type = 'share'
+               AND i.status = 'pending' AND i.invited_by = $2
+             LIMIT 1`,
+            [grant_id, issuedBy]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Pending invitation not found' });
+        const { invited_email, grant_type, child_node_ids } = rows[0];
+
+        let sharerName = issuerSub;
+        try {
+            const issuer = await clerkClient.users.getUser(issuerSub);
+            sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
+                || issuer.emailAddresses?.[0]?.emailAddress || issuerSub;
+        } catch { /* non-fatal */ }
+
+        await sendClerkOrgInvitation(invited_email, sharerName);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[POST /api/share/resend-invite]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Cancel a pending share invitation
+app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, async (req, res) => {
+    const { grant_id } = req.params;
+    const issuedBy = req.headers['x-user-id'];
+    try {
+        const { rows } = await db.query(
+            `UPDATE invitations SET status = 'cancelled'
+             WHERE resource_id = $1 AND invitation_type = 'share'
+               AND status = 'pending' AND invited_by = $2
+             RETURNING invitation_id, invited_email`,
+            [grant_id, issuedBy]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Pending invitation not found or already resolved' });
+        for (const { invited_email } of rows) {
+            removeFromClerkAllowlist(invited_email).catch(() => {});
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DELETE /api/share/cancel-invite]', err.message);
         res.status(500).json({ error: err.message });
     }
 });

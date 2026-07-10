@@ -114,7 +114,10 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             if (userExpiry > 0) body.expiresAt = new Date(Date.now() + userExpiry * 86400000).toISOString();
             const resp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
             const data = await resp.json();
-            setUserSuccess(`Graph shared with ${resolvedUser.name}. ${data.totalNodes} nodes shared.`);
+            const msg = data.reused
+                ? `${resolvedUser.name} added to existing grant (${data.totalNodes} nodes).`
+                : `Graph shared with ${resolvedUser.name}. ${data.totalNodes} nodes shared.`;
+            setUserSuccess(msg);
             setEmail(''); setResolvedUser(null);
         } catch { /* non-fatal */ } finally { setUserSharing(false); }
     }
@@ -126,8 +129,12 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const body: any = { nodeIds, pendingEmail: email };
             if (userExpiry > 0) body.expiresAt = new Date(Date.now() + userExpiry * 86400000).toISOString();
-            await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
-            setUserSuccess(`Invite sent to ${email}. They'll get access when they sign up.`);
+            const invResp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const invData = await invResp.json().catch(() => ({}));
+            const invMsg = invData.reused
+                ? `Invite updated on existing grant for ${email}.`
+                : `Invite sent to ${email}. They'll get access when they sign up.`;
+            setUserSuccess(invMsg);
             setEmail(''); setResolveError('');
         } catch { /* non-fatal */ } finally { setUserSharing(false); }
     }
@@ -139,9 +146,13 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const body: any = { nodeIds, groupId: selectedGroupId };
             if (groupExpiry > 0) body.expiresAt = new Date(Date.now() + groupExpiry * 86400000).toISOString();
-            await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const gResp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const gData = await gResp.json().catch(() => ({}));
             const g = groups.find(g => g.group_id === selectedGroupId);
-            setGroupSuccess(`Graph shared with group "${g?.name}". ${nodeIds.length} nodes shared.`);
+            const gMsg = gData.reused
+                ? `Group "${g?.name}" added to existing grant.`
+                : `Graph shared with group "${g?.name}". ${nodeIds.length} nodes shared.`;
+            setGroupSuccess(gMsg);
         } catch { /* non-fatal */ } finally { setGroupSharing(false); }
     }
 

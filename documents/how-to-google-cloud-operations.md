@@ -222,11 +222,26 @@ gcloud logging read \
   --project=cortex-drive-496915 --limit=20 \
   --format="table(timestamp,textPayload)"
 
-# FGA access scope — how many nodes a user can see per query
+# Permify read path — verify how many nodes a user can see (post-2026-07-08 migration)
+# [PERMIFY] replaces the old [FGA] prefix after getAllowedNodeIds was switched to Permify
 gcloud logging read \
   'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"
-   AND textPayload=~"\[FGA/QUERY\]|\[FGA/SSE\]"' \
-  --project=cortex-drive-496915 --limit=20 \
+   AND textPayload=~"\[PERMIFY\]"' \
+  --project=cortex-drive-496915 --limit=20 --freshness=5m \
+  --format="table(timestamp,textPayload)"
+
+# Permify cache hits/misses — permission resolution from Redis vs. live Permify call
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"
+   AND textPayload=~"\[PERM-CACHE\]"' \
+  --project=cortex-drive-496915 --limit=20 --freshness=5m \
+  --format="table(timestamp,textPayload)"
+
+# Auth + Permify + grounding signals (post-migration equivalent of the old FGA filter)
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"
+   AND textPayload=~"\[PERMIFY\]|\[AUTH\]|\[GROUNDING\]|\[PERM-CACHE\]"' \
+  --project=cortex-drive-496915 --limit=30 --freshness=10m \
   --format="table(timestamp,textPayload)"
 ```
 
@@ -234,16 +249,17 @@ gcloud logging read \
 
 #### What to look for after first production login
 
-Run the AUTH+FGA filter above and confirm all three lines appear:
+Run the Auth + Permify + grounding filter above and confirm these lines appear:
 
 | Expected log line | What it confirms |
 |---|---|
 | `[AUTH] Resolved Tenant ID: org_3E0FtIXiFM6DHwXg05sEVvq2mi0 (EnvOverride: true, ...)` | Secret Manager TENANT_ID override is active |
-| `[FGA] user:user_... can_view 341 nodes` | OpenFGA returning full node list for owner |
-| `[FGA/QUERY] access_scope=normal allowed_ids_count=341` | Query executing with full access |
+| `[PERMIFY] user:user_... can_view 341 nodes` | Permify returning full node list for owner (replaces old `[FGA]` line — switched 2026-07-08) |
+| `[PERM-CACHE] miss — resolved 341 ids for user=..., cached 300s` | Permission cache populated from Permify; subsequent queries hit Redis |
 
 If `EnvOverride: false` → TENANT_ID secret is missing or not mounted in Cloud Run.
-If `allowed_ids_count=0` → OpenFGA is unreachable or bootstrap tuples are missing.
+If `[PERMIFY] can_view 0 nodes` → Permify unreachable, or ownership tuples missing (check `migrate_openfga_to_permify.py` was run).
+If invited user sees `can_view 0 nodes` → their `shared_viewer` tuple is missing; revoke and re-share from the Sharing settings page.
 
 ---
 
@@ -338,6 +354,7 @@ have no dependency on each other and can run in parallel.
 | 12 | Write + run `migrate_openfga_to_permify.py` (migrate existing owner + tenant_viewer tuples) | Step 7 | ✅ Done 2026-07-01 |
 | 13 | Run `scripts/migrations/002_create_groups.sql` — `groups` + `group_members` tables | Step 3 | ✅ Done 2026-07-06 |
 | 14 | Run `scripts/migrations/003_add_grant_columns.sql` — `grant_type`, `subject_type`, `group_id` on `share_grants` | Step 13 | ✅ Done 2026-07-06 |
+| 15 | Run `scripts/migrations/007_sharing_v2.sql` — sharing model v2 (roles, role_assignments, invitations; drop group_invitations + audience columns from share_grants) | Step 14 | ✅ Done 2026-07-08 |
 
 ---
 
@@ -385,6 +402,53 @@ gcloud sql connect cortex-openfga-db \
 # At psql prompt:
 # \i scripts/migrations/001_create_share_grants.sql
 ```
+
+---
+
+### How to run any future SQL migration (preferred method — 2026-07-08)
+
+`gcloud sql connect` requires an interactive terminal. For scripted or file-based
+migrations, use Cloud SQL Auth Proxy + `psql` with the password fetched inline from
+Secret Manager. This avoids storing credentials in the shell or any file.
+
+**One-time setup — `psql` on Mac:**
+```bash
+# libpq is installed by Homebrew but keg-only (not linked to PATH by default)
+# Add it permanently:
+echo 'export PATH="/opt/homebrew/opt/libpq/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# Or install if not present:
+brew install libpq
+```
+
+**Start Cloud SQL Auth Proxy (in background):**
+```bash
+cloud-sql-proxy cortex-drive-496915:us-central1:cortex-openfga-db &
+# Listens on 127.0.0.1:5432
+```
+
+**Run a migration file:**
+```bash
+psql "host=127.0.0.1 port=5432 dbname=cortexdrive_app user=cortex-app-user \
+  password=$(gcloud secrets versions access latest \
+    --secret=CORTEX_APP_DB_PASSWORD --project=cortex-drive-496915)" \
+  -f scripts/migrations/<migration_file>.sql
+```
+
+**Run an ad-hoc query (e.g. inspect table state):**
+```bash
+psql "host=127.0.0.1 port=5432 dbname=cortexdrive_app user=cortex-app-user \
+  password=$(gcloud secrets versions access latest \
+    --secret=CORTEX_APP_DB_PASSWORD --project=cortex-drive-496915)" \
+  -c "SELECT invited_email, status FROM invitations ORDER BY invited_at DESC LIMIT 10;"
+```
+
+**Key facts:**
+- DB instance: `cortex-drive-496915:us-central1:cortex-openfga-db`
+- App database: `cortexdrive_app`
+- App user: `cortex-app-user` (confirmed from `DB_USER` env var on `cortex-gateway` Cloud Run)
+- Password secret: `CORTEX_APP_DB_PASSWORD` in Secret Manager
+- Stop proxy when done: `kill %1` (or `pkill cloud-sql-proxy`)
 
 ### Step 5 — Create `permify-user` and store password
 

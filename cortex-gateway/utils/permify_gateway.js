@@ -58,7 +58,7 @@ async function shareNodeWithUser(nodeId, targetSub, expiresAt = null) {
     subject:  { type: 'user', id: targetSub },
   };
   if (expiresAt) tuple.required_conditions = { expires_at: expiresAt };
-  return _post('/relationships/write', { tuples: [tuple] });
+  return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [tuple] });
 }
 
 /** Delete a shared_viewer tuple (revoke). Never delete parent tuples. */
@@ -142,12 +142,13 @@ async function shareNodeWithGroup(nodeId, groupId, expiresAt = null) {
     subject:  { type: 'group', id: groupId, relation: 'member' },
   };
   if (expiresAt) tuple.required_conditions = { expires_at: expiresAt };
-  return _post('/relationships/write', { tuples: [tuple] });
+  return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [tuple] });
 }
 
 /** Add a user to a group in Permify (group:groupId#member @user:userSub). */
 async function addGroupMember(groupId, userSub) {
   return _post('/relationships/write', {
+    metadata: { schema_version: '' },
     tuples: [{
       entity:   { type: 'group', id: groupId },
       relation: 'member',
