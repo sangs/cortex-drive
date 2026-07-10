@@ -2789,6 +2789,14 @@ app.post('/query', authMiddleware, async (req, res) => {
                     const toolName = toolCall.function.name;
                     const toolArgs = JSON.parse(toolCall.function.arguments);
 
+                    // Career domain: wants_visual_map=true returns backbone-only skeleton nodes
+                    // (Category groupers), not Company/Role/Project content nodes. The Q2 writer
+                    // needs content nodes; backbone visualization is handled by the auto-inject below.
+                    if (domainSignal === 'career' && toolName === 'search_enterprise_graph' && toolArgs.wants_visual_map) {
+                        toolArgs.wants_visual_map = false;
+                        console.log('[QUERY] Career override: wants_visual_map→false for Q2 content fetch');
+                    }
+
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));
 
                     try {
