@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useOrganization } from '@clerk/nextjs';
 import Link from 'next/link';
 import {
     ArrowLeft, Link2, Copy, Check, Trash2, Eye,
@@ -120,6 +120,8 @@ function audienceDisplayName(member: AudienceMember): string {
 
 export default function SharingSettingsPage() {
     const { getToken } = useAuth();
+    const { membership } = useOrganization();
+    const isOwner = membership?.role === 'org:admin';
     const [tab, setTab] = useState<Tab>('public-links');
 
     const [links, setLinks]     = useState<GraphLink[]>([]);
@@ -326,7 +328,7 @@ export default function SharingSettingsPage() {
                                         <section className="space-y-3">
                                             <SectionHeading label="Active" count={activeLinks.length} />
                                             {activeLinks.map(link => (
-                                                <LinkCard key={link.link_id} link={link}
+                                                <LinkCard key={link.link_id} link={link} isOwner={isOwner}
                                                     copiedId={copiedId} revokingId={revokingId} confirmId={confirmId}
                                                     onCopy={copyUrl} onConfirm={setConfirmId} onRevoke={revokeLink} />
                                             ))}
@@ -336,7 +338,7 @@ export default function SharingSettingsPage() {
                                         <section className="space-y-3">
                                             <SectionHeading label="Expired / Revoked" count={inactiveLinks.length} dimmed />
                                             {inactiveLinks.map(link => (
-                                                <LinkCard key={link.link_id} link={link} dimmed
+                                                <LinkCard key={link.link_id} link={link} dimmed isOwner={isOwner}
                                                     copiedId={copiedId} revokingId={revokingId} confirmId={confirmId}
                                                     onCopy={copyUrl} onConfirm={setConfirmId} onRevoke={revokeLink} />
                                             ))}
@@ -356,7 +358,7 @@ export default function SharingSettingsPage() {
                                 <section className="space-y-4">
                                     <SectionHeading label="Active grants" count={grants.length} />
                                     {grants.map(grant => (
-                                        <GrantCard key={grant.grant_id} grant={grant}
+                                        <GrantCard key={grant.grant_id} grant={grant} isOwner={isOwner}
                                             revokingId={revokingId} confirmId={confirmId}
                                             cancellingId={cancellingId} resendingId={resendingId}
                                             onConfirm={setConfirmId}
@@ -379,7 +381,7 @@ export default function SharingSettingsPage() {
                                 <section className="space-y-3">
                                     <SectionHeading label="Awaiting sign-up" count={pending.length} />
                                     {pending.map(invite => (
-                                        <InviteCard key={invite.id} invite={invite}
+                                        <InviteCard key={invite.id} invite={invite} isOwner={isOwner}
                                             resendingId={resendingId} cancellingId={cancellingId} confirmId={confirmId}
                                             onResend={resendInvite} onConfirm={setConfirmId} onCancel={cancelInvite} />
                                     ))}
@@ -442,11 +444,11 @@ function EmptyState({ icon, title, body }: { icon: React.ReactNode; title: strin
 
 // ── Link card (Public Links tab) ───────────────────────────────────────────────
 
-function LinkCard({ link, copiedId, revokingId, confirmId, onCopy, onConfirm, onRevoke, dimmed }: {
+function LinkCard({ link, copiedId, revokingId, confirmId, onCopy, onConfirm, onRevoke, dimmed, isOwner }: {
     link: GraphLink;
     copiedId: string | null; revokingId: string | null; confirmId: string | null;
     onCopy: (l: GraphLink) => void; onConfirm: (id: string | null) => void; onRevoke: (id: string) => void;
-    dimmed?: boolean;
+    dimmed?: boolean; isOwner?: boolean;
 }) {
     const isCopied     = copiedId === link.link_id;
     const isRevoking   = revokingId === link.link_id;
@@ -491,7 +493,7 @@ function LinkCard({ link, copiedId, revokingId, confirmId, onCopy, onConfirm, on
                             <ExternalLink className="w-3.5 h-3.5" />
                         </a>
                     )}
-                    {link.status === 'active' && (
+                    {link.status === 'active' && isOwner && (
                         isConfirming ? (
                             <div className="flex items-center gap-1.5">
                                 <button onClick={() => onRevoke(link.link_id)} disabled={isRevoking}
@@ -519,7 +521,7 @@ function LinkCard({ link, copiedId, revokingId, confirmId, onCopy, onConfirm, on
 // ── Grant card (Named Shares tab) — grouped, with per-audience actions ─────────
 
 function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
-    onConfirm, onRevokeGrant, onRevokeAudience, onCancelPending, onResendPending }: {
+    onConfirm, onRevokeGrant, onRevokeAudience, onCancelPending, onResendPending, isOwner }: {
     grant: NamedGrant;
     revokingId: string | null; confirmId: string | null;
     cancellingId: string | null; resendingId: string | null;
@@ -528,6 +530,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
     onRevokeAudience: (grantId: string, assignmentId: string) => void;
     onCancelPending: (grantId: string, invitationId: string) => void;
     onResendPending: (grantId: string) => void;
+    isOwner?: boolean;
 }) {
     const grantConfirmKey = `grant:${grant.grant_id}`;
     const isRevokingGrant = revokingId === grant.grant_id;
@@ -555,6 +558,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                     </div>
                     <p className="text-[10px] text-slate-300 font-mono truncate">{grant.root_node_id}</p>
                 </div>
+                {isOwner && (
                 <div className="shrink-0">
                     {isConfirmingRevoke ? (
                         <div className="flex items-center gap-1.5">
@@ -577,6 +581,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                         </button>
                     )}
                 </div>
+                )}
             </div>
 
             {/* Audience list */}
@@ -603,7 +608,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                                 <span className="text-xs text-slate-400">
                                     {fmt(member.assigned_at)}
                                 </span>
-                                {isConfirmingMember ? (
+                                {isOwner && (isConfirmingMember ? (
                                     <div className="flex items-center gap-1.5">
                                         <button onClick={() => onRevokeAudience(grant.grant_id, member.assignment_id)}
                                             disabled={isRevokingMember}
@@ -622,7 +627,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                                         title="Remove from grant">
                                         <UserMinus className="w-3.5 h-3.5" />
                                     </button>
-                                )}
+                                ))}
                             </div>
                         );
                     })}
@@ -639,6 +644,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-50 text-amber-700 border-amber-200">
                                     pending
                                 </span>
+                                {isOwner && (<>
                                 <button onClick={() => onResendPending(grant.grant_id)} disabled={isResending}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 text-xs font-bold text-slate-500 hover:text-amber-700 transition-all disabled:opacity-40">
                                     {isResending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -650,6 +656,7 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
                                     title="Cancel invite">
                                     {isCancelling ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
                                 </button>
+                                </>)}
                             </div>
                         );
                     })}
@@ -667,12 +674,13 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
 
 // ── Invite card (Pending Invites tab) ──────────────────────────────────────────
 
-function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, onConfirm, onCancel }: {
+function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, onConfirm, onCancel, isOwner }: {
     invite: PendingInvite;
     resendingId: string | null; cancellingId: string | null; confirmId: string | null;
     onResend: (invite: PendingInvite) => void;
     onConfirm: (id: string | null) => void;
     onCancel: (invite: PendingInvite) => void;
+    isOwner?: boolean;
 }) {
     const isResending  = resendingId === invite.id;
     const isCancelling = cancellingId === invite.id;
@@ -719,6 +727,7 @@ function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, on
                         {!isGroup && <ExpiryLabel expiresAt={invite.expires_at} />}
                     </div>
                 </div>
+                {isOwner && (
                 <div className="flex items-center gap-2 shrink-0">
                     <button onClick={() => onResend(invite)} disabled={isResending}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 text-xs font-bold text-slate-600 hover:text-amber-700 transition-all disabled:opacity-40">
@@ -744,6 +753,7 @@ function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, on
                         </button>
                     )}
                 </div>
+                )}
             </div>
         </div>
     );

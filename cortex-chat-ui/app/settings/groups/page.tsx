@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useOrganization } from '@clerk/nextjs';
 import Link from 'next/link';
 import {
     ArrowLeft, Plus, Users, UserPlus, UserMinus, Loader2,
@@ -63,6 +63,8 @@ function memberLabel(m: GroupMember) {
 
 export default function GroupsPage() {
     const { getToken } = useAuth();
+    const { membership } = useOrganization();
+    const isOwner = membership?.role === 'org:admin';
 
     const [groups, setGroups]               = useState<Group[]>([]);
     const [selected, setSelected]           = useState<GroupDetail | null>(null);
@@ -257,12 +259,14 @@ export default function GroupsPage() {
                             <ExternalLink className="w-3.5 h-3.5" />
                             Dashboard
                         </Link>
+                        {isOwner && (
                         <button
                             onClick={() => { setShowCreate(true); setCreateError(''); }}
                             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all">
                             <Plus className="w-3.5 h-3.5" />
                             New Group
                         </button>
+                        )}
                     </div>
                 </div>
             </header>
@@ -290,10 +294,12 @@ export default function GroupsPage() {
                                 <p className="text-xs text-slate-500 max-w-[180px]">
                                     No groups yet. Create one to share with multiple people at once.
                                 </p>
+                                {isOwner && (
                                 <button onClick={() => setShowCreate(true)}
                                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all">
                                     <Plus className="w-3 h-3" />New Group
                                 </button>
+                                )}
                             </div>
                         ) : (
                             <div className="space-y-2">
@@ -324,6 +330,7 @@ export default function GroupsPage() {
                             <GroupDetailPanel
                                 group={selected}
                                 invitations={invitations}
+                                isOwner={isOwner}
                                 addEmail={addEmail}
                                 addError={addError}
                                 addSuccess={addSuccess}
@@ -415,13 +422,14 @@ function GroupRow({ group, selected, onClick }: { group: Group; selected: boolea
 // ── Group detail panel ─────────────────────────────────────────────────────────
 
 function GroupDetailPanel({
-    group, invitations,
+    group, invitations, isOwner,
     addEmail, addError, addSuccess, addingMember,
     removingSub, resendingInvId, cancellingInvId,
     onEmailChange, onAddOrInvite, onRemoveMember, onResendInvitation, onCancelInvitation,
 }: {
     group: GroupDetail;
     invitations: GroupInvitation[];
+    isOwner?: boolean;
     addEmail: string; addError: string; addSuccess: string; addingMember: boolean;
     removingSub: string | null; resendingInvId: string | null; cancellingInvId: string | null;
     onEmailChange: (v: string) => void;
@@ -451,7 +459,8 @@ function GroupDetailPanel({
                 </p>
             </div>
 
-            {/* Add / invite member */}
+            {/* Add / invite member — owner only */}
+            {isOwner && (
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-100">
                 <p className="text-xs font-bold text-slate-600 mb-2">Add or invite member by email</p>
                 <div className="flex gap-2">
@@ -474,6 +483,7 @@ function GroupDetailPanel({
                     If the user doesn't have a CortexDrive account, an invite email will be sent and they'll be added automatically when they sign up.
                 </p>
             </div>
+            )}
 
             {/* Active members */}
             <div className="px-6 py-4">
@@ -501,6 +511,7 @@ function GroupDetailPanel({
                                             <p className="text-sm font-medium text-slate-800 truncate">{memberLabel(m)}</p>
                                             <p className="text-xs text-slate-400">Added {fmt(m.added_at)}</p>
                                         </div>
+                                        {isOwner && (
                                         <button onClick={() => onRemoveMember(m.user_sub)} disabled={removingSub === m.user_sub}
                                             title="Remove member"
                                             className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100 disabled:opacity-40">
@@ -509,6 +520,7 @@ function GroupDetailPanel({
                                                 : <UserMinus className="w-3.5 h-3.5" />
                                             }
                                         </button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -533,6 +545,7 @@ function GroupDetailPanel({
                                                 Invited {fmt(inv.invited_at)} · awaiting sign-up
                                             </p>
                                         </div>
+                                        {isOwner && (
                                         <div className="flex items-center gap-1 shrink-0">
                                             <button onClick={() => onResendInvitation(inv.invitation_id)} disabled={resendingInvId === inv.invitation_id}
                                                 title="Resend invite"
@@ -551,6 +564,7 @@ function GroupDetailPanel({
                                                 }
                                             </button>
                                         </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
