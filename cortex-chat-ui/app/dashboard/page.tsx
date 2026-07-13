@@ -267,10 +267,11 @@ export default function DashboardPage() {
                     }
                 }
                 // Career backbone: hide individual instances — only Category groupers visible initially (Fix Q2).
+                // Exception: highlighted nodes (targeted career query answer) always render regardless of type.
                 if (backboneOnly && backboneSet === CAREER_BACKBONE) {
                     const hasCategoryNodes = nodes.some(n => n.type === 'Category');
                     if (hasCategoryNodes) {
-                        const filteredNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
+                        const filteredNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type) || n.highlighted);
                         const filteredLinks = links.filter(l =>
                             filteredNodes.some(n => n.id === l.source) &&
                             filteredNodes.some(n => n.id === l.target)
@@ -524,6 +525,12 @@ export default function DashboardPage() {
             const forceRefresh = forceRefreshNext || userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
             setForceRefreshNext(false);
 
+            // Focus Mode: clear graph immediately on submit so the user sees a blank canvas
+            // while the query is in-flight, regardless of whether raw_data comes back.
+            // Without this, a null-raw_data response (LLM answered without tool calls) leaves
+            // the previous query's graph frozen on screen even though the toggle is ON.
+            if (autoClear) setGraphData({ nodes: [], links: [] });
+
             const result = await query(userMsg, history, forceRefresh);
 
             if (result.access_scope) setAccessScope(result.access_scope);
@@ -535,7 +542,9 @@ export default function DashboardPage() {
             }]);
 
             if (result.raw_data) {
-                // Focus Mode: Clear existing graph if autoClear is enabled
+                // contextGraph: empty when Focus Mode is on (already cleared above), or existing
+                // graphData for accumulate mode (autoClear=false). graphData is the pre-clear
+                // snapshot since React state updates are async.
                 const contextGraph = autoClear ? { nodes: [], links: [] } : graphData;
                 // Backbone selection: explicit domain_signal from gateway, inferBackbone only as fallback
                 if (result.domain_signal) setDomainSignal(result.domain_signal);

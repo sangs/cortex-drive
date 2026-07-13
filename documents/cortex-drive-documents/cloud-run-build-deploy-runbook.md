@@ -1,6 +1,6 @@
 # CortexDrive — Cloud Run Build & Deploy Runbook
 
-**Status:** Active. Last significant update: 2026-07-06 — gateway secrets updated (Clerk webhook, Resend), Cloud SQL connection method updated.
+**Status:** Active. Last significant update: 2026-07-10 — entity catalog section added; deployment verification commands; log inspection patterns; deploy order for synchronized MCP+gateway changes.
 
 Reference for rebuilding or redeploying any individual service after code changes.
 
@@ -371,6 +371,83 @@ gcloud run jobs execute openfga-setup --region=us-central1 --project="$PROJECT_I
 
 ---
 
+## Entity Catalog — Force Rebuild
+
+The entity catalog (`cortex-gateway/config/entity_catalog.json`) is generated at gateway
+build time and baked into the Docker image. It powers Phase E (entity name lookup) of the
+intent classifier. The catalog reflects the Neo4j graph state at the time of the last gateway
+deploy — new nodes added after a deploy are not indexed until the next one.
+
+### When to rebuild
+
+- New career node added to Neo4j (new Company, Project, ThoughtLeadership, etc.)
+- New podcast episode or podcast title added
+- Phase E is misclassifying a query that should be caught by entity name match
+
+### How to rebuild
+
+```bash
+# From repo root, with cloud-env sourced
+source scripts/cloud-env.sh
+
+# Option A — Regenerate only, verify, then deploy
+.venv/bin/python scripts/generate_entity_catalog.py
+cat cortex-gateway/config/entity_catalog.json | python3 -m json.tool | grep -E '"node_count"|"career"|"podcast"'
+bash scripts/build-deploy-gateway.sh
+
+# Option B — Just redeploy (catalog auto-regenerates at start of build script)
+bash scripts/build-deploy-gateway.sh
+```
+
+**Important:** The build script calls `.venv/bin/python` (not `python3`) for catalog generation.
+If you see `ModuleNotFoundError: No module named 'neo4j'`, the venv is not active or the
+wrong Python binary is being used. Use Option A above to run the script manually first.
+
+If catalog generation fails, the build prints:
+```
+⚠ Entity catalog generation failed — using existing catalog from last deploy
+```
+This is non-fatal — the previous `entity_catalog.json` on disk is bundled instead.
+
+### What the catalog contains
+
+```json
+{
+  "generated_at": "<ISO timestamp>",
+  "node_count": 44,
+  "domains": {
+    "career": ["JPMorgan Chase", "Cortex-Drive", "InfoQ: Architectural Shifts...", ...],
+    "podcast": ["Software Engineering Daily", "Data Engineering Podcast", ...]
+  }
+}
+```
+
+Only unambiguously domain-specific labels are indexed (career: Company, Project, Startup,
+ThoughtLeadership, etc.; podcast: Episode, Podcast). Shared/SYSTEM labels (Topic, Concept,
+Technology, Person) are intentionally excluded to prevent misclassification.
+
+---
+
+## Synchronized MCP + Gateway Deploy
+
+Some changes require both `cortex-mcp` and `cortex-gateway` to be deployed together because
+they share the domain label contract (`domain_registry.py` ↔ `domain_manifests.json`).
+
+**When this is needed:** Any change to `domain_registry.py` (authorized labels, anchor labels,
+backbone labels, domain manifests) must be paired with a matching change to
+`cortex-gateway/config/domain_manifests.json` and both services redeployed.
+
+**Deploy MCP first** — gateway reads MCP responses, so MCP must be consistent before
+the gateway starts using the updated config:
+
+```bash
+source scripts/cloud-env.sh
+bash scripts/build-deploy-mcp.sh     # MCP first — domain_registry.py changes live here
+bash scripts/build-deploy-gateway.sh # Gateway second — domain_manifests.json + index.js
+```
+
+---
+
 ## Deployment Order
 
 Deploy in this order when bootstrapping from scratch or after a full teardown.
@@ -388,6 +465,34 @@ For single-service updates, only that service needs to be redeployed.
 ---
 
 ## Service Status and Logs
+
+### Verify a deploy succeeded
+
+After running a build+deploy script, confirm the new revision is live before testing:
+
+```bash
+# Show latest ready revision name + service URL
+gcloud run services describe cortex-gateway \
+    --region=us-central1 --project=cortex-drive-496915 \
+    --format="value(status.latestReadyRevisionName,status.url)"
+# → cortex-gateway-00043-j6s   https://cortex-gateway-isabiovosq-uc.a.run.app
+
+# List last 3 revisions with status (True = ready)
+gcloud run revisions list --service=cortex-gateway \
+    --region=us-central1 --project=cortex-drive-496915 \
+    --limit=3 \
+    --format="table(name,status.conditions[0].status,createTime)"
+
+# Same for MCP
+gcloud run revisions list --service=cortex-mcp \
+    --region=us-central1 --project=cortex-drive-496915 \
+    --limit=3 \
+    --format="table(name,status.conditions[0].status,createTime)"
+```
+
+A revision with `STATUS=True` is ready and serving traffic. If the latest revision shows
+`STATUS=False`, the deploy failed — check `gcloud run revisions describe <revision-name>`
+for the error reason.
 
 ### Check all services are Ready
 
@@ -448,6 +553,76 @@ POST /messages/... HTTP/1.1  202
 
 If the service has `--min-instances 0` it scales to zero when idle and will show startup
 logs again on each cold start. This is normal.
+
+### Structured log inspection — filtering and freshness
+
+The `gcloud logging read` command is more powerful than `gcloud run services logs read`
+for filtering specific events across a time window:
+
+```bash
+# Last 2 hours of gateway logs — all lines
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=100 \
+  --format="value(timestamp,textPayload)" --freshness=2h
+
+# Filter for a specific user's queries (replace user ID)
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=50 \
+  --format="value(timestamp,textPayload)" --freshness=2h 2>/dev/null \
+  | grep "user_3GHkXgBrnxw04FQzUBffuiALWK1"
+
+# Filter for classification decisions only
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=100 \
+  --format="value(timestamp,textPayload)" --freshness=2h 2>/dev/null \
+  | grep -E "\[CLASSIFY\]|\[QUERY\] domain"
+
+# Filter for Permify errors
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=50 \
+  --format="value(timestamp,textPayload)" --freshness=1h 2>/dev/null \
+  | grep -E "PERMIFY|FGA"
+
+# Filter for cache events (hits, writes, keys)
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=100 \
+  --format="value(timestamp,textPayload)" --freshness=2h 2>/dev/null \
+  | grep -E "PERM-CACHE|cached|cache"
+
+# Filter for tool calls and results
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="cortex-gateway"' \
+  --project=cortex-drive-496915 --limit=100 \
+  --format="value(timestamp,textPayload)" --freshness=2h 2>/dev/null \
+  | grep -E "\[QUERY LOOP\]|\[GATEWAY\] Calling MCP|\[GATEWAY\] SUCCESS"
+```
+
+**Key log prefixes in the gateway** — what each means:
+
+| Prefix | Meaning |
+|---|---|
+| `[CLASSIFY] phase=R(regex)` | Intent classified by regex (free) |
+| `[CLASSIFY] phase=E(entity)` | Intent classified by entity catalog lookup (free) |
+| `[CLASSIFY] phase=S(embedding)` | Intent classified by embedding similarity (paid ~$0.0000004) |
+| `[QUERY] domain_signal=career` | Domain resolved; downstream tools and writer selected |
+| `[QUERY] Career override: wants_visual_map→false` | AP-20 applied |
+| `[FGA/QUERY] access_scope=normal allowed_ids_count=342` | Permify returned N viewable nodes |
+| `[FGA/QUERY] access_scope=legacy` | Permify failed; fallback to owner-only access |
+| `[PERM-CACHE] hit` | Permission list served from Redis cache (no Permify call) |
+| `[QUERY LOOP 1] Executing search_enterprise_graph` | LLM chose to call this tool |
+| `[QUERY] Response cached — key 0a656a32…` | Response written to semantic cache |
+| `[Q2] fetchNodeNarratives failed for "X"` | Q2 writer GPT-4o call timed out for node X |
+| `[QUERY] Auto-injected career backbone nodes: N` | Backbone auto-inject succeeded |
+| `[GROUNDING]` | `auditResponseUrls()` stripped a hallucinated URL (AP-15) |
+
+**Diagnosing "LLM skipped tool calls"** — look for a response cached in <2s with no
+`[QUERY LOOP]` or `[GATEWAY] Calling MCP` lines between `[QUERY] domain_signal` and
+`[QUERY] Response cached`. This means the LLM answered from training data.
 
 ### Describe a specific revision
 

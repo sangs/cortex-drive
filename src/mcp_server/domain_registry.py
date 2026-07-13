@@ -36,7 +36,7 @@ DOMAIN_MANIFESTS = {
             "trace_sub_label": "Vetted Architecture",
             "placeholder": "Synthesizing professional impact metrics for this initiative..."
         },
-        "node_set": PROJECT_GRAPH_NODES + ["Publication", "ThoughtLeadership", "Certification", "Person"],
+        "node_set": PROJECT_GRAPH_NODES + ["Publication", "ThoughtLeadership", "Certification"],
         "anchor_labels": ["Project", "Company", "Skill", "Certification", "Industry", "ThoughtLeadership"],
         "backbone_labels": ["Person", "Category"],
         "realm": "INTERNAL"
