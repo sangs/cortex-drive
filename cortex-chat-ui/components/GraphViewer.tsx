@@ -150,6 +150,12 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                         color = '#ffffff';
                     }
 
+                    // Highlighted answer node: boost size and draw amber ring
+                    if (node.highlighted) {
+                        radius = Math.max(radius, 14);
+                        color = '#ffffff';
+                    }
+
                     // Draw Node Circle
                     ctx.beginPath();
                     ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
@@ -159,8 +165,20 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                     ctx.fill();
                     ctx.shadowBlur = 0;
 
+                    // Amber ring for highlighted answer node
+                    if (node.highlighted) {
+                        ctx.beginPath();
+                        ctx.arc(node.x, node.y, radius + 5 / globalScale, 0, 2 * Math.PI, false);
+                        ctx.strokeStyle = '#f59e0b';
+                        ctx.lineWidth = 2.5 / globalScale;
+                        ctx.shadowColor = '#f59e0b';
+                        ctx.shadowBlur = 18 / globalScale;
+                        ctx.stroke();
+                        ctx.shadowBlur = 0;
+                    }
+
                     // Label Rendering with Progressive Disclosure
-                    if (globalScale > 0.8 || node.type === 'Category' || node.status === 'Active') {
+                    if (globalScale > 0.8 || node.type === 'Category' || node.status === 'Active' || node.highlighted) {
                         const bgPadding = 2 / globalScale;
                         const labelYOffset = radius + 11 / globalScale;
                         
@@ -172,7 +190,7 @@ export default function GraphViewer({ data, isProcessing }: GraphViewerProps) {
                             fontSize + bgPadding
                         );
 
-                        ctx.fillStyle = (node.type === 'Category' || node.status === 'Active') ? '#ffffff' : 'rgba(255, 255, 255, 0.85)';
+                        ctx.fillStyle = (node.type === 'Category' || node.status === 'Active' || node.highlighted) ? '#ffffff' : 'rgba(255, 255, 255, 0.85)';
                         ctx.fillText(label, node.x - textWidth / 2, node.y + labelYOffset);
                     }
                 }}

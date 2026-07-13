@@ -29,7 +29,7 @@ export const PODCAST_BACKBONE = new Set([
 
 /** Node types that are never rendered on the canvas (noise / privacy). */
 export const GRAPH_VISUAL_EXCLUDE = new Set([
-    'Chunk', 'Source', 'PreparatoryNote', '__MetaContext__'
+    'Chunk', 'Source', 'PreparatoryNote', '__MetaContext__', 'Year'
 ]);
 
 /** Node types that carry no semantic content — show as leaves only. */

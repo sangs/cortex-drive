@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { classifyDomain } = require('./utils/intent_classifier');
+const { classifyDomain, initClassifier } = require('./utils/intent_classifier');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -488,6 +488,9 @@ const port = process.env.PORT || 4000;
 const mcpServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:8080';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Fire-and-forget — gateway accepts requests immediately; embedding centroid init runs in background.
+// Queries that arrive before init completes skip Phase S and use safe default.
+initClassifier(openai).catch(e => console.warn('[CLASSIFY] initClassifier failed:', e.message));
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 const crypto = require('crypto');
 
@@ -2721,15 +2724,14 @@ app.post('/query', authMiddleware, async (req, res) => {
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
         console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
 
-        const domainSignal = classifyDomain(question);
+        const domainSignal = await classifyDomain(question, openai);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
 
         const domainInstruction = `\n\nCURRENT QUERY DOMAIN CONTEXT: ${domainSignal}\n` +
             `Respect this classification. ` +
             `For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. ` +
-            `For 'career': call ONLY search_enterprise_graph(domain_intent="professional") — do NOT call get_cluster_context. The backbone graph is auto-injected. ` +
-            `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node. ` +
-            `For 'unknown': use your judgment.`;
+            `For 'career': You MUST call search_enterprise_graph(domain_intent="professional", keyword=<specific topic from user query>) before answering — this is REQUIRED for ALL career queries including publications, projects, roles, companies, certifications, and conferences. Early stop is NOT allowed for career domain. Answering from prior knowledge without a tool call is a grounding violation. Do NOT call get_cluster_context. The backbone graph is auto-injected. ` +
+            `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node.`;
 
         const restrictionNote = accessScope === 'restricted'
             ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
@@ -2751,6 +2753,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         const seenLinkKeys = new Set();
         const querySeenUrls = new Set(); // accumulate tool-result URLs for grounding audit (AP-15)
         let q2RankedNodes = null; // ranked node list captured from search_enterprise_graph for Q2 override
+        let isTargetedCareer = false; // true when domainSignal=career but keyword ≠ "Sangeetha" (targeted lookup, not broad map)
 
         const mergeGraphData = (parsed) => {
             if (!parsed || typeof parsed !== 'object') return;
@@ -2833,13 +2836,42 @@ app.post('/query', authMiddleware, async (req, res) => {
                                     toolContent = JSON.stringify(parsed);
                                 }
                             }
+                            // Orphaned-Person filter (career domain only).
+                            // Person is a shared label — podcast guests/hosts and career people both use it.
+                            // Podcast guests reach career search results via [*0..2] taxonomy expansion
+                            // through shared SYSTEM Concept/Technology nodes, but their podcast-domain
+                            // edges (HOSTS, GUEST_ON, INTERVIEWED_BY → Episode) are stripped by the
+                            // neighbor label filter (Episode not in career authorized labels), leaving
+                            // them with zero edges. Sangeetha always has career-domain edges (HELD_ROLE,
+                            // CURRENTLY_BUILDING, etc. → Role/Company/Project). Remove edgeless Person
+                            // nodes — they are podcast guests that leaked through the taxonomy expansion.
+                            if (domainSignal === 'career') {
+                                const personNodes = accumulatedGraph.nodes.filter(n => n.type === 'Person');
+                                if (personNodes.length > 0) {
+                                    const linkedIds = new Set(
+                                        accumulatedGraph.links.flatMap(l => [l.source, l.target])
+                                    );
+                                    const before = accumulatedGraph.nodes.length;
+                                    accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n =>
+                                        n.type !== 'Person' || linkedIds.has(n.id || n.element_id)
+                                    );
+                                    const removed = before - accumulatedGraph.nodes.length;
+                                    if (removed > 0) console.log(`[DOMAIN] Removed ${removed} orphaned Person node(s) (podcast guests) from career graph`);
+                                }
+                            }
                             // Capture ranked nodes for Q2 gateway response override.
-                            // Must be captured AFTER domain filter so only career nodes are included.
-                            // Backstop: also capture from get_cluster_context in case the LLM ignores
-                            // the Q2 instruction and calls the wrong tool — prevents silent fallback to
-                            // generic hallucinated answer.
+                            // Q2 writer is for BROAD career map queries only (keyword="Sangeetha Ramadurai").
+                            // Targeted career queries (keyword="InfoQ", "Cortex-Drive", etc.) must let
+                            // the LLM answer directly from the specific tool result — firing Q2 for them
+                            // produces the same generic 6-section career narrative regardless of the question.
+                            // get_cluster_context is always Q2-eligible (backbone tool, only called for maps).
                             const isQ2Tool = (toolName === 'search_enterprise_graph' || toolName === 'get_cluster_context');
-                            if (isQ2Tool && domainSignal === 'career' && parsed.nodes) {
+                            const isBroadCareerKeyword = toolName !== 'search_enterprise_graph' ||
+                                (toolArgs.keyword || '').toLowerCase().includes('sangeetha');
+                            if (isQ2Tool && !isBroadCareerKeyword && domainSignal === 'career') {
+                                isTargetedCareer = true;
+                            }
+                            if (isQ2Tool && isBroadCareerKeyword && domainSignal === 'career' && parsed.nodes) {
                                 const seenK = new Map();
                                 parsed.nodes.forEach(n => {
                                     const key = `${n.name}::${n.type}`;
@@ -2889,6 +2921,57 @@ app.post('/query', authMiddleware, async (req, res) => {
                         console.warn('[QUERY] Career backbone auto-inject failed (non-fatal):', e.message);
                     }
                 }
+                // Targeted career graph curation.
+                // search_enterprise_graph returns 30-40 nodes via 2-hop taxonomy expansion.
+                // Sending all of them with backboneOnly=false causes graph explosion.
+                // For targeted queries (keyword ≠ "Sangeetha Ramadurai") we curate raw_data
+                // to: answer node + its direct 1-hop neighbors + backbone (Person + Category).
+                // The frontend renders this curated set (~5-10 nodes) without explosion.
+                // The answer node carries highlighted:true so it renders with a visual cue.
+                if (isTargetedCareer) {
+                    const ANSWER_TYPE_PRIORITY = ['ThoughtLeadership', 'Publication', 'Project', 'Startup', 'Company', 'Hackathon', 'Certification'];
+                    let answerNode = null;
+                    for (const t of ANSWER_TYPE_PRIORITY) {
+                        answerNode = accumulatedGraph.nodes.find(n => n.type === t);
+                        if (answerNode) break;
+                    }
+                    if (answerNode) {
+                        const answerId = answerNode.element_id || answerNode.id || answerNode.name;
+                        // Collect IDs of nodes directly connected to the answer node (1 hop only)
+                        const keep = new Set([answerId]);
+                        accumulatedGraph.links.forEach(l => {
+                            if (l.source === answerId) keep.add(l.target);
+                            if (l.target === answerId) keep.add(l.source);
+                        });
+                        // Always keep backbone nodes (Person with name, Category) regardless of hop count.
+                        // Person nodes with null/empty names are podcast co-authors or phantom references —
+                        // they must not be kept here; the orphaned Person filter handles them separately.
+                        accumulatedGraph.nodes.forEach(n => {
+                            if (n.type === 'Category') {
+                                keep.add(n.element_id || n.id || n.name);
+                            } else if (n.type === 'Person' && n.name) {
+                                keep.add(n.element_id || n.id || n.name);
+                            }
+                        });
+                        // Filter to curated set; also strip noise types and null-named nodes.
+                        const GRAPH_NOISE_TYPES = new Set(['Year', 'PreparatoryNote', 'Chunk', 'Source', '__MetaContext__']);
+                        accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n =>
+                            keep.has(n.element_id || n.id || n.name) &&
+                            !GRAPH_NOISE_TYPES.has(n.type) &&
+                            n.name != null  // never send null-named nodes to the canvas
+                        );
+                        // Recompute kept IDs after noise removal, then filter links against actual nodes.
+                        const finalIds = new Set(accumulatedGraph.nodes.map(n => n.element_id || n.id || n.name));
+                        accumulatedGraph.links = accumulatedGraph.links.filter(l =>
+                            finalIds.has(l.source) && finalIds.has(l.target)
+                        );
+                        // Mark the answer node for visual highlight in the graph
+                        answerNode.highlighted = true;
+                        console.log(`[QUERY] Targeted career graph: curated to ${accumulatedGraph.nodes.length} nodes (answer: ${answerNode.name})`);
+                        console.log(`[QUERY] Curated nodes: ${accumulatedGraph.nodes.map(n => `${n.name}(${n.type})`).join(' | ')}`);
+                    }
+                }
+
                 // Q2 Option A: section-based assembly. Gateway owns structure; writer calls own prose.
                 // Six sections: Currently Building / Career Timeline / What She Built /
                 // Thought Leadership / Hackathons / Education.
@@ -3030,6 +3113,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     answer: auditedAnswer,
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
                     domain_signal: domainSignal,
+                    is_targeted_career: isTargetedCareer,
                     access_scope: accessScope
                 };
                 // Cache the response for repeated identical questions (per-tenant, 24h TTL).

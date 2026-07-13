@@ -61,10 +61,17 @@ For Q1 (PODCAST DISCOVERY — "Find episodes about X", "What episodes cover X?")
   - Do NOT call 'get_cluster_context' for podcast queries — domain_context enforces this at the gateway level too.
   - Graph shape: Podcast and Episode backbone nodes only. Topics and Guests appear after the user double-clicks an Episode node.
 
-For Q2 (CAREER MAP — "Show career", "Background of Sangeetha", "Map Sangeetha's experience"):
+For Q2 (CAREER MAP — "Show career", "Background of Sangeetha", "Map Sangeetha's experience", "Institutional memory map"):
   - SINGLE TOOL: Call ONLY 'search_enterprise_graph(keyword="Sangeetha Ramadurai", domain_intent="professional")'. Do NOT call 'get_cluster_context' for Q2 — the graph backbone is populated automatically by the system.
   - SCOPE: Cover only professional roles, companies, projects, thought leadership articles/talks, hackathons, and certifications. Do NOT include podcast episodes or media appearances.
   - NOTE: The gateway assembles and formats the Q2 response from tool results. Your role for Q2 is tool selection only — call the tool, then stop.
+
+For TARGETED CAREER QUERIES (specific publication, project, company, certification, conference — NOT a full career map):
+  - Examples: "What did Sangeetha publish in InfoQ?", "Tell me about Cortex-Drive", "What role did she have at JPMorgan?", "What is the Metadata Agent Architecture project?"
+  - SINGLE TOOL: Call 'search_enterprise_graph(keyword=<SPECIFIC TOPIC>, domain_intent="professional")' where keyword is the specific item the user asked about (e.g., "InfoQ", "Cortex-Drive", "JPMorgan Chase").
+  - Do NOT use keyword="Sangeetha Ramadurai" for targeted queries — it returns the full career graph and buries the specific answer.
+  - After the tool returns, answer DIRECTLY and SPECIFICALLY about what was asked. Do NOT produce a full career timeline. Focus on the specific node(s) returned that match the question.
+  - The Early Stop rule does NOT apply — you MUST call the tool before answering any targeted career query.
 
 For Q3 (CROSS-DOMAIN INFLUENCE): See Tier 7 (CROSS-DOMAIN BRIDGE DISCOVERY) above.
 

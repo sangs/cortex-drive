@@ -11,6 +11,17 @@ fi
 
 echo "=== cortex-gateway: build + deploy ==="
 
+# Regenerate entity catalog from Neo4j before building the image.
+# The catalog is bundled into the Docker image and loaded at gateway startup for
+# Phase E (entity name lookup) of the intent classifier. Non-blocking: if Neo4j
+# is unreachable, the previous catalog is used and a warning is printed.
+echo "--- Generating entity catalog from Neo4j..."
+if "${REPO}/.venv/bin/python" "${REPO}/scripts/generate_entity_catalog.py"; then
+    echo "✓ Entity catalog updated"
+else
+    echo "⚠ Entity catalog generation failed — using existing catalog from last deploy"
+fi
+
 # Build minimal context — gateway Dockerfile needs cortex-gateway/ + prompts/ as siblings.
 # Cannot submit from repo root (full repo too large for Cloud Build upload).
 BCTX="/tmp/cortex-gateway-ctx"

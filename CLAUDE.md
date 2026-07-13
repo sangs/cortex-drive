@@ -179,6 +179,7 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-18** — Only use `createProxyMiddleware` for SSE/WebSocket/streaming routes; for plain JSON endpoints use a direct `fetch`. `app.use('/full/path', proxy)` strips the mount path before the proxy sees `req.url` — `pathRewrite` must match the stripped remainder, not the full path
 - **AP-19** — Any Cypher anchor MATCH using `CONTAINS` or fuzzy predicates must also exclude bridge-label types (`AND NOT n:{bridge_labels}`); a bridge-label node selected as anchor blocks all traversal paths via the path filter, silently returning only the anchor itself
 - **AP-20** — For `domainSignal=career`, always force `wants_visual_map=false` on `search_enterprise_graph` before calling the MCP tool; `wants_visual_map=true` returns backbone Category nodes only, which starves the Q2 writer (it needs Company/Role/Project types), silently falling back to hallucinated LLM text while the graph renders correctly from the auto-inject
+- **AP-21** — `classifyDomain()` must never return `'unknown'`; the safe default is `'career'` because this graph is about one person and unmatched queries are almost always career-intent. `unknown` bypasses the domain guard and causes graph explosion. Extend the career regex pattern rather than accepting unknown as a valid signal
 
 ---
 
