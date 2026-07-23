@@ -195,10 +195,10 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                     <Network className="w-4 h-4" />
                     <span className="text-xs font-bold uppercase tracking-widest text-indigo-300">Knowledge Bridge</span>
                 </div>
-                <span className="text-[8px] bg-indigo-500/20 px-2 py-0.5 rounded-full text-indigo-400 font-bold uppercase">GDS / Inferred</span>
+                <span className="text-[8px] bg-indigo-500/20 px-2 py-0.5 rounded-full text-indigo-400 font-bold uppercase">Shortest-Path / Inferred</span>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                Disparity discovery: Identify semantic anchors (shared tech/concepts) across disparate silos (Resume ↔ Podcast).
+                Disparity discovery: trace the shortest connected path (via any relationship) across disparate silos (Resume ↔ Podcast).
             </p>
             <button
                 onClick={() => onDiscoverBridge?.(node.id || node.name)}

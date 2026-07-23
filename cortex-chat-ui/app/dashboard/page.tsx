@@ -878,8 +878,11 @@ export default function DashboardPage() {
                 source_node_id: nodeId,
                 source_node_name: node?.name || "",   // name-based fallback for robustness
                 target_domain: sourceDomain,
-                min_anchors: 1,
-                limit: 5
+                min_anchors: 1
+                // limit intentionally omitted — inherits the server's configurable
+                // BRIDGE_DEFAULT_LIMIT (was hardcoded to 5 here, out of sync with the
+                // backend default; this is a manual click with no query text, so there's
+                // no query_context to pass either — pure topology-based ranking applies).
             });
 
             if (toolResponse && toolResponse.content && toolResponse.content[0]) {

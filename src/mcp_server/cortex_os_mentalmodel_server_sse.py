@@ -18,6 +18,7 @@ from typing import Optional
 
 # Local dependency
 from expert_tools import ExpertTools
+from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT
 
 # Contextvar to hold the tenant_id extracted from the request headers
 tenant_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("tenant_id", default="")
@@ -497,18 +498,28 @@ async def connect_knowledge_on_demand(
     source_node_id: Optional[str] = Field(None, description="The unique element_id of the source node."),
     source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),
     target_domain: str = Field("all", description="Domain to bridge INTO: 'podcast', 'professional', or 'all'."),
-    min_anchors: int = Field(1, description="Minimum number of shared concept/technology anchors required for a bridge. Default 1."),
-    limit: int = Field(5, description="Maximum number of bridge targets to return. Default 5.")
+    min_anchors: int = Field(1, description="Accepted for backward compatibility; no longer used (bridges are single weighted paths, not anchor-count matches)."),
+    limit: int = Field(default_factory=lambda: BRIDGE_DEFAULT_LIMIT, description=f"Maximum number of bridge targets to return. Default {BRIDGE_DEFAULT_LIMIT} (env-var configurable), capped at {BRIDGE_MAX_LIMIT}."),
+    target_node_name: Optional[str] = Field(None, description="If you already know the specific target node the user is asking about (e.g. it's named literally in their question), pass its name here — it will be included in the results even if it wouldn't otherwise rank in the top `limit`. Exact match preferred, partial-name fallback."),
+    query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Improves ranking by favoring bridges through nodes whose names match words in the question — useful when no specific target is known.")
 ) -> str:
     """
     Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
-    Finds nodes in another domain that share Technology, Topic, or Concept anchors with the source node.
-    Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI').
+    Finds the shortest weighted path from the source node to each candidate node in the target
+    domain — every relationship type is eligible (no relationship-type whitelist), so the source
+    can be any node type: a ThoughtLeadership piece, a Company, a Person, a Project, etc. Path
+    weight penalizes traversal through high-degree hub nodes, so prefer a specific, well-connected
+    source (e.g. a ThoughtLeadership node from search_enterprise_graph) over a broad one (e.g. a
+    Company) when one is available — the bridge is more likely to rank near the top of the results.
+    source_node_name accepts a partial/paraphrased name (CONTAINS fallback), not just an exact match.
     Returns session-only virtual links rendered as gold dashed connections in the graph UI.
     Use this when the user asks how one domain influenced another, e.g.:
       - 'How did this thought leadership influence the Cortex-Drive project?'
       - 'What podcast episodes relate to this career project?'
       - 'Where did this hackathon work show up later?'
+    Always pass query_context (the user's question). If the question names a specific target
+    (a project, company, or system by name), also pass it as target_node_name so it's guaranteed
+    to appear in the results.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""
@@ -521,7 +532,9 @@ async def connect_knowledge_on_demand(
             source_node_name=source_node_name,
             target_domain=target_domain,
             min_anchors=min_anchors,
-            limit=limit
+            limit=limit,
+            target_node_name=target_node_name,
+            query_context=query_context
         )
     except Exception as e:
         print(f"Error in connect_knowledge_on_demand: {e}")
