@@ -1,4 +1,25 @@
+import os
+
 from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES
+
+# connect_knowledge_on_demand bridge result limits. Env-var configurable so an operator can
+# tune the breadth/cost tradeoff per deployment without a code change; BRIDGE_MAX_LIMIT bounds
+# how much of the authorized subgraph a single request can force Dijkstra to explore/return,
+# regardless of what a caller requests.
+BRIDGE_DEFAULT_LIMIT = int(os.environ.get("BRIDGE_DEFAULT_LIMIT", "10"))
+BRIDGE_MAX_LIMIT = int(os.environ.get("BRIDGE_MAX_LIMIT", "25"))
+
+def get_bridge_limit(requested: int = None) -> int:
+    """Clamp a requested connect_knowledge_on_demand `limit` to [1, BRIDGE_MAX_LIMIT],
+    falling back to BRIDGE_DEFAULT_LIMIT when not specified."""
+    value = requested if requested else BRIDGE_DEFAULT_LIMIT
+    return max(1, min(value, BRIDGE_MAX_LIMIT))
+
+# Multiplier applied to a Dijkstra hop's weight in connect_knowledge_on_demand when the
+# destination node's name literally matches a keyword extracted from the caller's query_context
+# (2026-07-23 query-aware ranking). <1.0 makes query-relevant nodes cheaper to traverse, without
+# making the hub-degree penalty (base weight) disappear entirely.
+BRIDGE_RELEVANCE_DISCOUNT = float(os.environ.get("BRIDGE_RELEVANCE_DISCOUNT", "0.4"))
 
 # Centralized Label Registry
 DISCOVERY_LABELS = [
@@ -93,13 +114,6 @@ DOMAIN_MANIFESTS = {
 PRIVATE_LABELS = ["Note", "PreparatoryNote", "PrivateDraft", "Salary", "InternalReview", "ShadowState", "AccessRequest"]
 
 
-# Bridge Relationship Meta-Types (The Contribution/Knowledge Tiers)
-BRIDGE_RELATIONSHIPS = {
-    "CONTRIBUTION": ["AUTHORED", "CONTRIBUTED_TO", "BUILT_DURING", "PARTICIPATED_IN", "PRESENTED_AT", "DEVELOPED_ON"],
-    "AFFILIATION": ["HELD_ROLE", "AT", "STUDIED_AT", "MEMBER_OF"],
-    "KNOWLEDGE": ["DISCUSSES", "USES_TOOL", "RELATED_TO", "MENTIONS"]
-}
-
 def get_backbone_labels(domain: str = "all") -> list:
     """Return the labels considered 'Backbone' (landmarks) for the given domain."""
     if domain.lower() == "all":
@@ -109,10 +123,6 @@ def get_backbone_labels(domain: str = "all") -> list:
         return list(backbone)
     manifest = DOMAIN_MANIFESTS.get(domain.lower())
     return manifest.get("backbone_labels", []) if manifest else []
-
-def get_bridge_relationships(tier: str = "CONTRIBUTION") -> list:
-    """Return relationship types for a specific bridge discovery tier."""
-    return BRIDGE_RELATIONSHIPS.get(tier.upper(), BRIDGE_RELATIONSHIPS["CONTRIBUTION"])
 
 def get_authorized_labels(domain: str) -> list:
     """Return the list of labels authorized for the given domain context."""

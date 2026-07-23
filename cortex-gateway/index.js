@@ -487,6 +487,11 @@ app.use(express.json({ limit: '10mb' })); // 10mb covers large graph snapshots f
 const port = process.env.PORT || 4000;
 const mcpServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:8080';
 
+// connect_knowledge_on_demand bridge result limits — mirrors BRIDGE_DEFAULT_LIMIT/BRIDGE_MAX_LIMIT
+// in src/mcp_server/domain_registry.py (same env var names, same defaults; keep in sync).
+const BRIDGE_DEFAULT_LIMIT = parseInt(process.env.BRIDGE_DEFAULT_LIMIT || '10', 10);
+const BRIDGE_MAX_LIMIT = parseInt(process.env.BRIDGE_MAX_LIMIT || '25', 10);
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Fire-and-forget — gateway accepts requests immediately; embedding centroid init runs in background.
 // Queries that arrive before init completes skip Phase S and use safe default.
@@ -2469,15 +2474,16 @@ const mcpToolsDefinitions = [
         type: "function",
         function: {
             name: "connect_knowledge_on_demand",
-            description: "Discover virtual cross-domain knowledge bridges for a specific ThoughtLeadership node WITHOUT writing to Neo4j. Finds nodes in another domain that share Technology, Topic, or Concept anchors. Uses Taxonomy Expansion (IS_A/SUB_TOPIC_OF) to resolve semantic gaps (e.g., 'AI Agent' -> 'AI'). Returns session-only ghost links rendered as GOLD DASHED connections in the graph. source_node_name MUST be a ThoughtLeadership node name obtained from search_enterprise_graph — never a Company, Role, Person, or paraphrased name.",
+            description: `Discover virtual cross-domain knowledge bridges for a specific node WITHOUT writing to Neo4j. Finds the shortest weighted path from the source node to each candidate node in the target domain — every relationship type is eligible (no relationship-type whitelist), so the source can be a ThoughtLeadership piece, a Company, a Person, a Project, etc. Path weight penalizes traversal through high-degree hub nodes, so prefer a specific, well-connected source (e.g. a ThoughtLeadership node from search_enterprise_graph) over a broad one (e.g. a Company) when one is available — the bridge is more likely to rank near the top of the results. source_node_name accepts a partial/paraphrased name (CONTAINS fallback), not just an exact match. If the user's question names a specific target (a project, system, or company by name — e.g. "...to the zero-trust architecture of Cortex-Drive"), pass that name as target_node_name so it's guaranteed to appear in the results even if it wouldn't otherwise rank near the top. Returns session-only ghost links rendered as GOLD DASHED connections in the graph.`,
             parameters: {
                 type: "object",
                 properties: {
                     source_node_name: { type: "string", description: "The name of the source node to find bridges from." },
                     source_node_id: { type: "string", description: "The element_id of the source node (optional, use with source_node_name)." },
                     target_domain: { type: "string", enum: ["podcast", "professional", "all"], default: "all", description: "The domain to search for bridge targets in." },
-                    min_anchors: { type: "integer", default: 1, description: "Minimum shared anchor count for a bridge to qualify." },
-                    limit: { type: "integer", default: 5, description: "Max number of bridge targets to return." }
+                    min_anchors: { type: "integer", default: 1, description: "Accepted for backward compatibility; no longer used (bridges are single weighted paths, not anchor-count matches)." },
+                    limit: { type: "integer", default: BRIDGE_DEFAULT_LIMIT, description: `Max number of bridge targets to return. Default ${BRIDGE_DEFAULT_LIMIT} (env-var configurable), capped at ${BRIDGE_MAX_LIMIT}.` },
+                    target_node_name: { type: "string", description: "If the user's question names a specific target node (a project, system, or company by name), pass its name here so it's guaranteed to be included in the results." }
                 },
                 required: ["source_node_name"]
             }
@@ -2805,6 +2811,14 @@ app.post('/query', authMiddleware, async (req, res) => {
                     if (domainSignal === 'career' && toolName === 'search_enterprise_graph' && toolArgs.wants_visual_map) {
                         toolArgs.wants_visual_map = false;
                         console.log('[QUERY] Career override: wants_visual_map→false for Q2 content fetch');
+                    }
+
+                    // Cross-domain bridge query-aware ranking (2026-07-23): always supply the
+                    // user's original question as query_context, overriding anything the LLM
+                    // passed. Deterministic — doesn't depend on the LLM remembering to pass it,
+                    // same rationale as the wants_visual_map override above (AP-20 pattern).
+                    if (toolName === 'connect_knowledge_on_demand') {
+                        toolArgs.query_context = question;
                     }
 
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));

@@ -1539,16 +1539,41 @@ class ExpertTools:
         source_node_name: Optional[str] = None,
         target_domain: str = "all",
         min_anchors: int = 1,
-        limit: int = 5
+        limit: Optional[int] = None,
+        target_node_name: Optional[str] = None,
+        query_context: Optional[str] = None,
     ) -> str:
         """
         Discover virtual cross-domain knowledge bridges for a specific node.
 
-        Finds nodes in another domain that share semantic anchors (Technology, Topic,
-        Concept) with the source node using a three-tier algorithm:
-          Tier 1: Explicit anchor match (shared Technology/Topic/Concept nodes)
-          Tier 2: Taxonomy-expanded match (parent concept traversal via IS_A/SUB_TOPIC_OF)
-          Tier 3: Graceful degradation when no anchors exist (returns empty, no error)
+        Finds the shortest weighted path — every relationship type is eligible, no
+        hardcoded relationship-type whitelist — from the source node to each candidate
+        node in the requested domain, within the security/domain-authorized subgraph.
+        Path weight applies a logarithmic, tenant-agnostic penalty for high-degree hub
+        nodes (e.g. "AI") so generic landmarks don't dominate every bridge.
+
+        min_anchors is accepted for MCP tool-schema backward compatibility but is a
+        no-op — bridges are single weighted paths now, not anchor-count matches.
+
+        limit defaults to domain_registry.BRIDGE_DEFAULT_LIMIT (env-var configurable) and
+        is clamped to domain_registry.BRIDGE_MAX_LIMIT regardless of what's requested.
+
+        target_node_name (2026-07-23): when the caller already knows a specific target
+        (e.g. it's named literally in the user's question), pass it here — if resolved,
+        it's guaranteed to appear in the results as an ADDITIONAL bridge beyond `limit`,
+        regardless of where it would otherwise rank by path weight. Exact match preferred,
+        CONTAINS fallback, restricted to nodes matching target_domain (a hint outside the
+        requested domain is reported as not found rather than silently expanding scope).
+
+        query_context (2026-07-23): free text — normally the user's original question —
+        used to make ranking query-aware for the case where no specific target is known.
+        Hops into a node whose name literally matches a keyword extracted from this text
+        get a weight discount (domain_registry.BRIDGE_RELEVANCE_DISCOUNT), so e.g. a
+        question mentioning "governance" ranks a bridge through a "Governance" node above
+        an equally-cheap bridge through an unrelated node. Deliberately literal keyword
+        matching, not embedding similarity — keeps every ranking decision traceable to an
+        actual matched word (Invariant 11 grounding), at the cost of missing non-literal
+        matches (e.g. "AI ethics" vs. "Governance").
 
         Zero-write guarantee: nothing is persisted to Neo4j. All returned links are
         session-only virtual bridges rendered as gold dashed lines in the UI.
@@ -1556,7 +1581,9 @@ class ExpertTools:
         if not source_node_id and not source_node_name:
             return json.dumps({"error": "source_node_id or source_node_name is required"})
 
-        from domain_registry import get_authorized_labels
+        from domain_registry import get_authorized_labels, get_bridge_label_string, get_bridge_limit
+        limit = get_bridge_limit(limit)
+        relevance_keywords = self._extract_bridge_keywords(query_context)
 
         # Map target domain to allowed labels
         target_labels_raw = get_authorized_labels(target_domain)
@@ -1567,8 +1594,8 @@ class ExpertTools:
                 "Publication", "Episode", "Topic", "Podcast", "Certification",
                 "Institution", "Category", "Technology", "Concept"
             ]
-        # Exclude the source node's own type from target labels to avoid self-bridges
-        target_domain_labels = list(target_labels_raw)
+        target_domain_labels = set(target_labels_raw)
+        bridge_labels = get_bridge_label_string()
 
         # Bridge discovery is a READ-ONLY operation on content already visible to the user
         # (they clicked the node in the graph, so it was already authorized at tenant level).
@@ -1580,162 +1607,217 @@ class ExpertTools:
             OR source.tenant_id = $tenant_id
         )
         """
-        sec_anchor = self._get_security_clause("anchor")
-        sec_parent = self._get_security_clause("parentAnchor")
-        sec_target = self._get_security_clause("target")
-
-        query = f"""
-        // Step 1: Locate the source node (tenant-level read — ownership already proven by UI click)
-        MATCH (source)
-        WHERE (elementId(source) = $source_node_id OR toLower(source.name) = toLower($source_node_name))
-          AND ({sec_source_read})
-
-        // Step 2: Find its semantic anchors (1-2 hops, no chunks/notes)
-        OPTIONAL MATCH (source)-[:DISCUSSES|USES_TOOL|HAS_TOPIC|COVERS_TECHNOLOGY|MENTIONS|HAS_SKILL|CONTAINS|IS_SIMILAR|SIMILAR*1..2]-(anchor)
-        WHERE any(label IN labels(anchor) WHERE label IN ['Technology', 'Topic', 'Concept', 'Skill'])
-          AND ({sec_anchor})
-
-        // Step 3: Taxonomy Expansion — resolve AI Agent -> AI parent, etc.
-        OPTIONAL MATCH (anchor)-[:IS_A|SUB_TOPIC_OF|PARENT_OF*0..2]-(parentAnchor)
-        WHERE parentAnchor IS NOT NULL
-          AND any(label IN labels(parentAnchor) WHERE label IN ['Technology', 'Topic', 'Concept'])
-          AND ({sec_parent})
-
-        WITH source,
-             collect(DISTINCT anchor) + collect(DISTINCT parentAnchor) AS allAnchors
-
-        // Step 4: Find target nodes in the requested domain sharing these anchors
-        MATCH (target)-[:DISCUSSES|USES_TOOL|HAS_TOPIC|COVERS_TECHNOLOGY|MENTIONS|HAS_SKILL]-(sharedAnchor)
-        WHERE sharedAnchor IN allAnchors
-          AND any(label IN labels(target) WHERE label IN $target_domain_labels)
-          AND target <> source
-          AND ({sec_target})
-          AND NOT target:ReferenceLink AND NOT target:Chunk AND NOT target:Source
-          AND NOT target:PreparatoryNote AND NOT target:__MetaContext__
-
-        WITH source, target,
-             count(DISTINCT sharedAnchor) AS sharedCount,
-             collect(DISTINCT {{
-                name: sharedAnchor.name,
-                element_id: elementId(sharedAnchor),
-                node_id: sharedAnchor.node_id,
-                type: labels(sharedAnchor)[0],
-                anchor_element_id: elementId(sharedAnchor)
-             }}) AS sharedAnchors
-        WHERE sharedCount >= $min_anchors
-
-        RETURN
-            elementId(source) AS source_eid,
-            elementId(target) AS target_eid,
-            target.node_id AS target_node_id,
-            target.name AS target_name,
-            labels(target)[0] AS target_type,
-            target.description AS target_description,
-            sharedCount,
-            sharedAnchors
-        ORDER BY sharedCount DESC
-        LIMIT $limit
-        """
+        sec_a = self._get_security_clause("a")
+        sec_b = self._get_security_clause("b")
 
         try:
-            result = self._exec_query(
-                query,
+            # Step 1: Resolve the source node. Exact match preferred; CONTAINS fallback for a
+            # paraphrased name (a bare exact-match lookup silently returns nothing if the LLM
+            # doesn't pass the literal node name). Bridge-label nodes excluded so a fuzzy match
+            # can't resolve to a Chunk/PreparatoryNote/etc. (AP-19).
+            source_query = f"""
+            MATCH (source)
+            WHERE NOT source:{bridge_labels}
+              AND (elementId(source) = $source_node_id
+                   OR toLower(source.name) = toLower($source_node_name)
+                   OR source.name CONTAINS $source_node_name)
+              AND ({sec_source_read})
+            RETURN elementId(source) AS source_eid, source.name AS source_name,
+                   CASE WHEN elementId(source) = $source_node_id
+                          OR toLower(source.name) = toLower($source_node_name)
+                        THEN 0 ELSE 1 END AS match_rank
+            ORDER BY match_rank ASC, size(source.name) ASC
+            LIMIT 1
+            """
+            source_result = self._exec_query(
+                source_query,
                 **self._security_params(),
                 # sec_source_read always uses $tenant_id. _security_params() omits tenant_id
                 # only in guest_share_anchor mode — supply it there explicitly.
                 **({"tenant_id": self.tenant_id} if self.guest_share_anchor else {}),
                 source_node_id=source_node_id or "",
                 source_node_name=source_node_name or "",
-                target_domain_labels=target_domain_labels,
-                min_anchors=min_anchors,
-                limit=limit
             )
 
-            if not result.records:
+            if not source_result.records:
                 return json.dumps({
                     "nodes": [],
                     "virtual_links": [],
-                    "bridge_summary": "No cross-domain bridges found for this node with the current anchor threshold.",
+                    "bridge_summary": f"No source node found matching '{source_node_name or source_node_id}'.",
                     "confidence_tier": "none"
                 })
 
-            nodes = []
-            virtual_links = []
-            seen_node_ids = set()
-            seen_anchor_ids = set()
-            all_shared_anchor_names = set()
+            source_row = source_result.records[0]
+            source_eid = source_row["source_eid"]
+            source_name = source_row["source_name"]
 
-            source_eid = result.records[0]["source_eid"]
+            # Step 2: Fetch the full security/domain-authorized adjacency. No relationship-type
+            # filter at all — every type is eligible, which is the whole point of this redesign
+            # (the old hardcoded whitelist missed WORKED_AT/CONTRIBUTED_TO, among others).
+            # Bridge-label nodes are excluded on BOTH endpoints of every edge, so they can never
+            # enter the adjacency list — stronger than an endpoint-only post-filter and avoids
+            # the AP-19 failure mode (a bridge-label node blocking all downstream traversal) by
+            # construction rather than by a post-hoc check. sec_a/sec_b already reference
+            # $tenant_id exactly when _security_params() supplies it (both derive from the same
+            # _get_security_clause branching), so no extra guest-mode kwarg is needed here.
+            edge_query = f"""
+            MATCH (a)-[r]-(b)
+            WHERE NOT a:{bridge_labels} AND NOT b:{bridge_labels}
+              AND ({sec_a}) AND ({sec_b})
+            RETURN elementId(a) AS a_id, a.name AS a_name, labels(a) AS a_labels,
+                   a.node_id AS a_node_id, a.description AS a_description,
+                   elementId(b) AS b_id, b.name AS b_name, labels(b) AS b_labels,
+                   b.node_id AS b_node_id, b.description AS b_description,
+                   type(r) AS rel_type,
+                   COUNT {{ (a)--() }} AS deg_a, COUNT {{ (b)--() }} AS deg_b
+            """
+            edge_result = self._exec_query(edge_query, **self._security_params())
 
-            for record in result.records:
-                target_eid = record["target_eid"]
-                target_name = record["target_name"]
-                target_type = record["target_type"]
-                shared_anchors = record["sharedAnchors"]
+            adjacency: dict = {}
+            node_info: dict = {}
 
-                # Add target node
-                if target_eid not in seen_node_ids:
-                    seen_node_ids.add(target_eid)
-                    nodes.append({
-                        "id": target_eid,
-                        "element_id": target_eid,
-                        "node_id": record.get("target_node_id"),
-                        "name": target_name,
-                        "type": target_type,
-                        "description": record["target_description"] or "",
-                        "has_federated_bridge": True,
-                        "is_bento_eligible": True,
-                        "bridge_reason": f"Common Ground: {', '.join(a['name'] for a in shared_anchors[:3])}"
-                    })
+            def _remember(nid, name, labels_, node_id_, description_):
+                if nid not in node_info:
+                    node_info[nid] = {
+                        "name": name,
+                        "type": labels_[0] if labels_ else "Unknown",
+                        "labels": labels_ or [],
+                        "node_id": node_id_,
+                        "description": description_ or "",
+                    }
 
-                # Add anchor nodes and virtual links
-                for anchor in shared_anchors:
-                    anchor_eid = anchor.get("anchor_element_id") or anchor.get("element_id")
-                    anchor_name = anchor.get("name", "")
-                    anchor_type = anchor.get("type", "Concept")
-                    all_shared_anchor_names.add(anchor_name)
+            for rec in edge_result.records:
+                a_id, b_id, rel_type = rec["a_id"], rec["b_id"], rec["rel_type"]
+                deg_a, deg_b = rec["deg_a"], rec["deg_b"]
+                _remember(a_id, rec["a_name"], rec["a_labels"], rec["a_node_id"], rec["a_description"])
+                _remember(b_id, rec["b_name"], rec["b_labels"], rec["b_node_id"], rec["b_description"])
+                adjacency.setdefault(a_id, []).append((b_id, rel_type, deg_b))
+                adjacency.setdefault(b_id, []).append((a_id, rel_type, deg_a))
 
-                    if anchor_eid and anchor_eid not in seen_anchor_ids:
-                        seen_anchor_ids.add(anchor_eid)
-                        nodes.append({
-                            "id": anchor_eid,
-                            "element_id": anchor_eid,
-                            "node_id": anchor.get("node_id"),
-                            "name": anchor_name,
-                            "type": anchor_type,
-                            "is_bridge": True,
-                            "has_federated_bridge": True,
-                            "is_bento_eligible": False
-                        })
-                        # Virtual link: source → anchor (once per unique anchor)
-                        virtual_links.append({
-                            "source": source_eid,
-                            "target": anchor_eid,
-                            "type": "VIRTUAL_BRIDGE",
-                            "discovery_reason": f"Shared: {anchor_name}"
-                        })
-                    # Virtual link: anchor → target (always — every target gets its own link
-                    # even when multiple targets share the same anchor node)
-                    if anchor_eid:
-                        virtual_links.append({
-                            "source": anchor_eid,
-                            "target": target_eid,
-                            "type": "VIRTUAL_BRIDGE",
-                            "discovery_reason": f"Shared: {anchor_name}"
-                        })
+            # Candidate targets: any node in the authorized subgraph whose labels intersect the
+            # target domain, excluding the source itself (matches labels() in full, not just the
+            # primary label, so dual-labeled nodes like Project+ThoughtLeadership still qualify).
+            candidate_targets = {
+                nid for nid, info in node_info.items()
+                if nid != source_eid and target_domain_labels & set(info["labels"])
+            }
 
-            # Determine confidence tier
-            confidence_tier = "taxonomy_expanded" if len(seen_anchor_ids) > 0 else "explicit"
+            if not candidate_targets:
+                return json.dumps({
+                    "nodes": [],
+                    "virtual_links": [],
+                    "bridge_summary": f"No candidate nodes found in target domain '{target_domain}'.",
+                    "confidence_tier": "none"
+                })
 
-            summary_anchors = ", ".join(sorted(all_shared_anchor_names)[:5])
-            bridge_summary = (
-                f"Found {len(seen_node_ids)} cross-domain bridge(s) via shared concepts: {summary_anchors}."
-                if seen_node_ids
-                else "No bridges found."
+            # Resolve an explicit target hint (2026-07-23), if given, against the already-fetched
+            # node_info — no extra Cypher round trip needed. Restricted to candidate_targets so a
+            # hint outside target_domain can't silently widen scope. Exact match preferred,
+            # CONTAINS fallback with shortest-name tiebreak, mirroring the source resolution above.
+            must_include_id = None
+            target_hint_unresolved = False
+            if target_node_name:
+                tnl = target_node_name.strip().lower()
+                exact = [nid for nid in candidate_targets if node_info[nid]["name"] and node_info[nid]["name"].lower() == tnl]
+                if exact:
+                    must_include_id = exact[0]
+                else:
+                    contains = [nid for nid in candidate_targets if node_info[nid]["name"] and tnl in node_info[nid]["name"].lower()]
+                    if contains:
+                        contains.sort(key=lambda nid: len(node_info[nid]["name"]))
+                        must_include_id = contains[0]
+                if must_include_id is None:
+                    target_hint_unresolved = True
+
+            must_include = {must_include_id} if must_include_id else set()
+
+            found = self._dijkstra_to_targets(
+                adjacency, source_eid, candidate_targets, limit,
+                node_info=node_info, relevance_keywords=relevance_keywords, must_include=must_include,
             )
 
+            if not found:
+                return json.dumps({
+                    "nodes": [],
+                    "virtual_links": [],
+                    "bridge_summary": f"No path found from '{source_name}' to any node in target domain '{target_domain}' within the authorized subgraph.",
+                    "confidence_tier": "none"
+                })
+
+            ranked_organic = sorted(found.items(), key=lambda kv: kv[1][0])[:limit]
+            ranked_ids = {tid for tid, _ in ranked_organic}
+            # "Additional, on top of limit" — a resolved target hint is guaranteed a slot even if
+            # it wouldn't otherwise make the top-`limit` cut, rather than bumping an organic result.
+            extra_targets = [
+                (must_include_id, found[must_include_id])
+            ] if must_include_id and must_include_id in found and must_include_id not in ranked_ids else []
+            ranked = ranked_organic + extra_targets
+
+            nodes_by_id: dict = {}
+            virtual_links = []
+
+            for target_eid, (weight, path, rels) in ranked:
+                rel_chain = " → ".join(rels)
+
+                # Every hop becomes one VIRTUAL_BRIDGE link, labeled with the real relationship
+                # traversed — more groundable (Invariant 11) than the old "Shared: <anchor>"
+                # label, since it exposes the actual relationship chain rather than an inferred
+                # shared-concept grouping.
+                for i in range(len(path) - 1):
+                    virtual_links.append({
+                        "source": path[i],
+                        "target": path[i + 1],
+                        "type": "VIRTUAL_BRIDGE",
+                        "discovery_reason": f"via {rels[i]}"
+                    })
+
+                for node_id in path:
+                    if node_id == source_eid or node_id in nodes_by_id:
+                        continue
+                    info = node_info[node_id]
+                    entry = {
+                        "id": node_id,
+                        "element_id": node_id,
+                        "node_id": info["node_id"],
+                        "name": info["name"],
+                        "type": info["type"],
+                        "has_federated_bridge": True,
+                    }
+                    if node_id == target_eid:
+                        entry.update({
+                            "description": info["description"],
+                            "is_bento_eligible": True,
+                            "bridge_reason": f"Connected via: {rel_chain}"
+                        })
+                    else:
+                        entry.update({
+                            "is_bridge": True,
+                            "is_bento_eligible": False,
+                        })
+                    nodes_by_id[node_id] = entry
+
+            # Confidence: short, low-hub-penalty paths are "explicit"; longer or hub-heavy paths
+            # are "taxonomy_expanded". Kept as the same three enum values for UX compatibility —
+            # semantics now reflect path quality rather than IS_A/SUB_TOPIC_OF expansion (no
+            # downstream gateway/UI code branches on this value beyond passing it through).
+            best_weight, best_path, _ = found[ranked[0][0]]
+            best_hops = len(best_path) - 1
+            confidence_tier = "explicit" if (best_hops <= 2 and best_weight <= best_hops * 2) else "taxonomy_expanded"
+
+            bridge_clauses = [
+                f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)}"
+                for target_eid, (weight, path, rels) in ranked_organic[:5]
+            ]
+            bridge_clauses += [
+                f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)} (explicitly requested)"
+                for target_eid, (weight, path, rels) in extra_targets
+            ]
+            bridge_summary = f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."
+            if target_hint_unresolved:
+                bridge_summary += f" Note: requested target '{target_node_name}' was not found in domain '{target_domain}'."
+
             return json.dumps({
-                "nodes": nodes,
+                "nodes": list(nodes_by_id.values()),
                 "virtual_links": virtual_links,
                 "bridge_summary": bridge_summary,
                 "confidence_tier": confidence_tier
@@ -1745,6 +1827,112 @@ class ExpertTools:
             import traceback
             traceback.print_exc()
             return json.dumps({"error": str(e)})
+
+    # Domain-specific additions to a plain English stopword list for _extract_bridge_keywords —
+    # words that show up in nearly every Q3-style question ("decision trace", "how did X
+    # influence Y") and would otherwise match too broadly to carry any relevance signal.
+    _BRIDGE_QUERY_STOPWORDS = frozenset({
+        "the", "a", "an", "of", "to", "and", "or", "is", "are", "was", "were", "did", "does",
+        "do", "what", "how", "why", "when", "where", "who", "which", "this", "that", "these",
+        "those", "in", "on", "at", "for", "with", "from", "by", "as", "it", "its", "be", "been",
+        "has", "have", "had", "will", "would", "could", "should", "can", "may", "might",
+        "trace", "work", "decision", "eventually", "influence", "influenced", "shape", "shaped",
+    })
+
+    @classmethod
+    def _extract_bridge_keywords(cls, query_context: Optional[str]) -> set:
+        """Lowercase word-level keywords from a free-text query, for connect_knowledge_on_demand's
+        query-aware ranking. Literal matching only (no stemming/embeddings) — see the
+        query_context docstring on connect_knowledge_on_demand for why."""
+        if not query_context:
+            return set()
+        words = re.findall(r"[a-zA-Z]{2,}", query_context.lower())
+        return {w for w in words if w not in cls._BRIDGE_QUERY_STOPWORDS}
+
+    @staticmethod
+    def _dijkstra_to_targets(
+        adjacency: dict,
+        source_id: str,
+        targets: set,
+        limit: int,
+        node_info: Optional[dict] = None,
+        relevance_keywords: Optional[set] = None,
+        must_include: Optional[set] = None,
+    ) -> dict:
+        """Single-source Dijkstra with a logarithmic hub-degree edge penalty, over an
+        already-fetched adjacency dict of {node_id: [(neighbor_id, rel_type, neighbor_degree)]}.
+
+        When relevance_keywords is given, a hop into a node whose name (via node_info) literally
+        contains one of those keywords gets its weight multiplied by
+        domain_registry.BRIDGE_RELEVANCE_DISCOUNT — makes ranking query-aware without needing a
+        caller to already know the target (2026-07-23).
+
+        Stops once `limit` targets have been settled AND every id in `must_include` (if any) has
+        been found — Dijkstra pops nodes in non-decreasing distance order, so the first `limit`
+        targets popped are already the `limit` closest by weight; must_include just keeps the
+        search running past that point until a specific known target is also settled (or proven
+        unreachable), so a caller-supplied target hint isn't silently dropped for ranking outside
+        the top-`limit` (2026-07-23).
+
+        Returns {target_id: (total_weight, path_node_ids, path_rel_types)}.
+        """
+        import heapq
+        import math
+
+        from domain_registry import BRIDGE_RELEVANCE_DISCOUNT
+
+        node_info = node_info or {}
+        relevance_keywords = relevance_keywords or set()
+        must_include = must_include or set()
+
+        def edge_weight(neighbor_id: str, neighbor_degree: int) -> float:
+            w = 1 + math.log(1 + neighbor_degree)
+            if relevance_keywords:
+                name = (node_info.get(neighbor_id, {}).get("name") or "").lower()
+                if name and any(kw in name for kw in relevance_keywords):
+                    w *= BRIDGE_RELEVANCE_DISCOUNT
+            return w
+
+        dist = {source_id: 0.0}
+        prev: dict = {}
+        visited: set = set()
+        heap = [(0.0, source_id)]
+        found: dict = {}
+        remaining = set(targets)
+
+        while heap:
+            d, node = heapq.heappop(heap)
+            if node in visited:
+                continue
+            visited.add(node)
+
+            if node in remaining:
+                path = [node]
+                rels = []
+                cur = node
+                while cur in prev:
+                    p, rel_type = prev[cur]
+                    path.append(p)
+                    rels.append(rel_type)
+                    cur = p
+                path.reverse()
+                rels.reverse()
+                found[node] = (d, path, rels)
+                remaining.discard(node)
+                still_need_must_include = bool(must_include - found.keys())
+                if (len(found) >= limit and not still_need_must_include) or not remaining:
+                    break
+
+            for neighbor, rel_type, deg_neighbor in adjacency.get(node, []):
+                if neighbor in visited:
+                    continue
+                nd = d + edge_weight(neighbor, deg_neighbor)
+                if nd < dist.get(neighbor, float("inf")):
+                    dist[neighbor] = nd
+                    prev[neighbor] = (node, rel_type)
+                    heapq.heappush(heap, (nd, neighbor))
+
+        return found
 
     def get_composition_subtree(self, root_node_id: str, max_depth: int = 5) -> dict:
         """BFS over COMPOSITION_RELATIONSHIPS to compute the subtree of a root node.
