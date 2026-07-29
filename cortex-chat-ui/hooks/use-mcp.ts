@@ -57,7 +57,7 @@ export function useMCP() {
         }
     }, []);
 
-    const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false) => {
+    const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false, conversationId?: string) => {
         if (!clientRef.current) throw new Error("MCP Client not initialized");
 
         // Abort any existing query
@@ -67,7 +67,7 @@ export function useMCP() {
         abortControllerRef.current = controller;
 
         try {
-            return await clientRef.current.query(question, history, forceRefresh, controller.signal);
+            return await clientRef.current.query(question, history, forceRefresh, controller.signal, conversationId);
         } finally {
             if (abortControllerRef.current === controller) {
                 abortControllerRef.current = null;

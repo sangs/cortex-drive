@@ -2513,12 +2513,104 @@ const securityMiddleware = (req, res, next) => {
     next();
 };
 
+// --- Conversation History Endpoints ---
+// Private to the creating user — gated by a plain user_sub match, not routed through
+// Permify (this is personal chat transcript data, not a shareable knowledge-graph node).
+// Delete is soft delete (status='deleted' + deleted_at), matching share_grants/
+// role_assignments/invitations elsewhere in this schema. See migration 008 and
+// documents/architecture/security-and-auth-architecture-diagram-2026-07-27.md.
+
+/**
+ * Best-effort persistence of one chat turn. Never throws into the caller — a Cloud SQL
+ * write failure must not prevent the chat response from reaching the user. Call without
+ * awaiting; callers attach a .catch() for logging only.
+ */
+async function persistConversationTurn({ tenantId, userId, conversationId, userContent, assistantContent, domainSignal, graphSnapshot }) {
+    if (!conversationId || !userId || !tenantId) return;
+    await db.query(
+        `INSERT INTO conversations (conversation_id, org_id, user_sub, title)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (conversation_id) DO NOTHING`,
+        [conversationId, tenantId, userId, (userContent || '').slice(0, 60)]
+    );
+    await db.query(
+        `INSERT INTO conversation_messages (conversation_id, role, content)
+         VALUES ($1, 'user', $2), ($1, 'assistant', $3)`,
+        [conversationId, userContent || '', assistantContent || '']
+    );
+    await db.query(
+        `UPDATE conversations
+         SET updated_at = now(), domain_signal = $2, latest_graph_snapshot = $3
+         WHERE conversation_id = $1 AND status = 'active'`,
+        [conversationId, domainSignal || null, graphSnapshot ? JSON.stringify(graphSnapshot) : null]
+    );
+}
+
+app.get('/api/conversations', authMiddleware, async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'];
+    try {
+        const { rows } = await db.query(
+            `SELECT conversation_id, title, updated_at
+             FROM conversations
+             WHERE user_sub = $1 AND org_id = $2 AND status = 'active'
+             ORDER BY updated_at DESC`,
+            [userId, tenantId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error('[/api/conversations]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/conversations/:id', authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'];
+    try {
+        const { rows: convRows } = await db.query(
+            `SELECT conversation_id, title, domain_signal, latest_graph_snapshot, created_at, updated_at
+             FROM conversations
+             WHERE conversation_id = $1 AND user_sub = $2 AND status = 'active'`,
+            [req.params.id, userId]
+        );
+        if (convRows.length === 0) return res.status(404).json({ error: 'Conversation not found' });
+
+        const { rows: messages } = await db.query(
+            `SELECT role, content, created_at
+             FROM conversation_messages
+             WHERE conversation_id = $1
+             ORDER BY created_at ASC`,
+            [req.params.id]
+        );
+        res.json({ ...convRows[0], messages });
+    } catch (err) {
+        console.error('[/api/conversations/:id]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/conversations/:id', authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'];
+    try {
+        const { rowCount } = await db.query(
+            `UPDATE conversations SET status = 'deleted', deleted_at = now()
+             WHERE conversation_id = $1 AND user_sub = $2 AND status = 'active'`,
+            [req.params.id, userId]
+        );
+        if (rowCount === 0) return res.status(404).json({ error: 'Conversation not found' });
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[/api/conversations/:id delete]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 /**
  * SSE Endpoint for the Frontend
  * This is the "Brain" of the system.
  */
 app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
-    const { query } = req.query;
+    const { query, conversationId } = req.query;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
 
@@ -2571,6 +2663,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
         let graphNodes = [];
         let graphLinks = [];
         const sseSeenUrls = new Set(); // accumulate tool-result URLs for grounding audit
+        let lastAuditedContent = ''; // last non-empty assistant text, for conversation-history persistence
 
         while (loopCount < MAX_LOOPS && !isAborted) {
             loopCount++;
@@ -2587,6 +2680,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 
             if (assistantMessage.content) {
                 const audited = auditResponseUrls(assistantMessage.content, sseSeenUrls);
+                lastAuditedContent = audited;
                 sendEvent('chat_response', { content: audited });
             }
 
@@ -2678,6 +2772,16 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
         }
 
         console.log(`[SSE] Finished orchestration.`);
+        // Best-effort conversation history persistence — never blocks the response.
+        // domainSignal is not classified on this endpoint (only /query calls classifyDomain());
+        // persisted as null here rather than guessed.
+        persistConversationTurn({
+            tenantId, userId, conversationId,
+            userContent: query,
+            assistantContent: lastAuditedContent,
+            domainSignal: null,
+            graphSnapshot: graphNodes.length > 0 ? { nodes: graphNodes, links: graphLinks } : null
+        }).catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
         res.end();
 
     } catch (err) {
@@ -2693,7 +2797,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
  * Used by the Dashboard for backward compatibility.
  */
 app.post('/query', authMiddleware, async (req, res) => {
-    const { question, history, forceRefresh } = req.body;
+    const { question, history, forceRefresh, conversationId } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
 
@@ -3135,6 +3239,14 @@ app.post('/query', authMiddleware, async (req, res) => {
                     semanticCache.set(cacheKey, responsePayload);
                     console.log(`[QUERY] Response cached — key ${cacheKey.slice(0, 8)}…`);
                 }
+                // Best-effort conversation history persistence — never blocks the response.
+                persistConversationTurn({
+                    tenantId, userId, conversationId,
+                    userContent: question,
+                    assistantContent: auditedAnswer,
+                    domainSignal,
+                    graphSnapshot: hasGraph ? accumulatedGraph : null
+                }).catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
                 return res.send(responsePayload);
             }
         }
