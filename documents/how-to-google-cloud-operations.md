@@ -355,6 +355,7 @@ have no dependency on each other and can run in parallel.
 | 13 | Run `scripts/migrations/002_create_groups.sql` — `groups` + `group_members` tables | Step 3 | ✅ Done 2026-07-06 |
 | 14 | Run `scripts/migrations/003_add_grant_columns.sql` — `grant_type`, `subject_type`, `group_id` on `share_grants` | Step 13 | ✅ Done 2026-07-06 |
 | 15 | Run `scripts/migrations/007_sharing_v2.sql` — sharing model v2 (roles, role_assignments, invitations; drop group_invitations + audience columns from share_grants) | Step 14 | ✅ Done 2026-07-08 |
+| 16 | Run `scripts/migrations/008_conversation_history.sql` — `conversations` + `conversation_messages` tables (per-user chat history, list/view/delete) | Step 3 | ⏳ Not yet run |
 
 ---
 

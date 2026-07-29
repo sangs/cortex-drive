@@ -1,7 +1,7 @@
 # CortexDrive — Cloud Deployment Smoke Test Runbook
 
 **Status:** Active  
-**Last updated:** 2026-07-06 — Section 6 endpoint names corrected; Sections 7–8 added (public link + pending grant flows)  
+**Last updated:** 2026-07-28 — Section 9 added (conversation history: create/list/view/delete)  
 **When to use:** After any service redeploy, data wipe, schema reload, or Permify tuple re-run.
 Run the full checklist top to bottom. Any failed check is a blocker before marking the deploy done.
 
@@ -339,6 +339,56 @@ curl -s -X POST "${GATEWAY}/api/auth/activate-pending" \
 # Expected: {"activated":0} (0 because the test email doesn't match JWT user's email)
 # For a real end-to-end test: create a Clerk user with UNREGISTERED_EMAIL, get their JWT,
 # then call activate-pending with that JWT → expected: {"activated":1}
+```
+
+---
+
+## 9. Conversation History Smoke Test
+
+Tests the full per-user conversation lifecycle: ask a question → list → view → delete.
+Requires `scripts/migrations/008_conversation_history.sql` to have been run first (see
+`documents/how-to-google-cloud-operations.md`, checklist item 16).
+
+```bash
+CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+
+# Step 1: Ask a question, tagged with a fresh conversationId
+curl -s -X POST "${GATEWAY}/query" \
+  -H "Authorization: Bearer ${JWT}" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"Find episodes discussing graph databases\",\"conversationId\":\"${CONV_ID}\"}" \
+  | python3 -m json.tool
+# Expected: normal /query response (answer, raw_data, domain_signal). Persistence is
+# best-effort and non-blocking — this response does not confirm the DB write; step 2 does.
+
+# Step 2: Confirm it shows up in the list
+curl -s "${GATEWAY}/api/conversations" \
+  -H "Authorization: Bearer ${JWT}" | python3 -m json.tool
+# Expected: an entry with "conversation_id":"<CONV_ID>" and a title derived from the question
+
+# Step 3: Fetch full detail
+curl -s "${GATEWAY}/api/conversations/${CONV_ID}" \
+  -H "Authorization: Bearer ${JWT}" | python3 -m json.tool
+# Expected: {"conversation_id":..., "messages":[{"role":"user",...},{"role":"assistant",...}], ...}
+# messages[1].content (the assistant row) must match /query's audited "answer" field exactly —
+# confirms persistence stores the post-auditResponseUrls() text, never the pre-audit text.
+
+# Step 4: Confirm ownership scoping — a different user's JWT must not see this conversation
+# curl -s "${GATEWAY}/api/conversations/${CONV_ID}" -H "Authorization: Bearer ${OTHER_JWT}"
+# Expected: 404 (not 403 — existence must not leak to a non-owner)
+
+# Step 5: Delete
+curl -s -X DELETE "${GATEWAY}/api/conversations/${CONV_ID}" \
+  -H "Authorization: Bearer ${JWT}" | python3 -m json.tool
+# Expected: {"ok":true}
+
+# Step 6: Confirm it's gone from the list (soft-deleted, not hard-deleted)
+curl -s "${GATEWAY}/api/conversations" \
+  -H "Authorization: Bearer ${JWT}" | python3 -m json.tool | grep "${CONV_ID}"
+# Expected: no output (filtered by status='active' in the query)
+# Optional DB check — row still exists with status='deleted', confirming soft delete:
+# PGPASSWORD=<pw> psql -h 127.0.0.1 -p 5432 -U cortex-app-user -d cortexdrive_app \
+#   -c "SELECT status, deleted_at FROM conversations WHERE conversation_id = '${CONV_ID}';"
 ```
 
 ---

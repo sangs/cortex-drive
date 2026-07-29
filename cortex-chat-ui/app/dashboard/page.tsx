@@ -37,6 +37,7 @@ import { useMCP } from "@/hooks/use-mcp";
 const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
+const ConversationHistoryModal = dynamic(() => import("@/components/ConversationHistoryModal"), { ssr: false });
 import { getThemeForType } from "@/utils/GraphTheme";
 import {
     CAREER_BACKBONE,
@@ -102,6 +103,8 @@ export default function DashboardPage() {
     const [legendOpen, setLegendOpen] = useState(false);
     const [accessScope, setAccessScope] = useState<string | null>(null);
     const [isActivating, setIsActivating] = useState(true);
+    const [conversationId, setConversationId] = useState<string>('');
+    const [historyModalOpen, setHistoryModalOpen] = useState(false);
 
     // Restore dashboard state from sessionStorage on mount (survives settings navigation).
     useEffect(() => {
@@ -115,8 +118,13 @@ export default function DashboardPage() {
                 if (typeof s.autoClear === 'boolean') setAutoClear(s.autoClear);
                 if (s.viewMode)                      setViewMode(s.viewMode as 'brain' | 'spine');
                 if (typeof s.chatWidth === 'number') setChatWidth(s.chatWidth);
+                if (s.conversationId)                setConversationId(s.conversationId);
             }
         } catch { /* non-fatal */ }
+        // Every chat turn needs a conversationId to persist against server-side history
+        // (see cortex-gateway/index.js persistConversationTurn) — generate one now if
+        // nothing was restored, rather than waiting for the first message.
+        setConversationId(prev => prev || crypto.randomUUID());
         setHasMounted(true);
     }, []);
 
@@ -137,9 +145,10 @@ export default function DashboardPage() {
                 autoClear,
                 viewMode,
                 chatWidth,
+                conversationId,
             }));
         } catch { /* non-fatal — quota exceeded or circular ref */ }
-    }, [messages, graphData, domainSignal, autoClear, viewMode, chatWidth, hasMounted]);
+    }, [messages, graphData, domainSignal, autoClear, viewMode, chatWidth, conversationId, hasMounted]);
 
     // Pull model safety net: activate any pending grants for this user on first load per session.
     // Admins additionally run a full sweep — provisioning grants for any user who signed up
@@ -531,7 +540,7 @@ export default function DashboardPage() {
             // the previous query's graph frozen on screen even though the toggle is ON.
             if (autoClear) setGraphData({ nodes: [], links: [] });
 
-            const result = await query(userMsg, history, forceRefresh);
+            const result = await query(userMsg, history, forceRefresh, conversationId);
 
             if (result.access_scope) setAccessScope(result.access_scope);
 
@@ -609,6 +618,27 @@ export default function DashboardPage() {
         expansionCache.current = new Map();
         expandedNodes.current = new Set();
         expansionContributions.current = new Map();
+        setConversationId(crypto.randomUUID());
+    };
+
+    // Hydrate the live dashboard state from a conversation loaded via ConversationHistoryModal —
+    // mirrors what startNewAnalysis() resets, just with loaded data instead of empty state.
+    const openHistoricalConversation = (conversation: {
+        conversation_id: string;
+        domain_signal: string | null;
+        latest_graph_snapshot: { nodes: any[]; links: any[] } | null;
+        messages: { role: 'user' | 'assistant'; content: string }[];
+    }) => {
+        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
+        setMessages(conversation.messages.map(m => ({ role: m.role, content: m.content })));
+        setGraphData(conversation.latest_graph_snapshot || { nodes: [], links: [] });
+        if (conversation.domain_signal) setDomainSignal(conversation.domain_signal);
+        setNodeExpansionDepth(new Map());
+        setFocusedNodeIds(null);
+        expansionCache.current = new Map();
+        expandedNodes.current = new Set();
+        expansionContributions.current = new Map();
+        setConversationId(conversation.conversation_id);
     };
 
     const handleNodeClick = (node: any) => {
@@ -964,13 +994,20 @@ export default function DashboardPage() {
 
                 <nav className="flex-1 p-4 space-y-8 overflow-y-auto no-scrollbar">
                     {/* Primary Actions */}
-                    <div className="px-2">
-                         <button 
+                    <div className="px-2 space-y-2">
+                         <button
                             onClick={startNewAnalysis}
                             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white border border-slate-200 text-slate-900 shadow-sm hover:border-indigo-600 hover:text-indigo-600 transition-all font-bold group"
                          >
                             <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
                             New Analysis
+                        </button>
+                        <button
+                            onClick={() => setHistoryModalOpen(true)}
+                            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white border border-slate-200 text-slate-900 shadow-sm hover:border-indigo-600 hover:text-indigo-600 transition-all font-bold group"
+                         >
+                            <History className="w-4 h-4" />
+                            Conversation History
                         </button>
                     </div>
 
@@ -1312,6 +1349,12 @@ export default function DashboardPage() {
                                 graphData={graphData}
                                 open={graphShareModalOpen}
                                 onClose={() => setGraphShareModalOpen(false)}
+                            />
+
+                            <ConversationHistoryModal
+                                open={historyModalOpen}
+                                onClose={() => setHistoryModalOpen(false)}
+                                onOpenConversation={openHistoricalConversation}
                             />
                         </div>
 

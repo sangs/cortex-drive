@@ -10,7 +10,7 @@ Full AP incident narratives: `documents/architecture/anti-pattern-catalog.md`.
 
 Cortex-Drive is a zero-trust, multi-domain knowledge graph system connecting a podcast
 episode graph (transcripts, topics, guests) with a professional resume graph (projects,
-companies, thought leadership) in Neo4j. Gateway: Node.js. MCP server: Python/FastAPI.
+companies, thought leadership) in Neo4j. Gateway: Node.js. MCP server: Python/FastMCP.
 UI: Next.js.
 
 **Current domains:** `podcast`, `career`, `cross_domain`

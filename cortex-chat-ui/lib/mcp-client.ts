@@ -64,7 +64,7 @@ export class MCPClient {
     /**
      * Sends a natural language query to the Gateway's orchestration endpoint.
      */
-    async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal) {
+    async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal, conversationId?: string) {
         const baseUrl = new URL(this.serverUrl);
         const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
         const gatewayUrl = `${gatewayBase}/query`;
@@ -85,7 +85,7 @@ export class MCPClient {
             method: "POST",
             headers,
             signal,
-            body: JSON.stringify({ question, history, forceRefresh }),
+            body: JSON.stringify({ question, history, forceRefresh, conversationId }),
         });
 
         if (!response.ok) {
