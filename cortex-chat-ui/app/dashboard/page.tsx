@@ -483,10 +483,7 @@ export default function DashboardPage() {
                 // they ARE the top-level groupers. Hide individual instances — they're revealed by double-clicking.
                 const hasCategoryNodes = nodes.some(n => n.type === 'Category');
                 if (hasCategoryNodes) {
-                    const CATEGORY_CHILD_TYPES = new Set([
-                        'ThoughtLeadership', 'Degree', 'Certification', 'Hackathon',
-                        'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project'
-                    ]);
+                    // CATEGORY_CHILD_TYPES imported from graphConstants — single source of truth.
                     processedNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
                     processedLinks = finalLinks.filter(l =>
                         processedNodes.some(n => n.id === l.source) &&
@@ -499,8 +496,8 @@ export default function DashboardPage() {
                     processedLinks = collapsed.links;
                 }
             } else if (!backboneOnly && nodes.some(n => n.type === 'Person') &&
-                       nodes.some(n => n.type === 'ThoughtLeadership' || n.type === 'Hackathon')) {
-                // Q3: Cross-domain mode with ThoughtLeadership/Hackathon present.
+                       nodes.some(n => GROUPABLE_TYPES.has(n.type))) {
+                // Q3: Cross-domain mode with any groupable career type present.
                 // Collapse them so the graph starts at grouper level, not individual instances.
                 const collapsed = collapseToGroupers(nodes, finalLinks);
                 processedNodes = collapsed.nodes;
@@ -822,6 +819,7 @@ export default function DashboardPage() {
         // PROFESSIONAL EXPERIENCE: two-level bloom — first click shows Companies,
         // second click (on Company) blooms Projects/Roles at that company via grouper logic.
         if (freshNode.type === 'Category' && freshNode.name === PROFESSIONAL_EXPERIENCE_CATEGORY) {
+            console.log("[DIAG] Professional Experience branch entered. nodeKey:", nodeKey);
             try {
                 setIsProcessing(true);
                 const toolResponse = await callTool("get_cluster_context", {
@@ -829,19 +827,24 @@ export default function DashboardPage() {
                     depth: 2,
                     backbone_only: false
                 });
+                console.log("[DIAG] toolResponse received:", !!toolResponse, "content[0] present:", !!toolResponse?.content?.[0]);
                 if (toolResponse?.content?.[0]) {
                     const results = JSON.parse(toolResponse.content[0].text);
+                    console.log("[DIAG] results.nodes.length:", (results.nodes || []).length, "results.links.length:", (results.links || []).length);
                     const enrichedCompanies = buildCompanyGroupers(
                         results.nodes || [],
                         results.links || []
                     );
+                    console.log("[DIAG] enrichedCompanies:", enrichedCompanies.length, enrichedCompanies.map((c: any) => c.name));
                     if (enrichedCompanies.length > 0) {
                         setGraphData(prev => {
+                            console.log("[DIAG] prev.nodes at merge time:", prev.nodes.length, prev.nodes.map((n: any) => n.name));
                             const existingIds  = new Set(prev.nodes.map((n: any) => n.id as string));
                             const existingNames = new Set(prev.nodes.map((n: any) => n.name as string));
                             const addedCompanies = enrichedCompanies.filter((c: any) =>
                                 !existingIds.has(c.id) && !existingNames.has(c.name)
                             );
+                            console.log("[DIAG] addedCompanies:", addedCompanies.length, addedCompanies.map((c: any) => c.name));
                             const newLinks = [...prev.links];
                             enrichedCompanies.forEach((c: any) => {
                                 if (!newLinks.some(l => (l.source === freshNode.id && l.target === c.id) || (l.source === c.id && l.target === freshNode.id))) {
@@ -851,13 +854,19 @@ export default function DashboardPage() {
                             const contributed = new Set<string>(addedCompanies.map((c: any) => c.id as string));
                             expansionContributions.current.set(nodeKey, contributed);
                             expandedNodes.current.add(nodeKey);
-                            return { nodes: [...prev.nodes, ...addedCompanies], links: newLinks };
+                            const nextGraph = { nodes: [...prev.nodes, ...addedCompanies], links: newLinks };
+                            console.log("[DIAG] next graphData.nodes.length:", nextGraph.nodes.length);
+                            return nextGraph;
                         });
                         setFocusedNodeIds(() => computeFocusedIds());
+                    } else {
+                        console.log("[DIAG] enrichedCompanies was empty — no setGraphData call made, nothing will visibly change.");
                     }
+                } else {
+                    console.log("[DIAG] toolResponse.content[0] missing — response shape unexpected:", JSON.stringify(toolResponse)?.slice(0, 500));
                 }
             } catch (e) {
-                console.error("Professional Experience expansion failed:", e);
+                console.error("[DIAG] Professional Experience expansion failed:", e);
             } finally {
                 setIsProcessing(false);
             }
@@ -874,13 +883,17 @@ export default function DashboardPage() {
                 backbone_only: false
             });
 
+            console.log("[DIAG] generic expand toolResponse received:", !!toolResponse, "content[0] present:", !!toolResponse?.content?.[0]);
             if (toolResponse?.content?.[0]) {
                 const results = JSON.parse(toolResponse.content[0].text);
+                console.log("[DIAG] generic expand results.nodes.length:", (results.nodes || []).length);
                 expansionCache.current.set(nodeKey, results);
                 setGraphData(prev => {
+                    console.log("[DIAG] generic expand prev.nodes.length:", prev.nodes.length, prev.nodes.map((n: any) => n.name));
                     const existingIds = new Set(prev.nodes.map((n: any) => n.id as string));
                     const newGraph = parseDataToGraph(results, prev);
                     const contributed = new Set<string>(newGraph.nodes.filter((n: any) => !existingIds.has(n.id)).map((n: any) => n.id as string));
+                    console.log("[DIAG] generic expand newGraph.nodes.length:", newGraph.nodes.length, "newly contributed:", contributed.size);
                     expansionContributions.current.set(nodeKey, contributed);
                     expandedNodes.current.add(nodeKey);
                     return newGraph;
