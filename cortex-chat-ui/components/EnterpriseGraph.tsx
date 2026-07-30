@@ -41,6 +41,11 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
     const processed = useMemo(() => {
         // Deduplicate before ECharts sees the data — it rejects duplicate id OR name in graph series.
         const { nodes, links } = deduplicateNodes(data.nodes, data.links);
+        if (nodes.length !== data.nodes.length) {
+            const keptIds = new Set(nodes.map((n: any) => n.id));
+            const dropped = data.nodes.filter((n: any) => !keptIds.has(n.id));
+            console.log("[DIAG] deduplicateNodes dropped", dropped.length, "node(s):", dropped.map((n: any) => `${n.name} (${n.type}, id=${n.id})`));
+        }
 
         if (viewMode === 'spine') {
             // Generate limited spine backbone based on focusYear (3-year sliding window)

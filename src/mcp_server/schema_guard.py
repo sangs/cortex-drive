@@ -72,6 +72,9 @@ TRAVERSAL_RELATIONSHIPS = [
     'CURRENTLY_BUILDING',
     # Education relationships (used by seeder for Degree / Certification / ProfessionalEducation)
     'GRADUATED_FROM', 'STUDIED_AT', 'CERTIFIED_BY',
+    # Certification -> the ThoughtLeadership/Publication it was awarded for (distinct credential,
+    # cross-referenced so the two entities aren't structurally disconnected)
+    'AWARDED_FOR',
     # Similarity / cross-domain
     'SIMILAR', 'IS_SIMILAR', 'DISCUSSES', 'MENTIONS', 'COVERS',
     # Podcast domain

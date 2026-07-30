@@ -2551,10 +2551,14 @@ app.get('/api/conversations', authMiddleware, async (req, res) => {
     const userId = req.headers['x-user-id'];
     try {
         const { rows } = await db.query(
-            `SELECT conversation_id, title, updated_at
-             FROM conversations
-             WHERE user_sub = $1 AND org_id = $2 AND status = 'active'
-             ORDER BY updated_at DESC`,
+            `SELECT c.conversation_id, c.title, c.updated_at,
+                    (SELECT COUNT(*) FROM conversation_messages m WHERE m.conversation_id = c.conversation_id)::int AS message_count,
+                    (SELECT m.content FROM conversation_messages m
+                     WHERE m.conversation_id = c.conversation_id AND m.role = 'user'
+                     ORDER BY m.created_at DESC LIMIT 1) AS last_question
+             FROM conversations c
+             WHERE c.user_sub = $1 AND c.org_id = $2 AND c.status = 'active'
+             ORDER BY c.updated_at DESC`,
             [userId, tenantId]
         );
         res.json(rows);

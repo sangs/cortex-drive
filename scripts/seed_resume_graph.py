@@ -298,6 +298,14 @@ RESUME_CYPHER_QUERIES = [
     MERGE (p)-[:CERTIFIED_BY {year: "2026"}]->(e1)
     MERGE (cat)-[:CONTAINS]->(e1)
 
+    // This credential and the InfoQ article are two distinct real achievements (a certification
+    // vs. the publication that earned it), each seeded separately in its own category above —
+    // but they were structurally disconnected with no shared links/url, leaving the Certification's
+    // bento panel empty. Cross-reference them and mirror the reference URL onto the Certification.
+    MATCH (t1:ThoughtLeadership {name: "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"})
+    SET e1.links = t1.links, e1.url = t1.links[0]
+    MERGE (e1)-[:AWARDED_FOR]->(t1)
+
     // 2024: MIT
     MERGE (e2:ProfessionalEducation {name: "[2024] MIT: Applied Data Science"})
     SET e2.year = "2024",

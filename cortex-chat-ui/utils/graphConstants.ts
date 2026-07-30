@@ -45,7 +45,7 @@ export const ALWAYS_EXPANDABLE = new Set([
 
 /** Node types treated as hubs — expandable when they have at least one link. */
 export const HUB_TYPES = new Set([
-    'Role', 'Topic', 'Institution', 'Degree', 'Project', 'Certification'
+    'Role', 'Topic', 'Institution', 'Degree', 'Project', 'Certification', 'ProfessionalEducation'
 ]);
 
 /**
@@ -54,7 +54,8 @@ export const HUB_TYPES = new Set([
  */
 export const CATEGORY_CHILD_TYPES = new Set([
     'ThoughtLeadership', 'Degree', 'Certification', 'Hackathon',
-    'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project'
+    'Company', 'Startup', 'Role', 'Institution', 'Publication', 'Project',
+    'Skill', 'SocialLearning', 'ProfessionalEducation'
 ]);
 
 /**
@@ -98,6 +99,7 @@ export const GROUPER_LABELS: Record<string, string> = {
     Publication:     'Publications',
     Startup:         'Startups',
     Degree:          'Education',
+    ProfessionalEducation: 'Education',
 };
 
 /** Minimum number of instances required before collapsing into a grouper node. */

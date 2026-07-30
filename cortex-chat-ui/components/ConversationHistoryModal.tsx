@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, History, Trash2, Loader2, MessageSquare } from 'lucide-react';
+import { X, History, Trash2, Loader2, MessageSquare, ChevronRight } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
@@ -12,6 +12,8 @@ interface ConversationListItem {
     conversation_id: string;
     title: string | null;
     updated_at: string;
+    message_count: number;
+    last_question: string | null;
 }
 
 interface ConversationDetail extends ConversationListItem {
@@ -150,11 +152,22 @@ export default function ConversationHistoryModal({ open, onClose, onOpenConversa
                                         {opening === c.conversation_id
                                             ? <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0" />
                                             : <MessageSquare className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
-                                        <div className="min-w-0">
-                                            <p className="text-[11px] text-slate-300 truncate">{c.title || 'Untitled conversation'}</p>
-                                            <p className="text-[10px] text-slate-500">{formatRelativeDate(c.updated_at)}</p>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                                <p className="text-[11px] text-slate-300 truncate">{c.title || 'Untitled conversation'}</p>
+                                                {c.message_count > 2 && (
+                                                    <span className="shrink-0 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-1.5 py-0.5">
+                                                        {Math.ceil(c.message_count / 2)} exchanges
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {c.last_question && c.last_question !== c.title && (
+                                                <p className="text-[10px] text-slate-400 truncate mt-0.5">Last asked: {c.last_question}</p>
+                                            )}
+                                            <p className="text-[10px] text-slate-500 mt-0.5">{formatRelativeDate(c.updated_at)}</p>
                                         </div>
                                     </div>
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-600 ml-1 shrink-0" />
                                     <button
                                         onClick={e => deleteConversation(c.conversation_id, e)}
                                         disabled={deleting === c.conversation_id}
