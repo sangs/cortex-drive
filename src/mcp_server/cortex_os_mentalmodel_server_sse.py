@@ -542,6 +542,43 @@ async def connect_knowledge_on_demand(
     finally:
         expert.close()
 
+@mcp.tool()
+async def infer_context_on_demand(
+    node_id: Optional[str] = Field(None, description="The node_id (UUID) or element_id of the node to explain."),
+    node_name: Optional[str] = Field(None, description="The 'name' property of the node (fallback). Partial names are matched via CONTAINS."),
+    query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Prioritizes facts about neighbors whose names match words in the question.")
+) -> str:
+    """
+    Explain WHY a node matters by reciting its structural position in the graph — the
+    relationships it participates in, the named entities on the other end, their types and
+    dates, and how central or peripheral it is. Use this when a node has no authored
+    narrative or description of its own (a bare Technology, Concept, or Topic), or when the
+    user asks "why does this matter", "why did this show up", or "what is this connected to".
+    Returns FACTS ONLY — a deterministic recitation, no interpretation. Phrase them naturally
+    in your answer but add nothing not present in `context_summary` / `context_facts`.
+    Reads only; writes nothing to Neo4j and adds nothing to the rendered graph.
+
+    Distinct from connect_knowledge_on_demand: that tool answers "how does A relate to B
+    across domains" (multi-hop, cross-domain, renders gold dashed bridge links). This tool
+    answers "what is A and why is it here" (1-hop, single node, renders nothing new).
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return expert.infer_context_on_demand(
+            node_id=node_id,
+            node_name=node_name,
+            query_context=query_context
+        )
+    except Exception as e:
+        print(f"Error in infer_context_on_demand: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
 # FastMCP exposes a starlette app for SSE via .sse_app()
 app = mcp.sse_app()
 

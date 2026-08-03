@@ -2488,6 +2488,22 @@ const mcpToolsDefinitions = [
                 required: ["source_node_name"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "infer_context_on_demand",
+            description: `Explain WHY a node matters by reciting its structural position in the graph — which relationships it participates in, the named entities on the other end (with types and dates), and how central it is. Use when a node has no authored narrative or description, or when the user asks "why does this matter", "why did this come up", "what is this connected to". Returns FACTS ONLY, no interpretation: cite context_summary and phrase it naturally, but state nothing not present in the result. Reads only — writes nothing to Neo4j and renders nothing new on the graph. Distinct from connect_knowledge_on_demand: that tool answers cross-domain "how does A relate to B" (multi-hop, gold dashed bridge lines); this tool answers single-node "what is A and why is it here" (1-hop, renders nothing new).`,
+            parameters: {
+                type: "object",
+                properties: {
+                    node_name: { type: "string", description: "The name of the node to explain." },
+                    node_id:   { type: "string", description: "The node_id or element_id of the node (optional, use with node_name)." },
+                    query_context: { type: "string", description: "The user's original question, verbatim." }
+                },
+                required: ["node_name"]
+            }
+        }
     }
 ];
 
@@ -2921,11 +2937,12 @@ app.post('/query', authMiddleware, async (req, res) => {
                         console.log('[QUERY] Career override: wants_visual_map→false for Q2 content fetch');
                     }
 
-                    // Cross-domain bridge query-aware ranking (2026-07-23): always supply the
-                    // user's original question as query_context, overriding anything the LLM
-                    // passed. Deterministic — doesn't depend on the LLM remembering to pass it,
-                    // same rationale as the wants_visual_map override above (AP-20 pattern).
-                    if (toolName === 'connect_knowledge_on_demand') {
+                    // Cross-domain bridge query-aware ranking (2026-07-23), and node-context
+                    // inference query-aware ranking (2026-08-03): always supply the user's
+                    // original question as query_context, overriding anything the LLM passed.
+                    // Deterministic — doesn't depend on the LLM remembering to pass it, same
+                    // rationale as the wants_visual_map override above (AP-20 pattern).
+                    if (toolName === 'connect_knowledge_on_demand' || toolName === 'infer_context_on_demand') {
                         toolArgs.query_context = question;
                     }
 
@@ -3322,6 +3339,7 @@ const mcpToolEndpoint = (toolName) => async (req, res) => {
 app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluster_context'));
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
+app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 
 // Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because
 // app.use() strips the full mount path before the middleware sees req.url, so

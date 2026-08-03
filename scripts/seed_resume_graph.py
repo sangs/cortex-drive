@@ -6,11 +6,18 @@ This script implements the "Double-Click to Expand" architecture and the
 "Private STAR Node" strategy (PreparatoryNote) for Sangeetha's portfolio.
 
 Date handling:
-  All dates sourced from documents/navigable_graph_resume/categories_and_projects.md.
+  All dates sourced from
+  documents/cortex-drive-documents/navigable_graph_resume/categories_and_projects.md.
   The date_utils module converts mm/yyyy strings to integer epoch properties
   (startEpoch, endEpoch) for reliable numeric sorting in Cypher queries.
-  See documents/navigable_graph_resume/timeline-and-date-parsing.md for the
-  full design rationale.
+  See documents/cortex-drive-documents/navigable_graph_resume/timeline-and-date-parsing.md
+  for the full design rationale.
+
+  Note: STAR (Situation/Task/Action/Result) note text below is manually
+  distilled from the raw narratives in documents/cortex-drive-documents/
+  navigable_graph_resume/ (categories_and_projects.md and the star_*.md
+  files) — this script does not read those files programmatically. If the
+  source narrative changes, the STAR text below must be updated by hand.
 """
 
 import sys
@@ -703,7 +710,8 @@ TOOL USAGE:
 # startEpoch, endEpoch, isPresent, displayDate, startYear, endYear from
 # relationship edges (source of truth) onto the connected nodes (cache).
 # This is a denormalization step for efficient querying — the relationship
-# is always the canonical source. See timeline-and-date-parsing.md.
+# is always the canonical source. See documents/cortex-drive-documents/
+# navigable_graph_resume/timeline-and-date-parsing.md.
 # ===========================================================================
 
 def _build_epoch_cypher(rel_type: str, node_label: str) -> str:
@@ -853,7 +861,8 @@ def seed_resume_graph():
 
             # Guard: Remove the historically incorrect 06/2021-07/2025 relationship
             # on "Open-Source AI Agents" that was inherited from Ignite's dates.
-            # This node was correctly re-dated to 05/2025-07/2025 per categories_and_projects.md.
+            # This node was correctly re-dated to 05/2025-07/2025 per
+            # documents/cortex-drive-documents/navigable_graph_resume/categories_and_projects.md.
             session.run(
                 """
                 MATCH (a)-[rel:CONTRIBUTED_TO]->(n)

@@ -130,11 +130,24 @@ class ExpertTools:
         return query.replace("{whitelist}", whitelist).replace("{security_clause}", self._get_security_clause("neighbor")).replace("{bridge_labels}", bridge_labels)
 
     def _fragment_narrative_aggregation(self) -> str:
+        # NOTE (2026-08-03): `:Note`/`HAS_NOTE` are never created anywhere in this codebase —
+        # this OPTIONAL MATCH always returns an empty `narratives` collection today. Confirmed
+        # non-load-bearing: the real narrative consumer, fetchNodeNarratives() in the gateway,
+        # calls get_node_details directly (which correctly uses HAS_PRIVATE_NOTE/PreparatoryNote),
+        # not this field. Left intentionally untouched rather than "fixed" to alias
+        # PreparatoryNote — investigation (see documents/cortex_master_implementation_tracker.md
+        # and documents/security/permission-graph-design.md §"Annotations & Private Context")
+        # suggests this is likely inert scaffolding for a different, broader, never-built
+        # feature — any user annotating any node — not a typo for the single-author STAR-note
+        # PreparatoryNote system that actually shipped. Do not alias the two; if the annotation
+        # feature is ever built, it deserves its own node type and its own Permify-based
+        # security design (the superseded doc's topological security model doesn't survive the
+        # OpenFGA/Permify migration).
         query = """
         // 2. Narrative Enrichment (Notes & Transcripts)
         OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
         WHERE ({sec_note})
-        
+
         WITH node, expanded_ids, neighbors, rels, relationships, technologies, relDates,
              collect(DISTINCT note.text) AS narratives,
              apoc.coll.toSet(coalesce(node.links, []) + [node.url, node.link]) AS fused_links
@@ -985,12 +998,24 @@ class ExpertTools:
     def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """
         Fetch all properties and labels for a specific node by its stable node_id UUID or name.
+
+        Also populates a COMBINED narrative (2026-08-03): authored PreparatoryNote content
+        (via `narratives`, unchanged) AND, separately, inferred structural context via
+        infer_context_on_demand's helpers — shown together, not as a fallback chain. An
+        authored note explains intent; inferred structural facts corroborate it with graph
+        evidence. Neither supersedes the other. Category nodes get neither (structural nodes
+        don't have a distinct narrative — same guard already applied to the PreparatoryNote
+        traversal below).
         """
+        from domain_registry import get_bridge_label_string
+        bridge_labels = get_bridge_label_string()
+        sec_m = self._get_security_clause("m")
+
         query = """
         MATCH (n)
         WHERE (n.node_id = $node_id OR toLower(n.name) = toLower($node_name))
           AND (""" + self._get_security_clause("n") + """)
-        
+
         OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)
         OPTIONAL MATCH (n)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)
@@ -1010,6 +1035,8 @@ class ExpertTools:
                narratives,
                guests,
                n.node_id AS node_id,
+               elementId(n) AS element_id,
+               COUNT { (n)--(m) WHERE NOT m:""" + bridge_labels + """ AND (""" + sec_m + """) } AS degree,
                coalesce(n.name, n.title, n.text, n.url, labels[0]) AS display_name
         LIMIT 1
         """
@@ -1019,15 +1046,39 @@ class ExpertTools:
             node_id=node_id,
             node_name=node_name,
         )
-        
+
         if not result.records:
             return json.dumps({"error": "Node not found or access denied."})
-            
+
         data = result.records[0].data()
         # Apply Python Sanitizer to Narratives
         if data.get("narratives"):
             data["narratives"] = [self._sanitize_narrative(n) for n in data["narratives"] if n]
-            
+
+        # Combined inferred structural context (2026-08-03) — always attempted alongside the
+        # authored narrative above, unless the node is structural (Category). Deliberately a
+        # SEPARATE top-level field, never merged into `narratives` — narratives feeds the Q2
+        # writer's biographer prompt ("using ONLY the narrative provided"); collapsing derived
+        # structural facts into it would have that prompt narrate them as if authored.
+        labels_list = data.get("labels") or []
+        if "Category" not in labels_list:
+            try:
+                keywords = set()
+                facts = self._collect_context_facts(data["element_id"], keywords)
+                if facts:
+                    node_row = {
+                        "name": data.get("display_name"),
+                        "labels": labels_list,
+                        "degree": data.get("degree") or 0,
+                    }
+                    data["context_summary"] = self._render_context_summary(node_row, facts, keywords)
+                    data["context_facts"] = facts
+                    data["context_tier"] = "inferred"
+                    data["context_provenance"] = "inferred_structural"
+            except Exception as e:
+                # Non-fatal — the authored narrative (if any) and placeholder fallback still work.
+                print(f"[get_node_details] inferred context collection failed (non-fatal): {e}")
+
         return neo4j_json_dumps([data], indent=2)
 
     def expand_node_topology(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
@@ -1831,6 +1882,9 @@ class ExpertTools:
     # Domain-specific additions to a plain English stopword list for _extract_bridge_keywords —
     # words that show up in nearly every Q3-style question ("decision trace", "how did X
     # influence Y") and would otherwise match too broadly to carry any relevance signal.
+    # Shared by both connect_knowledge_on_demand and infer_context_on_demand's query-aware
+    # ranking (2026-08-03) — both rank hops/neighbors by literal keyword match, so one
+    # stopword list serves both rather than duplicating it.
     _BRIDGE_QUERY_STOPWORDS = frozenset({
         "the", "a", "an", "of", "to", "and", "or", "is", "are", "was", "were", "did", "does",
         "do", "what", "how", "why", "when", "where", "who", "which", "this", "that", "these",
@@ -1841,9 +1895,10 @@ class ExpertTools:
 
     @classmethod
     def _extract_bridge_keywords(cls, query_context: Optional[str]) -> set:
-        """Lowercase word-level keywords from a free-text query, for connect_knowledge_on_demand's
-        query-aware ranking. Literal matching only (no stemming/embeddings) — see the
-        query_context docstring on connect_knowledge_on_demand for why."""
+        """Lowercase word-level keywords from a free-text query — shared query-aware ranking
+        helper for connect_knowledge_on_demand and infer_context_on_demand. Literal matching
+        only (no stemming/embeddings) — see the query_context docstring on
+        connect_knowledge_on_demand for why."""
         if not query_context:
             return set()
         words = re.findall(r"[a-zA-Z]{2,}", query_context.lower())
@@ -1933,6 +1988,249 @@ class ExpertTools:
                     heapq.heappush(heap, (nd, neighbor))
 
         return found
+
+    def _resolve_context_node(self, node_id: Optional[str], node_name: Optional[str]) -> Optional[dict]:
+        """Resolve a single node for infer_context_on_demand. Accepts both n.node_id (UUID,
+        as used by get_node_details) and elementId (as used by connect_knowledge_on_demand) —
+        existing callers disagree on which one they pass, so this accepts either.
+
+        Empty-string guards on $node_id/$node_name are deliberate: `n.name CONTAINS ""` is
+        true for every node in Cypher, so an unguarded CONTAINS clause with an absent param
+        would match arbitrarily. connect_knowledge_on_demand's source-resolution query has
+        this same latent issue and only survives it via match_rank ordering rescuing the
+        exact hit — guarded explicitly here instead of relying on that.
+        """
+        from domain_registry import get_bridge_label_string
+        bridge_labels = get_bridge_label_string()
+        sec_n = self._get_security_clause("n")
+        sec_m = self._get_security_clause("m")
+
+        query = f"""
+        MATCH (n)
+        WHERE NOT n:{bridge_labels}
+          AND (
+                ($node_id <> "" AND (n.node_id = $node_id OR elementId(n) = $node_id))
+             OR ($node_name <> "" AND toLower(n.name) = toLower($node_name))
+             OR ($node_name <> "" AND n.name CONTAINS $node_name)
+          )
+          AND ({sec_n})
+        RETURN elementId(n) AS element_id,
+               n.node_id AS node_id,
+               n.name AS name,
+               labels(n) AS labels,
+               COUNT {{ (n)--(m) WHERE NOT m:{bridge_labels} AND ({sec_m}) }} AS degree,
+               coalesce(n.displayDate,
+                        n.startDate + (CASE WHEN n.endDate IS NOT NULL THEN "-" + n.endDate ELSE "" END),
+                        n.date, toString(n.year), n.published_at, n.aired_date) AS display_date,
+               CASE WHEN ($node_id <> "" AND (n.node_id = $node_id OR elementId(n) = $node_id))
+                      OR ($node_name <> "" AND toLower(n.name) = toLower($node_name))
+                    THEN 0 ELSE 1 END AS match_rank
+        ORDER BY match_rank ASC, size(n.name) ASC
+        LIMIT 1
+        """
+        result = self._exec_query(
+            query,
+            **self._security_params(),
+            node_id=node_id or "",
+            node_name=node_name or "",
+        )
+        if not result.records:
+            return None
+        r = result.records[0]
+        return {
+            "element_id": r["element_id"],
+            "node_id": r["node_id"],
+            "name": r["name"],
+            "labels": r["labels"] or [],
+            "degree": r["degree"] or 0,
+            "display_date": r["display_date"],
+        }
+
+    def _collect_context_facts(self, element_id: str, keywords: set) -> list:
+        """1-hop structural facts for infer_context_on_demand, grouped by (relationship type,
+        direction), ranked by query-keyword match then ascending neighbor degree (same
+        hub-avoidance principle as connect_knowledge_on_demand's log-degree edge weight — a
+        specific, low-degree neighbor explains more than a generic hub), and hard-capped both
+        per group and across groups so a high-degree node cannot produce an unbounded payload.
+
+        NOT n:{bridge_labels} on the neighbor is security-relevant, not cosmetic: without it,
+        PreparatoryNote/Chunk content could surface to a viewer not authorized for it.
+        """
+        from domain_registry import get_bridge_label_string, get_context_caps
+        bridge_labels = get_bridge_label_string()
+        sec_m = self._get_security_clause("m")
+        per_cap, group_cap = get_context_caps()
+
+        query = f"""
+        MATCH (n) WHERE elementId(n) = $element_id
+        MATCH (n)-[r]-(m)
+        WHERE elementId(m) <> $element_id
+          AND NOT m:{bridge_labels}
+          AND m.name IS NOT NULL
+          AND ({sec_m})
+
+        WITH type(r) AS rel_type,
+             CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END AS direction,
+             m.name AS neighbor_name,
+             labels(m) AS neighbor_labels,
+             COUNT {{ (m)--() }} AS neighbor_degree,
+             coalesce(m.displayDate,
+                      m.startDate + (CASE WHEN m.endDate IS NOT NULL THEN "-" + m.endDate ELSE "" END),
+                      m.date, toString(m.year), m.published_at, m.aired_date) AS neighbor_date,
+             CASE WHEN size($keywords) > 0
+                   AND any(k IN $keywords WHERE toLower(coalesce(m.name, '')) CONTAINS k)
+                  THEN 0 ELSE 1 END AS kw_rank
+
+        ORDER BY kw_rank ASC, neighbor_degree ASC, neighbor_name ASC, rel_type ASC
+
+        WITH rel_type, direction,
+             collect({{ name: neighbor_name,
+                        type: neighbor_labels[0],
+                        labels: neighbor_labels,
+                        degree: neighbor_degree,
+                        date: neighbor_date,
+                        keyword_match: kw_rank = 0 }})[0..{per_cap}] AS neighbors,
+             count(*) AS total_count,
+             min(kw_rank) AS best_kw_rank,
+             min(neighbor_degree) AS best_degree
+
+        RETURN rel_type AS relationship, direction, total_count, neighbors
+        ORDER BY best_kw_rank ASC, best_degree ASC, relationship ASC, direction ASC
+        LIMIT {group_cap}
+        """
+        result = self._exec_query(
+            query,
+            **self._security_params(),
+            element_id=element_id,
+            keywords=sorted(keywords) if keywords else [],
+        )
+        return [
+            {
+                "relationship": rec["relationship"],
+                "direction": rec["direction"],
+                "total_count": rec["total_count"],
+                "neighbors": rec["neighbors"],
+            }
+            for rec in result.records
+        ]
+
+    def _render_context_summary(self, node_row: dict, facts: list, keywords: set) -> str:
+        """Deterministic f-string recitation of structural facts — no LLM call, exactly like
+        connect_knowledge_on_demand's bridge_summary. Phrasing into fuller natural-language
+        prose (if wanted) happens downstream, by whatever LLM consumes this — never here."""
+        from domain_registry import CONTEXT_HUB_DEGREE_THRESHOLD
+
+        name = node_row.get("name") or "This node"
+        ntype = (node_row.get("labels") or ["Node"])[0]
+        degree = node_row.get("degree", 0)
+
+        if not facts:
+            return (
+                f"No connections visible in your authorized view for '{name}' ({ntype}), "
+                f"and no narrative context is recorded for it."
+            )
+
+        is_hub = degree >= CONTEXT_HUB_DEGREE_THRESHOLD
+        parts = []
+        if is_hub:
+            parts.append(
+                f"{ntype} '{name}' is a high-connectivity landmark with {degree} connection(s) "
+                f"visible in your authorized view; the most specific among them:"
+            )
+        else:
+            parts.append(
+                f"{ntype} '{name}' has {degree} connection(s) visible in your authorized view."
+            )
+
+        for group in facts:
+            neighbor_strs = []
+            for n in group["neighbors"]:
+                date_part = f", {n['date']}" if n.get("date") else ""
+                neighbor_strs.append(f"'{n['name']}' ({n['type']}{date_part})")
+            joined = ", ".join(neighbor_strs)
+            direction_word = "Incoming" if group["direction"] == "incoming" else "Outgoing"
+            connector = "from" if group["direction"] == "incoming" else "to"
+            total = group["total_count"]
+            suffix = f" — {total} total" if total > len(group["neighbors"]) else ""
+            parts.append(f"{direction_word} {group['relationship']} {connector} {joined}{suffix}.")
+
+        if keywords:
+            parts.append(f"Prioritized by match with: {', '.join(sorted(keywords))}.")
+
+        return "Inferred from graph structure — no authored narrative exists for this node. " + " ".join(parts)
+
+    def infer_context_on_demand(
+        self,
+        node_id: Optional[str] = None,
+        node_name: Optional[str] = None,
+        query_context: Optional[str] = None,
+    ) -> str:
+        """
+        Explain WHY a node matters by reciting its structural position in the graph — the
+        relationships it participates in, the named entities on the other end, their types
+        and dates, and how central or peripheral it is. Use this when a node has no authored
+        narrative or description of its own (a bare Technology, Concept, or Topic), or when
+        the user asks "why does this matter", "why did this show up", or "what is this
+        connected to".
+
+        Returns FACTS ONLY — a deterministic Cypher-computed recitation, exactly like
+        connect_knowledge_on_demand's bridge_summary. No LLM call happens in this method.
+        Callers may phrase these facts in natural language but must not state intent,
+        motivation, causation, or significance that is not literally present in the facts.
+
+        query_context (optional): the user's original question, verbatim. Reuses
+        _extract_bridge_keywords() — a hop into a neighbor whose name literally matches a
+        keyword from this text is prioritized in the returned facts, same query-aware
+        ranking rationale as connect_knowledge_on_demand.
+
+        Zero-write guarantee: nothing is persisted to Neo4j. Deliberately returns no
+        `nodes`/`links`/`virtual_links` keys — this never extends the rendered graph, only
+        explains what is already there.
+        """
+        if not node_id and not node_name:
+            return json.dumps({"error": "node_id or node_name is required"})
+
+        try:
+            node_row = self._resolve_context_node(node_id, node_name)
+            if not node_row:
+                return json.dumps({
+                    "node": None,
+                    "context_facts": [],
+                    "context_tier": "none",
+                    "provenance": "inferred_structural",
+                    "context_summary": f"No node found matching '{node_name or node_id}'.",
+                })
+
+            keywords = self._extract_bridge_keywords(query_context)
+            facts = self._collect_context_facts(node_row["element_id"], keywords)
+
+            from domain_registry import CONTEXT_HUB_DEGREE_THRESHOLD
+            degree = node_row.get("degree", 0)
+            hub_tier = "landmark" if degree >= CONTEXT_HUB_DEGREE_THRESHOLD else "specific"
+            context_tier = "inferred" if facts else "sparse"
+            summary = self._render_context_summary(node_row, facts, keywords)
+
+            return json.dumps({
+                "node": {
+                    "name": node_row["name"],
+                    "type": (node_row["labels"] or ["Node"])[0],
+                    "labels": node_row["labels"],
+                    "node_id": node_row["node_id"],
+                    "element_id": node_row["element_id"],
+                    "degree": degree,
+                    "display_date": node_row.get("display_date"),
+                },
+                "context_facts": facts,
+                "matched_keywords": sorted(keywords) if keywords else [],
+                "hub_tier": hub_tier,
+                "context_tier": context_tier,
+                "provenance": "inferred_structural",
+                "context_summary": summary,
+            }, indent=2)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return json.dumps({"error": str(e)})
 
     def get_composition_subtree(self, root_node_id: str, max_depth: int = 5) -> dict:
         """BFS over COMPOSITION_RELATIONSHIPS to compute the subtree of a root node.
