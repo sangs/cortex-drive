@@ -21,6 +21,22 @@ def get_bridge_limit(requested: int = None) -> int:
 # making the hub-degree penalty (base weight) disappear entirely.
 BRIDGE_RELEVANCE_DISCOUNT = float(os.environ.get("BRIDGE_RELEVANCE_DISCOUNT", "0.4"))
 
+# infer_context_on_demand structural-fact caps (2026-08-03). Env-var configurable for the same
+# reason as BRIDGE_DEFAULT_LIMIT/BRIDGE_MAX_LIMIT — bounds how much of a node's neighborhood a
+# single request can return, regardless of the node's actual degree.
+CONTEXT_PER_RELATION_CAP = int(os.environ.get("CONTEXT_PER_RELATION_CAP", "4"))
+CONTEXT_RELATION_GROUP_CAP = int(os.environ.get("CONTEXT_RELATION_GROUP_CAP", "5"))
+# A node at or above this degree is framed as a "landmark" (its centrality IS the story) rather
+# than having its neighbors enumerated as if that were exhaustive.
+CONTEXT_HUB_DEGREE_THRESHOLD = int(os.environ.get("CONTEXT_HUB_DEGREE_THRESHOLD", "25"))
+
+def get_context_caps(per_relation: int = None, relation_group: int = None) -> tuple:
+    """Clamp caller-supplied infer_context_on_demand caps to sane bounds, mirroring
+    get_bridge_limit(). Falls back to the CONTEXT_* defaults when not specified."""
+    per = per_relation if per_relation else CONTEXT_PER_RELATION_CAP
+    group = relation_group if relation_group else CONTEXT_RELATION_GROUP_CAP
+    return max(1, min(per, 10)), max(1, min(group, 15))
+
 # Centralized Label Registry
 DISCOVERY_LABELS = [
     "Project", "Role", "Company", "Person", "Hackathon", "ThoughtLeadership", 

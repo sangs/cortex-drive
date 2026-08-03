@@ -260,6 +260,12 @@ export default function GraphViewPage() {
                         technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                         links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                         guests: payload.guests || [],
+                        // Inferred structural context (2026-08-03) — complementary to `text` above,
+                        // not a replacement. Rendered as a separate labeled block in BentoDetailPanel.
+                        ...(payload.context_summary ? {
+                            context_summary: payload.context_summary,
+                            context_provenance: payload.context_provenance
+                        } : {})
                     };
                     bentoCache.current.set(cacheKey, hydrated);
                     setSelectedNode((prev: any) => {
