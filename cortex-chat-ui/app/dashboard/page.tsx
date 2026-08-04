@@ -190,6 +190,15 @@ export default function DashboardPage() {
             const nodes = existingData ? [...existingData.nodes] : [];
             const links = existingData ? [...existingData.links] : [];
 
+            // Identity key for recognizing "is this the same entity" across separate fetches
+            // (e.g. a node re-queried after a historical conversation snapshot was reloaded).
+            // Prefers node_id (the stable UUID) over id (elementId) — elementId is a
+            // Neo4j-internal identifier not guaranteed durable across a database restore or
+            // node recycling, so matching on it alone can misidentify the same entity as new
+            // and render a duplicate node. Only for node-identity dedup — links still key off
+            // elementId (source/target), which is correct and left unchanged.
+            const nodeKey = (n: any) => n.node_id || n.id;
+
             // Helper to decide if a node should even be added in backbone-only mode
             const allowedSet = backboneSet || new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]);
             const isAllowed = (nodeType: string) => {
@@ -231,7 +240,7 @@ export default function DashboardPage() {
                     if (GRAPH_VISUAL_EXCLUDE.has(n.type)) return;
                     if (!isAllowed(n.type)) return;
                     allowedIds.add(n.id);
-                    const existingIdx = nodes.findIndex(node => node.id === n.id);
+                    const existingIdx = nodes.findIndex(node => nodeKey(node) === nodeKey(n));
                     if (existingIdx === -1) nodes.push(n);
                     else nodes[existingIdx] = { ...nodes[existingIdx], ...n };
                 });
@@ -299,7 +308,7 @@ export default function DashboardPage() {
                 if (!node.id || GRAPH_VISUAL_EXCLUDE.has(node.type)) return null;
                 if (!isAllowed(node.type)) return null; // Backbone-only filter
 
-                const existingIndex = nodes.findIndex(n => n.id === node.id);
+                const existingIndex = nodes.findIndex(n => nodeKey(n) === nodeKey(node));
                 if (existingIndex === -1) {
                     nodes.push(node);
                     return true;
@@ -628,7 +637,17 @@ export default function DashboardPage() {
     }) => {
         try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
         setMessages(conversation.messages.map(m => ({ role: m.role, content: m.content })));
-        setGraphData(conversation.latest_graph_snapshot || { nodes: [], links: [] });
+        // latest_graph_snapshot is the RAW, unenriched accumulatedGraph (same shape as the live
+        // query path's raw_data) — it must go through the same parseDataToGraph/domainToBackbone
+        // transform the live path always applies (affordance flags, category-child hiding,
+        // identity-anchor detection, dedup, virtual_links merged into links with styling), or the
+        // graph renders using none of that and looks broken/incoherent (2026-08-04 bug fix).
+        if (conversation.latest_graph_snapshot) {
+            const { backbone, backboneOnly } = domainToBackbone(conversation.domain_signal ?? undefined, conversation.latest_graph_snapshot);
+            setGraphData(parseDataToGraph(conversation.latest_graph_snapshot, undefined, backboneOnly, backbone));
+        } else {
+            setGraphData({ nodes: [], links: [] });
+        }
         if (conversation.domain_signal) setDomainSignal(conversation.domain_signal);
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
