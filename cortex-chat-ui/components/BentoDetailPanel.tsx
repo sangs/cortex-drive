@@ -201,7 +201,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 Disparity discovery: trace the shortest connected path (via any relationship) across disparate silos (Resume ↔ Podcast).
             </p>
             <button
-                onClick={() => onDiscoverBridge?.(node.id || node.name)}
+                onClick={() => onDiscoverBridge?.(node.node_id || node.id || node.name)}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500/40 text-white transition-all font-bold text-xs uppercase tracking-widest shadow-lg shadow-indigo-600/10"
             >
                 Trigger Bridge Discovery

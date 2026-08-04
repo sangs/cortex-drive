@@ -1424,10 +1424,8 @@ class ExpertTools:
         Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
         Uses Progressive Discovery (Backbone-First) and Domain Masking to maintain scalability and clarity.
         """
-        # Accept node_id as an alias for node_name (GPT-4o sometimes passes node_id)
-        node_name = node_name or node_id
-        if not node_name:
-            return json.dumps({"error": "node_name is required"})
+        if not node_name and not node_id:
+            return json.dumps({"error": "node_name or node_id is required"})
         safe_depth = max(1, min(depth, 2))
         
         # 1. Progressive Discovery Filter
@@ -1448,10 +1446,17 @@ class ExpertTools:
         from domain_registry import get_discovery_label_string, get_bridge_label_string, get_visual_deny_list
         bridge_labels = get_bridge_label_string()
 
-        # Identify the node by name or elementId
+        # Identify the node by node_id (UUID, preferred — durable across a Neo4j
+        # restore/recycle event, unlike elementId), elementId (backward compatibility), or
+        # name. Kept as two separate guarded parameters — not aliased into one — so a caller
+        # that supplies both doesn't have the ID-based match silently discarded, and so the
+        # Cypher text itself documents which parameter means what.
         query = """
         MATCH (n)
-        WHERE (elementId(n) = $node_name OR toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name)
+        WHERE (
+              ($node_id <> "" AND (n.node_id = $node_id OR elementId(n) = $node_id))
+           OR ($node_name <> "" AND (toLower(n.name) = toLower($node_name) OR n.name CONTAINS $node_name))
+        )
           AND ({sec_n})
           AND NOT n:{bridge_labels}
         
@@ -1563,7 +1568,8 @@ class ExpertTools:
             result = self._exec_query(
                 query,
                 **self._security_params(),
-                node_name=node_name,
+                node_id=node_id or "",
+                node_name=node_name or "",
                 backbone_labels_list=backbone_labels_list,
                 authorized_labels=authorized_labels,
                 keyword="",
@@ -1573,7 +1579,7 @@ class ExpertTools:
                 owner_id=os.environ.get("OWNER_USER_ID")
             )
             if not result.records:
-                return json.dumps({"error": f"Node '{node_name}' not found."})
+                return json.dumps({"error": f"Node '{node_name or node_id}' not found."})
             
             record = result.records[0]
             return json.dumps({
@@ -1602,6 +1608,12 @@ class ExpertTools:
         node in the requested domain, within the security/domain-authorized subgraph.
         Path weight applies a logarithmic, tenant-agnostic penalty for high-degree hub
         nodes (e.g. "AI") so generic landmarks don't dominate every bridge.
+
+        source_node_id (2026-08-03): accepts either the stable node_id UUID (preferred)
+        or elementId (accepted for backward compatibility with existing callers). Prefer
+        node_id — elementId is a Neo4j-internal identifier not guaranteed durable across
+        a database restore or node recycling; node_id is the app-managed UUID meant for
+        any reference that outlives a single request.
 
         min_anchors is accepted for MCP tool-schema backward compatibility but is a
         no-op — bridges are single weighted paths now, not anchor-count matches.
@@ -1666,15 +1678,21 @@ class ExpertTools:
             # paraphrased name (a bare exact-match lookup silently returns nothing if the LLM
             # doesn't pass the literal node name). Bridge-label nodes excluded so a fuzzy match
             # can't resolve to a Chunk/PreparatoryNote/etc. (AP-19).
+            # Accepts both the stable node_id UUID (preferred — elementId is not guaranteed
+            # durable across a Neo4j restore/recycle event, see
+            # documents/architecture/node-context-inference-2026-08-03.md) and elementId (for
+            # backward compatibility with existing callers that still pass it).
             source_query = f"""
             MATCH (source)
             WHERE NOT source:{bridge_labels}
-              AND (elementId(source) = $source_node_id
+              AND (source.node_id = $source_node_id
+                   OR elementId(source) = $source_node_id
                    OR toLower(source.name) = toLower($source_node_name)
                    OR source.name CONTAINS $source_node_name)
               AND ({sec_source_read})
             RETURN elementId(source) AS source_eid, source.name AS source_name,
-                   CASE WHEN elementId(source) = $source_node_id
+                   CASE WHEN source.node_id = $source_node_id
+                          OR elementId(source) = $source_node_id
                           OR toLower(source.name) = toLower($source_node_name)
                         THEN 0 ELSE 1 END AS match_rank
             ORDER BY match_rank ASC, size(source.name) ASC

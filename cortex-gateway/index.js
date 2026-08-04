@@ -2479,7 +2479,7 @@ const mcpToolsDefinitions = [
                 type: "object",
                 properties: {
                     source_node_name: { type: "string", description: "The name of the source node to find bridges from." },
-                    source_node_id: { type: "string", description: "The element_id of the source node (optional, use with source_node_name)." },
+                    source_node_id: { type: "string", description: "The node_id (UUID, preferred) or elementId of the source node (optional, use with source_node_name)." },
                     target_domain: { type: "string", enum: ["podcast", "professional", "all"], default: "all", description: "The domain to search for bridge targets in." },
                     min_anchors: { type: "integer", default: 1, description: "Accepted for backward compatibility; no longer used (bridges are single weighted paths, not anchor-count matches)." },
                     limit: { type: "integer", default: BRIDGE_DEFAULT_LIMIT, description: `Max number of bridge targets to return. Default ${BRIDGE_DEFAULT_LIMIT} (env-var configurable), capped at ${BRIDGE_MAX_LIMIT}.` },

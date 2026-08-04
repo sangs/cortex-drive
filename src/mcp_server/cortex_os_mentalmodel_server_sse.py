@@ -470,14 +470,14 @@ async def hybrid_discovery_tool(
 
 @mcp.tool()
 async def get_cluster_context(
-    node_id: Optional[str] = Field(None, description="The unique element_id of the node to expand."),
+    node_id: Optional[str] = Field(None, description="The node_id (UUID, preferred) or elementId of the node to expand."),
     node_name: Optional[str] = Field(None, description="The 'name' property of the node (fallback)."),
     depth: Optional[int] = Field(1, description="The distance to traverse (1 for immediate neighbors, 2 for extended context). Default 1."),
     backbone_only: bool = Field(False, description="If true, only returns high-level landmarks (Companies, Categories, Hubs)."),
     domain: str = Field("all", description="The domain to filter results by: 'professional', 'podcast', or 'all'. Default 'all'.")
 ) -> str:
     """
-    Fetch the semantic neighbors and relationships for a specific node by its element_id or name.
+    Fetch the semantic neighbors and relationships for a specific node by its node_id, elementId, or name.
     Use this for Directed Autonomy to proactively discover related nodes and hidden context.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
@@ -495,7 +495,7 @@ async def get_cluster_context(
 
 @mcp.tool()
 async def connect_knowledge_on_demand(
-    source_node_id: Optional[str] = Field(None, description="The unique element_id of the source node."),
+    source_node_id: Optional[str] = Field(None, description="The node_id (UUID, preferred) or elementId of the source node."),
     source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),
     target_domain: str = Field("all", description="Domain to bridge INTO: 'podcast', 'professional', or 'all'."),
     min_anchors: int = Field(1, description="Accepted for backward compatibility; no longer used (bridges are single weighted paths, not anchor-count matches)."),
