@@ -17,7 +17,10 @@ from domain_registry import (
 
 class TestInferContextOnDemand(unittest.TestCase):
     """Covers the infer_context_on_demand tool (2026-08-03) and its combined-narrative
-    wiring into get_node_details. See documents/architecture/node-context-inference-2026-08-03.md."""
+    wiring into get_node_details. See documents/architecture/node-context-inference-2026-08-03.md
+    and its 2026-08-06 addendum (§5) — the original 'never merge authored + inferred content'
+    decision was reversed; get_node_details now also returns `combined_narrative`, which merges
+    them into one string with inline 'Authored:'/'Inferred from graph:' labels."""
 
     @classmethod
     def setUpClass(cls):
@@ -118,6 +121,9 @@ class TestInferContextOnDemand(unittest.TestCase):
         if has_narrative:
             self.assertTrue(has_context, "Authored narrative present but context_summary missing — "
                                           "should be combined, not either/or.")
+            self.assertIn("Authored:", details.get("combined_narrative") or "",
+                          "Authored narrative present but combined_narrative is missing the "
+                          "'Authored:' label.")
 
         # Category nodes must get neither (structural nodes have no distinct narrative).
         cluster = json.loads(self.expert.get_cluster_context(self.probe_node, depth=2))
@@ -131,38 +137,95 @@ class TestInferContextOnDemand(unittest.TestCase):
             print("  (no Category node found in probe cluster — skipping Category-exclusion check)")
         print("✓ Combined narrative wiring asserted.")
 
-    def test_06_no_narrative_contamination(self):
-        """ASSERT: context_summary text never appears inside narratives — guards the Q2
-        writer's biographer prompt from narrating inferred facts as if authored."""
-        print("\n[TDD] Testing narrative/context provenance separation...")
+    def test_06_combined_narrative_contains_labeled_sections(self):
+        """ASSERT: combined_narrative merges authored + inferred content with inline
+        'Authored:'/'Inferred from graph:' labels, in that order, when both exist —
+        the 2026-08-06 reversal of the original never-merge decision. The raw `narratives`
+        field itself must stay authored-only, untouched by the merge, since it's still
+        consulted directly by other callers. Guards the Q2 writer's biographer prompt,
+        which is now instructed to treat the two labeled sections differently rather than
+        relying on structural separation between fields."""
+        print("\n[TDD] Testing combined_narrative labeled-section contract...")
         details = json.loads(self.expert.get_node_details(node_name="Cortex-Drive"))[0]
         context_summary = details.get("context_summary")
         narratives = details.get("narratives") or []
+        combined = details.get("combined_narrative") or ""
+
         if context_summary and narratives:
+            self.assertIn("Authored:", combined, "combined_narrative missing 'Authored:' label.")
+            self.assertIn("Inferred from graph:", combined, "combined_narrative missing 'Inferred from graph:' label.")
+            self.assertLess(combined.index("Authored:"), combined.index("Inferred from graph:"),
+                             "'Authored:' section must precede 'Inferred from graph:' section.")
             for n in narratives:
-                self.assertNotIn(context_summary, n, "context_summary leaked verbatim into an authored narrative.")
-            joined_narratives = "\n".join(narratives)
-            self.assertNotIn(joined_narratives, context_summary, "An authored narrative leaked verbatim into context_summary.")
-            print("✓ Provenance separation asserted (both present, neither contains the other).")
+                self.assertIn(n, combined, "Authored narrative text missing from combined_narrative.")
+                self.assertNotIn("Inferred from graph:", n, "Inferred label leaked into the raw narratives field.")
+            print("✓ Labeled-section contract asserted (both present, ordered, authored text preserved, raw field untouched).")
         else:
-            print("  (no combined case available for this node — provenance separation only checkable when both exist)")
+            print("  (no combined case available for this node — labeled-section contract only checkable when both exist)")
+
+    def test_08_combined_narrative_no_note_is_inferred_only(self):
+        """ASSERT: for a node with no authored PreparatoryNote but visible structural
+        neighbors, combined_narrative is inferred-content-only — no empty 'Authored:'
+        header — and stands in as the narrative itself rather than being suppressed or
+        shown only as a secondary block (2026-08-06 requirement: no-note nodes get the
+        inferred neighbor scan AS their narrative)."""
+        print("\n[TDD] Testing combined_narrative fallback-to-inferred-only (no authored note)...")
+        cluster = json.loads(self.expert.get_cluster_context(self.probe_node, depth=2))
+        candidates = [n["name"] for n in cluster.get("nodes", [])
+                      if n.get("type") in ("Technology", "Concept", "Topic")]
+        found = False
+        for name in candidates:
+            details = json.loads(self.expert.get_node_details(node_name=name))[0]
+            if details.get("error") or details.get("narratives"):
+                continue
+            combined = details.get("combined_narrative")
+            if not combined:
+                continue
+            self.assertNotIn("Authored:", combined,
+                              f"'{name}' has no authored narrative but combined_narrative contains "
+                              f"an 'Authored:' header — should be inferred-only.")
+            self.assertIn("Inferred from graph:", combined,
+                          f"'{name}' has structural facts but combined_narrative is missing the "
+                          f"'Inferred from graph:' label.")
+            found = True
+            print(f"✓ '{name}': no-note case produces inferred-only combined_narrative.")
+            break
+        if not found:
+            print("  (no no-note-but-has-facts candidate found in probe cluster — skipping)")
+
+    def test_09_combined_narrative_sparse_wording_fallback(self):
+        """ASSERT: _render_combined_narrative with no authored content and no facts falls
+        through to the same viewer-relative sparse wording _render_context_summary uses —
+        never an absolute 'has no connections' claim, and no empty labels."""
+        print("\n[TDD] Testing combined_narrative sparse-wording fallback...")
+        node_row = {"name": "Isolated Test Node", "labels": ["Concept"], "degree": 0}
+        combined = self.expert._render_combined_narrative([], node_row, [], set())
+        self.assertIn("visible in your authorized view", combined)
+        self.assertNotIn("has no connections", combined.lower())
+        self.assertNotIn("Authored:", combined)
+        self.assertNotIn("Inferred from graph:", combined)
+        print("✓ Sparse-wording fallback asserted for combined_narrative.")
 
     def test_07_no_llm_call_in_layer(self):
         """ASSERT: infer_context_on_demand and its helpers contain zero LLM call sites —
-        this layer computes facts only; phrasing happens downstream in the gateway."""
+        this layer computes facts only; phrasing happens downstream in the gateway. Extended
+        2026-08-06 to cover the new combined_narrative helpers, which must carry the same
+        deterministic-only guarantee."""
         print("\n[TDD] Testing no-LLM-call architectural constraint...")
         methods = [
             ExpertTools.infer_context_on_demand,
             ExpertTools._resolve_context_node,
             ExpertTools._collect_context_facts,
             ExpertTools._render_context_summary,
+            ExpertTools._render_fact_sentences,
+            ExpertTools._render_combined_narrative,
         ]
         forbidden = ["chat.completions", "openai.", "ChatCompletion"]
         for m in methods:
             src = inspect.getsource(m)
             for token in forbidden:
                 self.assertNotIn(token, src, f"Forbidden LLM call token '{token}' found in {m.__name__}.")
-        print("✓ No-LLM-call constraint asserted across all 4 methods.")
+        print(f"✓ No-LLM-call constraint asserted across all {len(methods)} methods.")
 
     @classmethod
     def tearDownClass(cls):

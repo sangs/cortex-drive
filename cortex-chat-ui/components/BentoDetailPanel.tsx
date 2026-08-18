@@ -426,33 +426,31 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
 
                             {resourceGallery}
 
-                            {/* Narrative — authored text and inferred structural context are complementary,
-                                shown together (2026-08-03), not an either/or fallback chain. An authored
-                                note explains intent; inferred context corroborates it with graph evidence. */}
+                            {/* Narrative — authored content and inferred structural context are merged
+                                server-side into one string with inline "Authored:"/"Inferred from graph:"
+                                labels (combined_narrative, 2026-08-06 — see
+                                documents/architecture/node-context-inference-2026-08-03.md §5 addendum).
+                                Rendered as plain paragraphs; the labels appear as literal text rather than
+                                being parsed into separate styled blocks, so this stays uncoupled from the
+                                backend's exact wording/format. */}
                             <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
                                 <div className="flex items-center gap-3 text-rose-400">
                                     <MessageSquare className="w-4 h-4" />
                                     <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
                                 </div>
                                 <div className="text-slate-100 text-sm leading-relaxed space-y-3">
-                                    {node.text ? (
+                                    {node.combined_narrative ? (
+                                        node.combined_narrative.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
+                                    ) : node.text ? (
                                         node.text.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
-                                    ) : !node.context_summary ? (
+                                    ) : (
                                         <p className="italic text-slate-500">
                                             {node.persona === 'structural'
                                                 ? 'Structure nodes organize relationships; they do not contain distinct narratives.'
                                                 : 'Narrative context is available for deeper audit. Click below to explore source data.'}
                                         </p>
-                                    ) : null}
+                                    )}
                                 </div>
-                                {node.context_summary && (
-                                    <div className="pt-3 border-t border-white/10 flex flex-col gap-2">
-                                        <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400/80">
-                                            Graph Context — Inferred from graph structure
-                                        </span>
-                                        <p className="text-slate-300 text-sm leading-relaxed">{node.context_summary}</p>
-                                    </div>
-                                )}
                             </div>
 
                             {knowledgeBridge}

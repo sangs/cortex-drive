@@ -704,13 +704,17 @@ export default function DashboardPage() {
 
                     if (payload && !payload.error) {
                         const p = payload.properties || payload;
-                        const narratives = payload.narratives || (p.text ? [p.text] : (p.description ? [p.description] : []));
-                        // Only use hydrated description if it is richer than what we already have.
-                        const hydratedDesc = narratives.length > 0
-                            ? narratives.join('\n\n')
-                            : (p.description && p.description.length > (freshNode.description?.length ?? 0)
-                                ? p.description
-                                : undefined);
+                        // combined_narrative (2026-08-06) — authored PreparatoryNote content plus
+                        // inferred structural context, inline-labeled "Authored:"/"Inferred from
+                        // graph:". Preferred over the raw description fallback, since it's populated
+                        // for essentially every non-Category node now (see
+                        // documents/architecture/node-context-inference-2026-08-03.md §5 addendum).
+                        const hydratedDesc = payload.combined_narrative
+                            || (Array.isArray(payload.narratives) && payload.narratives.length > 0
+                                ? payload.narratives.join('\n\n')
+                                : (p.description && p.description.length > (freshNode.description?.length ?? 0)
+                                    ? p.description
+                                    : undefined));
                         const tech = payload.technologies || p.technologies || p.tech_stack || p.tools || freshNode.technologies;
                         const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
                         const directLinks = [p.link, p.url].filter(Boolean);

@@ -999,13 +999,19 @@ class ExpertTools:
         """
         Fetch all properties and labels for a specific node by its stable node_id UUID or name.
 
-        Also populates a COMBINED narrative (2026-08-03): authored PreparatoryNote content
-        (via `narratives`, unchanged) AND, separately, inferred structural context via
-        infer_context_on_demand's helpers — shown together, not as a fallback chain. An
-        authored note explains intent; inferred structural facts corroborate it with graph
-        evidence. Neither supersedes the other. Category nodes get neither (structural nodes
-        don't have a distinct narrative — same guard already applied to the PreparatoryNote
-        traversal below).
+        Also populates `combined_narrative` (2026-08-03; merge behavior reversed 2026-08-06 —
+        see documents/architecture/node-context-inference-2026-08-03.md §5 addendum): authored
+        PreparatoryNote content (`narratives`) and inferred structural context (via
+        infer_context_on_demand's helpers) are composed into one narrative string with inline
+        "Authored:"/"Inferred from graph:" labels, so a downstream consumer (e.g. the
+        career-domain biographer LLM prompt) can still tell directly-stated fact from
+        graph-derived inference apart even though they're now combined. When no authored
+        narrative exists, `combined_narrative` is inferred-content-only — it becomes the
+        narrative itself rather than being suppressed. `narratives`/`context_summary`/
+        `context_facts` remain separately populated too, unchanged, for consumers that want the
+        raw fields (e.g. a future "Explain this node" button). Category nodes get none of this
+        (structural nodes don't have a distinct narrative — same guard already applied to the
+        PreparatoryNote traversal below).
         """
         from domain_registry import get_bridge_label_string
         bridge_labels = get_bridge_label_string()
@@ -1055,26 +1061,31 @@ class ExpertTools:
         if data.get("narratives"):
             data["narratives"] = [self._sanitize_narrative(n) for n in data["narratives"] if n]
 
-        # Combined inferred structural context (2026-08-03) — always attempted alongside the
-        # authored narrative above, unless the node is structural (Category). Deliberately a
-        # SEPARATE top-level field, never merged into `narratives` — narratives feeds the Q2
-        # writer's biographer prompt ("using ONLY the narrative provided"); collapsing derived
-        # structural facts into it would have that prompt narrate them as if authored.
+        # Inferred structural context + combined narrative (2026-08-03; merge behavior reversed
+        # 2026-08-06 — see documents/architecture/node-context-inference-2026-08-03.md §5
+        # addendum) — always attempted alongside the authored narrative above, unless the node
+        # is structural (Category). `context_summary`/`context_facts` stay raw-inferred-only,
+        # unchanged, for consumers that want them (e.g. a future "Explain this node" button).
+        # `combined_narrative` is the new field: authored + inferred composed into one string
+        # with inline "Authored:"/"Inferred from graph:" labels — see _render_combined_narrative.
         labels_list = data.get("labels") or []
         if "Category" not in labels_list:
             try:
                 keywords = set()
                 facts = self._collect_context_facts(data["element_id"], keywords)
+                node_row = {
+                    "name": data.get("display_name"),
+                    "labels": labels_list,
+                    "degree": data.get("degree") or 0,
+                }
                 if facts:
-                    node_row = {
-                        "name": data.get("display_name"),
-                        "labels": labels_list,
-                        "degree": data.get("degree") or 0,
-                    }
                     data["context_summary"] = self._render_context_summary(node_row, facts, keywords)
                     data["context_facts"] = facts
                     data["context_tier"] = "inferred"
                     data["context_provenance"] = "inferred_structural"
+                data["combined_narrative"] = self._render_combined_narrative(
+                    data.get("narratives") or [], node_row, facts, keywords
+                )
             except Exception as e:
                 # Non-fatal — the authored narrative (if any) and placeholder fallback still work.
                 print(f"[get_node_details] inferred context collection failed (non-fatal): {e}")
@@ -2132,23 +2143,23 @@ class ExpertTools:
             for rec in result.records
         ]
 
-    def _render_context_summary(self, node_row: dict, facts: list, keywords: set) -> str:
-        """Deterministic f-string recitation of structural facts — no LLM call, exactly like
-        connect_knowledge_on_demand's bridge_summary. Phrasing into fuller natural-language
-        prose (if wanted) happens downstream, by whatever LLM consumes this — never here."""
+    def _render_fact_sentences(self, node_row: dict, facts: list, keywords: set) -> str:
+        """Deterministic recitation of 1-hop structural facts — the hub/degree framing sentence,
+        one sentence per (relationship, direction) group, and a keyword-priority sentence if
+        applicable. Shared by _render_context_summary (inferred-only) and
+        _render_combined_narrative (merged with authored content) so the two render paths can't
+        drift. Returns "" when there are no facts — callers own the empty-state wording, since
+        it differs (inferred-only vs. combined-with-authored vs. standalone tool)."""
         from domain_registry import CONTEXT_HUB_DEGREE_THRESHOLD
+
+        if not facts:
+            return ""
 
         name = node_row.get("name") or "This node"
         ntype = (node_row.get("labels") or ["Node"])[0]
         degree = node_row.get("degree", 0)
-
-        if not facts:
-            return (
-                f"No connections visible in your authorized view for '{name}' ({ntype}), "
-                f"and no narrative context is recorded for it."
-            )
-
         is_hub = degree >= CONTEXT_HUB_DEGREE_THRESHOLD
+
         parts = []
         if is_hub:
             parts.append(
@@ -2175,7 +2186,62 @@ class ExpertTools:
         if keywords:
             parts.append(f"Prioritized by match with: {', '.join(sorted(keywords))}.")
 
-        return "Inferred from graph structure — no authored narrative exists for this node. " + " ".join(parts)
+        return " ".join(parts)
+
+    def _render_context_summary(self, node_row: dict, facts: list, keywords: set) -> str:
+        """Deterministic f-string recitation of structural facts — no LLM call, exactly like
+        connect_knowledge_on_demand's bridge_summary. Phrasing into fuller natural-language
+        prose (if wanted) happens downstream, by whatever LLM consumes this — never here."""
+        name = node_row.get("name") or "This node"
+        ntype = (node_row.get("labels") or ["Node"])[0]
+
+        if not facts:
+            return (
+                f"No connections visible in your authorized view for '{name}' ({ntype}), "
+                f"and no narrative context is recorded for it."
+            )
+
+        sentences = self._render_fact_sentences(node_row, facts, keywords)
+        return "Inferred from graph structure — no authored narrative exists for this node. " + sentences
+
+    def _render_combined_narrative(self, authored_narratives: list, node_row: dict, facts: list, keywords: set) -> str:
+        """Merges authored PreparatoryNote content with inferred structural facts into ONE
+        narrative string, with inline provenance labels ("Authored:" / "Inferred from graph:")
+        so a downstream consumer (e.g. the career-domain biographer LLM prompt) can still tell
+        directly-stated fact from graph-derived inference apart, even though they're now
+        combined. Reverses the 2026-08-03 "never merge" decision — see
+        documents/architecture/node-context-inference-2026-08-03.md §5 addendum (2026-08-06).
+
+        Deterministic string composition only — no LLM call. This is a permanent architectural
+        guarantee shared with _render_context_summary/_render_fact_sentences, enforced by
+        tdd/verify_infer_context.py::test_07_no_llm_call_in_layer via source inspection.
+
+        - No authored content, facts present: inferred-only, no empty "Authored:" header —
+          this is what makes the inferred narrative stand in for the narrative itself when no
+          note exists, rather than being suppressed or shown as a secondary block.
+        - Authored content present, facts present: both sections, in that order.
+        - Authored content present, no facts: authored section only.
+        - Neither: falls through to the same viewer-relative sparse wording
+          _render_context_summary uses for its own no-facts case (never an absolute "has no
+          connections" claim — a genuinely orphaned node and a node whose neighbors are all
+          permission-masked must stay indistinguishable at this layer, by design).
+        """
+        authored = [n for n in (authored_narratives or []) if n]
+        fact_sentences = self._render_fact_sentences(node_row, facts, keywords)
+
+        if authored and fact_sentences:
+            return "Authored: " + "\n\n".join(authored) + "\n\nInferred from graph: " + fact_sentences
+        if authored:
+            return "Authored: " + "\n\n".join(authored)
+        if fact_sentences:
+            return "Inferred from graph: " + fact_sentences
+
+        name = node_row.get("name") or "This node"
+        ntype = (node_row.get("labels") or ["Node"])[0]
+        return (
+            f"No connections visible in your authorized view for '{name}' ({ntype}), "
+            f"and no narrative context is recorded for it."
+        )
 
     def infer_context_on_demand(
         self,

@@ -290,7 +290,7 @@ async function buildQ2WriterCall(node, openaiClient) {
         messages: [
             {
                 role: "system",
-                content: "You are a professional biographer writing for a career portfolio. Write 3–4 concise sentences describing this work item using ONLY the narrative provided. Do not add any information not present in the narrative. Do not generate URLs. Present as seamless professional experience — no STAR headers, no framework labels. Plain prose only, no markdown."
+                content: "You are a professional biographer writing for a career portfolio. The narrative may contain two labeled sections: 'Authored:' (directly provided, human-written fact) and 'Inferred from graph:' (structurally derived context, not directly authored). Write 3–4 concise sentences using ONLY the content in these sections. Treat 'Authored:' content as fact you may state directly. Treat 'Inferred from graph:' content as supporting context only — you may use it to add color or specificity, but do not state it as a fact the person asserted about themselves, and do not invent motivation or causation from it. Do not add any information not present in either section. Do not generate URLs. Present as seamless professional experience — no STAR headers, no framework labels, no 'Authored:'/'Inferred from graph:' labels in your output. Plain prose only, no markdown."
             },
             {
                 role: "user",
@@ -304,10 +304,15 @@ async function buildQ2WriterCall(node, openaiClient) {
 }
 
 /**
- * Fetches PreparatoryNote narratives from the bento server for a given node.
- * Returns the joined narrative string, or '' if the bento server is unavailable.
- * Used to enrich top-2 Q2 nodes before writer calls, since search_enterprise_graph
- * only surfaces Note nodes (HAS_NOTE), not PreparatoryNote (HAS_PRIVATE_NOTE).
+ * Fetches the combined (authored + inferred) narrative from the bento server for a given node.
+ * Returns the narrative string, or '' if the bento server is unavailable.
+ * Used to enrich top-2 Q2 nodes before writer calls.
+ *
+ * Prefers `combined_narrative` (2026-08-06 — authored PreparatoryNote content plus inferred
+ * structural context, inline-labeled "Authored:"/"Inferred from graph:"; see
+ * documents/architecture/node-context-inference-2026-08-03.md §5 addendum), falling back to the
+ * older authored-only `narratives` field or `properties.text` for older cached responses or
+ * nodes get_node_details excludes from combined_narrative (Category nodes).
  */
 async function fetchNodeNarratives(node, tenantId, userId, guestShareAnchor = '') {
     const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -330,9 +335,10 @@ async function fetchNodeNarratives(node, tenantId, userId, guestShareAnchor = ''
         // get_node_details returns [record] (list); unwrap to the first element.
         const record = Array.isArray(raw) ? raw[0] : raw;
         if (!record || record.error) return '';
-        const joined = Array.isArray(record.narratives) && record.narratives.length > 0
-            ? record.narratives.join('\n---\n')
-            : (record.properties?.text || '');
+        const joined = record.combined_narrative
+            || (Array.isArray(record.narratives) && record.narratives.length > 0
+                ? record.narratives.join('\n---\n')
+                : (record.properties?.text || ''));
         return sanitizeNarrative(joined);
     } catch (e) {
         console.warn(`[Q2] fetchNodeNarratives failed for "${node.name}":`, e.message);
