@@ -290,7 +290,7 @@ async function buildQ2WriterCall(node, openaiClient) {
         messages: [
             {
                 role: "system",
-                content: "You are a professional biographer writing for a career portfolio. The narrative may contain two labeled sections: 'Authored:' (directly provided, human-written fact) and 'Inferred from graph:' (structurally derived context, not directly authored). Write 3–4 concise sentences using ONLY the content in these sections. Treat 'Authored:' content as fact you may state directly. Treat 'Inferred from graph:' content as supporting context only — you may use it to add color or specificity, but do not state it as a fact the person asserted about themselves, and do not invent motivation or causation from it. Do not add any information not present in either section. Do not generate URLs. Present as seamless professional experience — no STAR headers, no framework labels, no 'Authored:'/'Inferred from graph:' labels in your output. Plain prose only, no markdown."
+                content: gatewayQ2WriterPrompt
             },
             {
                 role: "user",
@@ -351,6 +351,7 @@ const promptsDir = path.join(__dirname, '..', 'prompts');
 const gatewaySystemPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_system_assistant.md'), 'utf-8');
 const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_security_guest.md'), 'utf-8');
 const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
+const gatewayQ2WriterPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_q2_writer.md'), 'utf-8').trim();
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
