@@ -1457,6 +1457,14 @@ class ExpertTools:
         from domain_registry import get_discovery_label_string, get_bridge_label_string, get_visual_deny_list
         bridge_labels = get_bridge_label_string()
 
+        # AP-11: neighbor-hop traversal must use the same TRAVERSAL_RELATIONSHIPS whitelist
+        # and SYSTEM non-primitive guard as _fragment_neighbor_aggregation, rather than an
+        # untyped [*1..depth]. Applied across every node/relationship in the path (not just
+        # the terminal `m`), matching the existing ALL(node IN nodes(path) WHERE NOT
+        # node:{bridge_labels}) style already used for bridge-label exclusion below.
+        from schema_guard import TRAVERSAL_RELATIONSHIPS
+        traversal_whitelist = json.dumps(TRAVERSAL_RELATIONSHIPS)
+
         # Identify the node by node_id (UUID, preferred — durable across a Neo4j
         # restore/recycle event, unlike elementId), elementId (backward compatibility), or
         # name. Kept as two separate guarded parameters — not aliased into one — so a caller
@@ -1474,6 +1482,8 @@ class ExpertTools:
         OPTIONAL MATCH path = (n)-[*1..{safe_depth}]-(m)
         WHERE ({sec_m})
           AND ALL(node IN nodes(path) WHERE NOT node:{bridge_labels})
+          AND ALL(r IN relationships(path) WHERE type(r) IN {traversal_whitelist})
+          AND ALL(node IN nodes(path) WHERE node.tenant_id <> 'SYSTEM' OR labels(node)[0] IN ['Technology','Concept','Topic','Category'])
           {backbone_filter}
           {domain_filter}
         
@@ -1571,7 +1581,7 @@ class ExpertTools:
         RETURN nodes, links, snapshot
         LIMIT 1
         """
-        query = query.replace("{safe_depth}", str(safe_depth)).replace("{bridge_labels}", bridge_labels).replace("{backbone_filter}", backbone_filter).replace("{domain_filter}", domain_filter)
+        query = query.replace("{safe_depth}", str(safe_depth)).replace("{bridge_labels}", bridge_labels).replace("{backbone_filter}", backbone_filter).replace("{domain_filter}", domain_filter).replace("{traversal_whitelist}", traversal_whitelist)
         query = query.replace("{sec_n}", self._get_security_clause("n")).replace("{sec_m}", self._get_security_clause("m")).replace("{sec_p}", self._get_security_clause("p")).replace("{sec_note}", self._get_security_clause("note"))
         try:
             from domain_registry import get_backbone_labels
