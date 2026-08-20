@@ -16,6 +16,9 @@ from . import stream_types
 
 type_map = {
 
+    "types.Approach": types.Approach,
+    "stream_types.Approach": stream_types.Approach,
+
     "types.Concept": types.Concept,
     "stream_types.Concept": stream_types.Concept,
 
@@ -25,11 +28,26 @@ type_map = {
     "types.GraphExtraction": types.GraphExtraction,
     "stream_types.GraphExtraction": stream_types.GraphExtraction,
 
+    "types.Methods": types.Methods,
+    "stream_types.Methods": stream_types.Methods,
+
+    "types.Outcomes": types.Outcomes,
+    "stream_types.Outcomes": stream_types.Outcomes,
+
     "types.Person": types.Person,
     "stream_types.Person": stream_types.Person,
 
+    "types.Plan": types.Plan,
+    "stream_types.Plan": stream_types.Plan,
+
     "types.Podcast": types.Podcast,
     "stream_types.Podcast": stream_types.Podcast,
+
+    "types.Project": types.Project,
+    "stream_types.Project": stream_types.Project,
+
+    "types.Purpose": types.Purpose,
+    "stream_types.Purpose": stream_types.Purpose,
 
     "types.ReferenceLink": types.ReferenceLink,
     "stream_types.ReferenceLink": stream_types.ReferenceLink,
@@ -37,11 +55,29 @@ type_map = {
     "types.Relationship": types.Relationship,
     "stream_types.Relationship": stream_types.Relationship,
 
+    "types.Responsibilities": types.Responsibilities,
+    "stream_types.Responsibilities": stream_types.Responsibilities,
+
+    "types.Roles": types.Roles,
+    "stream_types.Roles": stream_types.Roles,
+
+    "types.Team": types.Team,
+    "stream_types.Team": stream_types.Team,
+
+    "types.Technologies": types.Technologies,
+    "stream_types.Technologies": stream_types.Technologies,
+
     "types.Technology": types.Technology,
     "stream_types.Technology": stream_types.Technology,
 
+    "types.Tools": types.Tools,
+    "stream_types.Tools": stream_types.Tools,
+
     "types.Topic": types.Topic,
     "stream_types.Topic": stream_types.Topic,
+
+    "types.Value": types.Value,
+    "stream_types.Value": stream_types.Value,
 
 
     "types.RelationshipType": types.RelationshipType,

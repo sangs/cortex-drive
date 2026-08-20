@@ -55,8 +55,13 @@ class RelationshipType(str, Enum):
     SUBSCRIBES_TO = "SUBSCRIBES_TO"
 
 # #########################################################################
-# Generated classes (9)
+# Generated classes (21)
 # #########################################################################
+
+class Approach(BaseModel):
+    description: str
+    methodology: typing.Optional[str] = None
+    plan: "Plan"
 
 class Concept(BaseModel):
     name: str
@@ -77,12 +82,49 @@ class GraphExtraction(BaseModel):
     links: typing.List["ReferenceLink"]
     relationships: typing.List["Relationship"]
 
+class Methods(BaseModel):
+    name: str
+    description: str
+    steps: typing.Optional[typing.List[str]] = None
+
+class Outcomes(BaseModel):
+    description: str
+    successCriteria: typing.List[str] = Field(description='How would we know that the project succeeded?')
+    measurableResults: typing.Optional[typing.List[str]] = Field(default=None, description='Post-implementation actual measured results that demonstrate this specific outcome was achieved (e.g., \'Pipeline processes 1000 records/day\', \'System handles 1200 requests/min\')')
+
 class Person(BaseModel):
     name: str
     role: typing.Optional[typing.Union[typing_extensions.Literal['Host'], typing_extensions.Literal['Guest'], typing_extensions.Literal['Referenced Expert']]] = None
 
+class Plan(BaseModel):
+    name: str
+    description: str
+    methods: typing.List["Methods"]
+    tools: typing.List["Tools"]
+    timeline: typing.Optional[str] = None
+    milestones: typing.Optional[typing.List[str]] = None
+
 class Podcast(BaseModel):
     title: str
+
+class Project(BaseModel):
+    name: str = Field(description='What is the name of the project?')
+    description: str = Field(description='What is the description of the project?')
+    employer: str = Field(description='Employer of the project?')
+    location: str = Field(description='Location of the project?')
+    startDate: typing.Optional[str] = Field(default=None, description='Start date of the project?')
+    endDate: typing.Optional[str] = Field(default=None, description='End date of the project?')
+    duration: typing.Optional[str] = Field(default=None, description='Duration of the project?')
+    purpose: "Purpose" = Field(description='Why are we doing this project?')
+    value: "Value" = Field(description='What would the benefit to the organization be if the project succeeded?')
+    outcomes: typing.List["Outcomes"] = Field(description='What will we accomplish? How would we know that the project succeeded?')
+    technologies: typing.List["Technologies"] = Field(description='What technologies will we use?')
+    approach: "Approach" = Field(description='How will we going  to do this project?')
+    team: "Team" = Field(description='Who is going to do what on the project? What resources will we need to complete the project?')
+
+class Purpose(BaseModel):
+    description: str
+    objectives: typing.List[str] = Field(description='What the project aims to accomplish in order to fullfill the purpose? It is concrete, measurable and breaks down purpose into actionable component')
 
 class ReferenceLink(BaseModel):
     text: str
@@ -93,13 +135,43 @@ class Relationship(BaseModel):
     target_node: str
     relationship_type: RelationshipType
 
+class Responsibilities(BaseModel):
+    description: str
+    tasks: typing.List[str]
+    deliverables: typing.Optional[typing.List[str]] = Field(default=None, description='Concrete deliverables or outputs produced by fulfilling this responsibility')
+
+class Roles(BaseModel):
+    name: str
+    description: str
+    responsibilities: typing.List["Responsibilities"]
+
+class Team(BaseModel):
+    name: str
+    description: typing.Optional[str] = None
+    roles: typing.List["Roles"]
+    members: typing.Optional[typing.List[str]] = None
+
+class Technologies(BaseModel):
+    name: str
+    description: str
+
 class Technology(BaseModel):
     name: str
     description: typing.Optional[str] = None
 
+class Tools(BaseModel):
+    name: str
+    description: str
+    category: typing.Optional[str] = None
+
 class Topic(BaseModel):
     name: str
     description: typing.Optional[str] = None
+
+class Value(BaseModel):
+    description: str
+    benefits: typing.List[str] = Field(description='Specific benefits the organization will receive if the project succeeds')
+    metrics: typing.Optional[typing.List[str]] = Field(default=None, description='Organization-level metrics that quantify the value/benefit delivered to the organization (e.g., ROI, efficiency gains, cost savings, reduction in integration time)')
 
 # #########################################################################
 # Generated type aliases (0)

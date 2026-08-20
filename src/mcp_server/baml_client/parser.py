@@ -29,6 +29,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractGraph", llm_response=llm_response, mode="request")
         return typing.cast(types.GraphExtraction, __result__)
 
+    def ExtractProject(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.Project:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractProject", llm_response=llm_response, mode="request")
+        return typing.cast(types.Project, __result__)
+
     
 
 class LlmStreamParser:
@@ -42,5 +48,11 @@ class LlmStreamParser:
     ) -> stream_types.GraphExtraction:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractGraph", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.GraphExtraction, __result__)
+
+    def ExtractProject(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.Project:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractProject", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.Project, __result__)
 
     

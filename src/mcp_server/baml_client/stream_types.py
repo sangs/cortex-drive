@@ -23,8 +23,13 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (9)
+# Generated classes (21)
 # #########################################################################
+
+class Approach(BaseModel):
+    description: typing.Optional[str] = None
+    methodology: typing.Optional[str] = None
+    plan: typing.Optional["Plan"] = None
 
 class Concept(BaseModel):
     name: typing.Optional[str] = None
@@ -45,12 +50,49 @@ class GraphExtraction(BaseModel):
     links: typing.List["ReferenceLink"]
     relationships: typing.List["Relationship"]
 
+class Methods(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    steps: typing.Optional[typing.List[str]] = None
+
+class Outcomes(BaseModel):
+    description: typing.Optional[str] = None
+    successCriteria: typing.List[str] = Field(description='How would we know that the project succeeded?')
+    measurableResults: typing.Optional[typing.List[str]] = Field(default=None, description='Post-implementation actual measured results that demonstrate this specific outcome was achieved (e.g., \'Pipeline processes 1000 records/day\', \'System handles 1200 requests/min\')')
+
 class Person(BaseModel):
     name: typing.Optional[str] = None
     role: typing.Optional[typing.Union[typing_extensions.Literal['Host'], typing_extensions.Literal['Guest'], typing_extensions.Literal['Referenced Expert']]] = None
 
+class Plan(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    methods: typing.List["Methods"]
+    tools: typing.List["Tools"]
+    timeline: typing.Optional[str] = None
+    milestones: typing.Optional[typing.List[str]] = None
+
 class Podcast(BaseModel):
     title: typing.Optional[str] = None
+
+class Project(BaseModel):
+    name: typing.Optional[str] = Field(default=None, description='What is the name of the project?')
+    description: typing.Optional[str] = Field(default=None, description='What is the description of the project?')
+    employer: typing.Optional[str] = Field(default=None, description='Employer of the project?')
+    location: typing.Optional[str] = Field(default=None, description='Location of the project?')
+    startDate: typing.Optional[str] = Field(default=None, description='Start date of the project?')
+    endDate: typing.Optional[str] = Field(default=None, description='End date of the project?')
+    duration: typing.Optional[str] = Field(default=None, description='Duration of the project?')
+    purpose: typing.Optional["Purpose"] = Field(default=None, description='Why are we doing this project?')
+    value: typing.Optional["Value"] = Field(default=None, description='What would the benefit to the organization be if the project succeeded?')
+    outcomes: typing.List["Outcomes"] = Field(description='What will we accomplish? How would we know that the project succeeded?')
+    technologies: typing.List["Technologies"] = Field(description='What technologies will we use?')
+    approach: typing.Optional["Approach"] = Field(default=None, description='How will we going  to do this project?')
+    team: typing.Optional["Team"] = Field(default=None, description='Who is going to do what on the project? What resources will we need to complete the project?')
+
+class Purpose(BaseModel):
+    description: typing.Optional[str] = None
+    objectives: typing.List[str] = Field(description='What the project aims to accomplish in order to fullfill the purpose? It is concrete, measurable and breaks down purpose into actionable component')
 
 class ReferenceLink(BaseModel):
     text: typing.Optional[str] = None
@@ -61,13 +103,43 @@ class Relationship(BaseModel):
     target_node: typing.Optional[str] = None
     relationship_type: typing.Optional[types.RelationshipType] = None
 
+class Responsibilities(BaseModel):
+    description: typing.Optional[str] = None
+    tasks: typing.List[str]
+    deliverables: typing.Optional[typing.List[str]] = Field(default=None, description='Concrete deliverables or outputs produced by fulfilling this responsibility')
+
+class Roles(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    responsibilities: typing.List["Responsibilities"]
+
+class Team(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    roles: typing.List["Roles"]
+    members: typing.Optional[typing.List[str]] = None
+
+class Technologies(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+
 class Technology(BaseModel):
     name: typing.Optional[str] = None
     description: typing.Optional[str] = None
 
+class Tools(BaseModel):
+    name: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    category: typing.Optional[str] = None
+
 class Topic(BaseModel):
     name: typing.Optional[str] = None
     description: typing.Optional[str] = None
+
+class Value(BaseModel):
+    description: typing.Optional[str] = None
+    benefits: typing.List[str] = Field(description='Specific benefits the organization will receive if the project succeeds')
+    metrics: typing.Optional[typing.List[str]] = Field(default=None, description='Organization-level metrics that quantify the value/benefit delivered to the organization (e.g., ROI, efficiency gains, cost savings, reduction in integration time)')
 
 # #########################################################################
 # Generated type aliases (0)

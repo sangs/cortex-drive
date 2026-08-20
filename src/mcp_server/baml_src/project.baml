@@ -101,7 +101,7 @@ class Project {
 function ExtractProject(projectContent: string) -> Project {
   // Specify a client as provider/model-name
   // You can also use custom LLM params with a custom client name from clients.baml like "client CustomGPT5" or "client CustomSonnet4"
-  client CustomGPT4oMini // Using GPT-4o-mini (cost-efficient model)
+  client GPT4oMini // Using GPT-4o-mini (cost-efficient model)
   prompt #"
     Extract project information from this content, organizing it into the Why (Purpose & Value), How (Approach & Plan), and Who (Team & Responsibilities) structure:
     {{ projectContent }}
