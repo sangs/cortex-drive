@@ -304,8 +304,17 @@ class PageMetadataNode(Neo4jBaseModel):
 
 class SourceBaseModel(Neo4jBaseModel):
     """Shared fields for every Universal Source Connector type. Not instantiated directly —
-    each concrete <Type>Source class below inherits these fields."""
-    source_id: str = Field(..., description="Stable UUID identity, durable across elementId() changes.")
+    each concrete <Type>Source class below inherits these fields.
+
+    NOTE: no `source_id`/identity field is declared here, by design — matching this
+    repo's established convention (EpisodeNode, CompanyNode, etc. don't declare `node_id`
+    in Pydantic either). `node_id` is a stable UUID set at the Cypher level via
+    `ON CREATE SET s.node_id = randomUUID()`, entirely outside Pydantic validation, and is
+    what every ID-based lookup in expert_tools.py (get_node_details, get_cluster_context,
+    connect_knowledge_on_demand — all match on literal `n.node_id`) actually keys on. An
+    earlier draft of this model declared `source_id` as a required Pydantic field, which
+    would have made these nodes invisible to every existing ID-based lookup tool — caught
+    and corrected before the write path was built against it."""
     source_type: str = Field(..., description=f"One of {SOURCE_CONNECTOR_TYPES}.")
     name: str = Field(..., description="Human-readable label.")
     description: Optional[str] = None
@@ -313,7 +322,7 @@ class SourceBaseModel(Neo4jBaseModel):
     owner_id: str = Field(..., description="Clerk user ID of the registering user.")
     status: str = Field("active", description=f"One of {SOURCE_CONNECTOR_STATUSES}.")
     metadata_schema_version: int = Field(1, description="Version of this Pydantic template shape — bumped when a Layer 1/2 model gains or loses a field.")
-    current_snapshot_id: Optional[str] = Field(None, description="Pointer to the current SourceSnapshot — the Iceberg 'current' pointer.")
+    current_snapshot_id: Optional[str] = Field(None, description="Pointer to the current SourceSnapshot's node_id — the Iceberg 'current' pointer.")
     credential_ref_id: Optional[str] = Field(None, description="Pointer to a CredentialRef node. Null if the source needs no auth.")
     primary_content_category: Optional[str] = Field(None, description="Coarse content-classification hint, set at registration time if known upfront. Fine-grained per-document classification is a later phase, not populated by Phase A.")
     last_synced_at: Optional[str] = Field(None, description="ISO datetime of the last successful sync.")
@@ -359,8 +368,10 @@ class WebsiteSource(SourceBaseModel):
 class SourceSnapshot(Neo4jBaseModel):
     """Iceberg-style content versioning for Universal Source Connector sources — one node
     per fetch that actually changed content, linked via HAS_SNAPSHOT. Exactly one
-    is_current=True snapshot per source at any time."""
-    snapshot_id: str = Field(..., description="Stable UUID identity for this snapshot.")
+    is_current=True snapshot per source at any time.
+
+    No `snapshot_id` field, by the same convention as SourceBaseModel above — identity is
+    `node_id`, set via `ON CREATE SET snap.node_id = randomUUID()` at the Cypher level."""
     content_hash: str = Field(..., description="SHA-256 of the extracted/parsed content.")
     metadata_schema_version: int = Field(..., description="Which SourceBaseModel/WebsiteSource template version this snapshot conforms to.")
     fetched_at: str = Field(..., description="ISO datetime of this fetch.")
