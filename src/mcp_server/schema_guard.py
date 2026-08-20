@@ -28,6 +28,26 @@ SYSTEM_NODES = [
     '__MetaContext__'
 ]
 
+# --- Universal Source Connector Constants (Phase A+) ---
+# See documents/architecture/source-metadata-template-2026-08-19.md for the full design.
+# NOTE: the design doc's Cypher sketches use a shared `:Source` label across all 5 source
+# types. That label is already taken by SourceNode below (podcast/episode ingestion
+# provenance — a different, narrower concept: "which file/URL/video did THIS transcript
+# come from," 1:1 with an Episode). Reusing it here would collide. Each source-connector
+# type is registered under its OWN distinct label instead; SOURCE_CONNECTOR_LABELS is the
+# named list a query uses to address "any registered source" collectively, replacing what
+# the design docs' shared label would have done. Only 'WebsiteSource' is implemented as of
+# Phase A — the other four are named here so the full taxonomy is visible in one place, per
+# Invariant 1 (named constants, not inline), even though their Pydantic models don't exist
+# yet.
+SOURCE_CONNECTOR_TYPES = ['database', 'website', 'doc_store', 'media', 'document_url']
+
+SOURCE_CONNECTOR_LABELS = [
+    'DatabaseSource', 'WebsiteSource', 'DocStoreSource', 'MediaSource', 'DocumentSource'
+]
+
+SOURCE_CONNECTOR_STATUSES = ['active', 'paused', 'error', 'deprecated']
+
 # --- Discovery Logic Constants (Landmarks) ---
 # High-Fidelity backbone nodes that serve as the primary landmarks in discovery.
 # These appear as prominent "Sun" nodes in the initial graph expansion.
@@ -275,6 +295,78 @@ class PageMetadataNode(Neo4jBaseModel):
     pageId: Optional[str] = None
     status: Optional[str] = None
 
+# --- Universal Source Connector Models (Phase A+) ---
+# See documents/architecture/source-metadata-template-2026-08-19.md §2 and
+# documents/architecture/phase-a-web-url-adapter-design-2026-08-19.md for the full design.
+# SourceBaseModel is NOT its own Neo4j label — each concrete type below inherits its
+# fields via Python class inheritance and is registered under its own single Neo4j label
+# (see SOURCE_CONNECTOR_LABELS above for why, not a shared `:Source` label).
+
+class SourceBaseModel(Neo4jBaseModel):
+    """Shared fields for every Universal Source Connector type. Not instantiated directly —
+    each concrete <Type>Source class below inherits these fields."""
+    source_id: str = Field(..., description="Stable UUID identity, durable across elementId() changes.")
+    source_type: str = Field(..., description=f"One of {SOURCE_CONNECTOR_TYPES}.")
+    name: str = Field(..., description="Human-readable label.")
+    description: Optional[str] = None
+    uri: str = Field(..., description="Canonical locator (connection alias, URL, file path). Never a raw credential or connection string with embedded secrets.")
+    owner_id: str = Field(..., description="Clerk user ID of the registering user.")
+    status: str = Field("active", description=f"One of {SOURCE_CONNECTOR_STATUSES}.")
+    metadata_schema_version: int = Field(1, description="Version of this Pydantic template shape — bumped when a Layer 1/2 model gains or loses a field.")
+    current_snapshot_id: Optional[str] = Field(None, description="Pointer to the current SourceSnapshot — the Iceberg 'current' pointer.")
+    credential_ref_id: Optional[str] = Field(None, description="Pointer to a CredentialRef node. Null if the source needs no auth.")
+    primary_content_category: Optional[str] = Field(None, description="Coarse content-classification hint, set at registration time if known upfront. Fine-grained per-document classification is a later phase, not populated by Phase A.")
+    last_synced_at: Optional[str] = Field(None, description="ISO datetime of the last successful sync.")
+    sync_frequency: Optional[str] = Field(None, description="For scheduled sources only.")
+    error_message: Optional[str] = Field(None, description="Last error, only populated when status = error.")
+
+    @validator('source_type')
+    def source_type_must_be_known(cls, v):
+        if v not in SOURCE_CONNECTOR_TYPES:
+            raise ValueError(f"source_type must be one of {SOURCE_CONNECTOR_TYPES}, got '{v}'")
+        return v
+
+    @validator('status')
+    def status_must_be_known(cls, v):
+        if v not in SOURCE_CONNECTOR_STATUSES:
+            raise ValueError(f"status must be one of {SOURCE_CONNECTOR_STATUSES}, got '{v}'")
+        return v
+
+class WebsiteSource(SourceBaseModel):
+    """Schema for Phase A (unauthenticated) / Phase A.5 (authenticated) web URL sources."""
+    base_url: str = Field(..., description="The registered URL.")
+    requires_auth: bool = Field(False, description="False for Phase A; True distinguishes Phase A.5 sources.")
+    auth_type: Optional[str] = Field(None, description="none | basic | oauth | session_cookie — null for Phase A.")
+    crawl_scope: str = Field("single_page", description="single_page | subdomain | allowlist")
+    content_type_hint: Optional[str] = Field(None, description="article | wiki | dashboard | spa")
+    extraction_method: str = Field("trafilatura", description="trafilatura | firecrawl | jina_reader")
+    robots_txt_compliant: bool = Field(True)
+
+    @validator('crawl_scope')
+    def crawl_scope_must_be_known(cls, v):
+        allowed = ['single_page', 'subdomain', 'allowlist']
+        if v not in allowed:
+            raise ValueError(f"crawl_scope must be one of {allowed}, got '{v}'")
+        return v
+
+    @validator('extraction_method')
+    def extraction_method_must_be_known(cls, v):
+        allowed = ['trafilatura', 'firecrawl', 'jina_reader']
+        if v not in allowed:
+            raise ValueError(f"extraction_method must be one of {allowed}, got '{v}'")
+        return v
+
+class SourceSnapshot(Neo4jBaseModel):
+    """Iceberg-style content versioning for Universal Source Connector sources — one node
+    per fetch that actually changed content, linked via HAS_SNAPSHOT. Exactly one
+    is_current=True snapshot per source at any time."""
+    snapshot_id: str = Field(..., description="Stable UUID identity for this snapshot.")
+    content_hash: str = Field(..., description="SHA-256 of the extracted/parsed content.")
+    metadata_schema_version: int = Field(..., description="Which SourceBaseModel/WebsiteSource template version this snapshot conforms to.")
+    fetched_at: str = Field(..., description="ISO datetime of this fetch.")
+    is_current: bool = Field(..., description="Exactly one True per source at any time.")
+    change_summary: Optional[str] = Field(None, description="Optional human-readable note on what changed.")
+
 def validate_upsert(label: str, data: Dict[str, Any]):
     """
     Validation gate to be called before any Neo4j CREATE/MERGE.
@@ -331,6 +423,9 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         'Confluence': ExternalSiloNode,
         'TableMetadata': TableMetadataNode,
         'PageMetadata': PageMetadataNode,
+        # Universal Source Connector Models (Phase A+) — see SOURCE_CONNECTOR_LABELS above
+        'WebsiteSource': WebsiteSource,
+        'SourceSnapshot': SourceSnapshot,
         # System/Infrastructure
         '__MetaContext__': InfrastructureNode
     }
