@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (21)
+# Generated classes (23)
 # #########################################################################
 
 class Approach(BaseModel):
@@ -140,6 +140,20 @@ class Value(BaseModel):
     description: typing.Optional[str] = None
     benefits: typing.List[str] = Field(description='Specific benefits the organization will receive if the project succeeds')
     metrics: typing.Optional[typing.List[str]] = Field(default=None, description='Organization-level metrics that quantify the value/benefit delivered to the organization (e.g., ROI, efficiency gains, cost savings, reduction in integration time)')
+
+class WebPageExtraction(BaseModel):
+    title: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    concepts: typing.List["Concept"]
+    technologies: typing.List["Technology"]
+    people: typing.List["Person"]
+    reference_links: typing.List["ReferenceLink"]
+    relationships: typing.List["WebRelationship"]
+
+class WebRelationship(BaseModel):
+    source_node: typing.Optional[str] = None
+    target_node: typing.Optional[str] = None
+    relationship_type: typing.Optional[types.WebRelationshipType] = None
 
 # #########################################################################
 # Generated type aliases (0)

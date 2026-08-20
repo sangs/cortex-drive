@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (1)
+# Generated enums (2)
 # #########################################################################
 
 class RelationshipType(str, Enum):
@@ -54,8 +54,13 @@ class RelationshipType(str, Enum):
     LISTENS_TO_EPISODE = "LISTENS_TO_EPISODE"
     SUBSCRIBES_TO = "SUBSCRIBES_TO"
 
+class WebRelationshipType(str, Enum):
+    DISCUSSES = "DISCUSSES"
+    MENTIONS = "MENTIONS"
+    COVERS_TECHNOLOGY = "COVERS_TECHNOLOGY"
+
 # #########################################################################
-# Generated classes (21)
+# Generated classes (23)
 # #########################################################################
 
 class Approach(BaseModel):
@@ -172,6 +177,20 @@ class Value(BaseModel):
     description: str
     benefits: typing.List[str] = Field(description='Specific benefits the organization will receive if the project succeeds')
     metrics: typing.Optional[typing.List[str]] = Field(default=None, description='Organization-level metrics that quantify the value/benefit delivered to the organization (e.g., ROI, efficiency gains, cost savings, reduction in integration time)')
+
+class WebPageExtraction(BaseModel):
+    title: str
+    description: str
+    concepts: typing.List["Concept"]
+    technologies: typing.List["Technology"]
+    people: typing.List["Person"]
+    reference_links: typing.List["ReferenceLink"]
+    relationships: typing.List["WebRelationship"]
+
+class WebRelationship(BaseModel):
+    source_node: str
+    target_node: str
+    relationship_type: WebRelationshipType
 
 # #########################################################################
 # Generated type aliases (0)

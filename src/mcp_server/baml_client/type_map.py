@@ -79,7 +79,15 @@ type_map = {
     "types.Value": types.Value,
     "stream_types.Value": stream_types.Value,
 
+    "types.WebPageExtraction": types.WebPageExtraction,
+    "stream_types.WebPageExtraction": stream_types.WebPageExtraction,
+
+    "types.WebRelationship": types.WebRelationship,
+    "stream_types.WebRelationship": stream_types.WebRelationship,
+
 
     "types.RelationshipType": types.RelationshipType,
+
+    "types.WebRelationshipType": types.WebRelationshipType,
 
 }

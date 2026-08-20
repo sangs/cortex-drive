@@ -122,6 +122,20 @@ class BamlSyncClient:
                 "projectContent": projectContent,
             })
             return typing.cast(types.Project, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def ExtractWebPage(self, content: str,url: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.WebPageExtraction:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.ExtractWebPage(content=content,url=url,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ExtractWebPage", args={
+                "content": content,"url": url,
+            })
+            return typing.cast(types.WebPageExtraction, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -155,6 +169,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.Project, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def ExtractWebPage(self, content: str,url: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.WebPageExtraction, types.WebPageExtraction]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ExtractWebPage", args={
+            "content": content,"url": url,
+        })
+        return baml_py.BamlSyncStream[stream_types.WebPageExtraction, types.WebPageExtraction](
+          __result__,
+          lambda x: typing.cast(stream_types.WebPageExtraction, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.WebPageExtraction, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     
 
 class BamlHttpRequestClient:
@@ -177,6 +203,13 @@ class BamlHttpRequestClient:
             "projectContent": projectContent,
         }, mode="request")
         return __result__
+    def ExtractWebPage(self, content: str,url: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractWebPage", args={
+            "content": content,"url": url,
+        }, mode="request")
+        return __result__
     
 
 class BamlHttpStreamRequestClient:
@@ -197,6 +230,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractProject", args={
             "projectContent": projectContent,
+        }, mode="stream")
+        return __result__
+    def ExtractWebPage(self, content: str,url: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractWebPage", args={
+            "content": content,"url": url,
         }, mode="stream")
         return __result__
     

@@ -20,22 +20,26 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["Approach","Concept","Episode","GraphExtraction","Methods","Outcomes","Person","Plan","Podcast","Project","Purpose","ReferenceLink","Relationship","Responsibilities","Roles","Team","Technologies","Technology","Tools","Topic","Value",]
+          ["Approach","Concept","Episode","GraphExtraction","Methods","Outcomes","Person","Plan","Podcast","Project","Purpose","ReferenceLink","Relationship","Responsibilities","Roles","Team","Technologies","Technology","Tools","Topic","Value","WebPageExtraction","WebRelationship",]
         ), enums=set(
-          ["RelationshipType",]
+          ["RelationshipType","WebRelationshipType",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 1
+    # Generated enums 2
     # #########################################################################
 
     @property
     def RelationshipType(self) -> "RelationshipTypeViewer":
         return RelationshipTypeViewer(self)
 
+    @property
+    def WebRelationshipType(self) -> "WebRelationshipTypeViewer":
+        return WebRelationshipTypeViewer(self)
+
 
     # #########################################################################
-    # Generated classes 21
+    # Generated classes 23
     # #########################################################################
 
     @property
@@ -122,10 +126,18 @@ class TypeBuilder(type_builder.TypeBuilder):
     def Value(self) -> "ValueViewer":
         return ValueViewer(self)
 
+    @property
+    def WebPageExtraction(self) -> "WebPageExtractionViewer":
+        return WebPageExtractionViewer(self)
+
+    @property
+    def WebRelationship(self) -> "WebRelationshipViewer":
+        return WebRelationshipViewer(self)
+
 
 
 # #########################################################################
-# Generated enums 1
+# Generated enums 2
 # #########################################################################
 
 class RelationshipTypeAst:
@@ -210,9 +222,55 @@ class RelationshipTypeValues:
     
 
 
+class WebRelationshipTypeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("WebRelationshipType")
+        self._values: typing.Set[str] = set([  "DISCUSSES",  "MENTIONS",  "COVERS_TECHNOLOGY",  ])
+        self._vals = WebRelationshipTypeValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "WebRelationshipTypeValues":
+        return self._vals
+
+
+class WebRelationshipTypeViewer(WebRelationshipTypeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class WebRelationshipTypeValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def DISCUSSES(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DISCUSSES"))
+    
+    @property
+    def MENTIONS(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("MENTIONS"))
+    
+    @property
+    def COVERS_TECHNOLOGY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("COVERS_TECHNOLOGY"))
+    
+    
+
+
 
 # #########################################################################
-# Generated classes 21
+# Generated classes 23
 # #########################################################################
 
 class ApproachAst:
@@ -1238,6 +1296,116 @@ class ValueProperties:
     @property
     def metrics(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("metrics"))
+    
+    
+
+
+class WebPageExtractionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("WebPageExtraction")
+        self._properties: typing.Set[str] = set([  "title",  "description",  "concepts",  "technologies",  "people",  "reference_links",  "relationships",  ])
+        self._props = WebPageExtractionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "WebPageExtractionProperties":
+        return self._props
+
+
+class WebPageExtractionViewer(WebPageExtractionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class WebPageExtractionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def title(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("title"))
+    
+    @property
+    def description(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("description"))
+    
+    @property
+    def concepts(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("concepts"))
+    
+    @property
+    def technologies(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("technologies"))
+    
+    @property
+    def people(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("people"))
+    
+    @property
+    def reference_links(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reference_links"))
+    
+    @property
+    def relationships(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("relationships"))
+    
+    
+
+
+class WebRelationshipAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("WebRelationship")
+        self._properties: typing.Set[str] = set([  "source_node",  "target_node",  "relationship_type",  ])
+        self._props = WebRelationshipProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "WebRelationshipProperties":
+        return self._props
+
+
+class WebRelationshipViewer(WebRelationshipAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class WebRelationshipProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def source_node(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_node"))
+    
+    @property
+    def target_node(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("target_node"))
+    
+    @property
+    def relationship_type(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("relationship_type"))
     
     
 
