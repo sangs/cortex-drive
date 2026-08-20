@@ -15,5 +15,6 @@ sse-starlette
 baml-py
 httpx
 redis>=5.0.0
+trafilatura
 # openfga-sdk retained until Phase 2 migration is verified complete
 openfga-sdk

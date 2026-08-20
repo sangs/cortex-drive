@@ -10,6 +10,7 @@ tqdm
 pypdf
 pandas
 neo4j
+trafilatura
 google-adk>=1.0.0
 litellm
 uv
