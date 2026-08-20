@@ -117,3 +117,16 @@ class LocalFileAdapter(BaseAdapter):
         # 3. Pass to Engine
         print(f"LocalFileAdapter passing '{filename}' (Episode {metadata['number']}) to IngestionEngine...")
         engine.process_transcript(transcript_text, metadata)
+
+    def fetch(self, source_ref: str) -> str:
+        """Trivial degenerate case (BaseAdapter's fetch()/has_changed() were added for
+        Phase A's remote-fetch adapters) — not the primary way LocalFileAdapter is used;
+        process_item() already reads the file directly."""
+        with open(source_ref, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def has_changed(self, source_ref: str, last_known_hash) -> bool:
+        """Trivially True — get_unprocessed_items() already filters out already-ingested
+        files by querying Neo4j, so by the time this would be called the file is already
+        known to be new."""
+        return True
