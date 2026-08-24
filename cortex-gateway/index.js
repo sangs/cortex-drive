@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { classifyDomain, initClassifier } = require('./utils/intent_classifier');
+const { classifyDomain, initClassifier, getBridgeContext } = require('./utils/intent_classifier');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -2422,7 +2422,7 @@ const mcpToolsDefinitions = [
                 type: "object",
                 properties: {
                     keyword: { type: "string", description: "The search term to find across the graph (e.g., 'startup', 'Iceberg', 'Kafka')." },
-                    domain_intent: { type: "string", enum: ["all", "professional", "podcast", "federated"], default: "all", description: "The domain sandbox to search within." },
+                    domain_intent: { type: "string", enum: ["all", "professional", "podcast", "website", "federated"], default: "all", description: "The domain sandbox to search within." },
                     wants_visual_map: { type: "boolean", description: "Set to true if the user asks for a map, graph, overview, or visual landscape." }
                 },
                 required: ["keyword"]
@@ -2865,11 +2865,26 @@ app.post('/query', authMiddleware, async (req, res) => {
         const domainSignal = await classifyDomain(question, openai);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
 
+        // Bridge context (added 2026-08-24) — only resolved when domainSignal is
+        // cross_domain via the classifier's new Phase B (bridge-entity match), not the
+        // existing regex-triggered cross_domain path (named-target "how did X influence
+        // Y" questions). Kept as a separate lookup so classifyDomain()'s own contract is
+        // untouched — see website-domain-cross-domain-routing-design-2026-08-24.md §2.3.
+        const bridgeContext = domainSignal === 'cross_domain' ? getBridgeContext(question) : null;
+        if (bridgeContext) {
+            console.log(`[QUERY] bridge_entity="${bridgeContext.bridge_entity}" candidate_domains=${bridgeContext.candidate_domains}`);
+        }
+
+        const crossDomainInstruction = bridgeContext
+            ? `For 'cross_domain' (entity-bridge match): the term "${bridgeContext.bridge_entity}" appears in both the ${bridgeContext.candidate_domains.join(' and ')} domains. Call search_enterprise_graph once per domain (domain_intent="${bridgeContext.candidate_domains[0]}" and domain_intent="${bridgeContext.candidate_domains[1]}") using "${bridgeContext.bridge_entity}" as the keyword, then synthesize one answer grounded in what each domain's actual data says. Do NOT use connect_knowledge_on_demand for this — it is for named-entity path-discovery questions, not shared-topic lookups.`
+            : `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node.`;
+
         const domainInstruction = `\n\nCURRENT QUERY DOMAIN CONTEXT: ${domainSignal}\n` +
             `Respect this classification. ` +
             `For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. ` +
             `For 'career': You MUST call search_enterprise_graph(domain_intent="professional", keyword=<specific topic from user query>) before answering — this is REQUIRED for ALL career queries including publications, projects, roles, companies, certifications, and conferences. Early stop is NOT allowed for career domain. Answering from prior knowledge without a tool call is a grounding violation. Do NOT call get_cluster_context. The backbone graph is auto-injected. ` +
-            `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node.`;
+            `For 'website': call search_enterprise_graph(domain_intent="website", keyword=<specific topic from user query>) before answering — do NOT call get_cluster_context. ` +
+            crossDomainInstruction;
 
         const restrictionNote = accessScope === 'restricted'
             ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
