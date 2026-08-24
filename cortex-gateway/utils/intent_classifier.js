@@ -5,6 +5,15 @@
  *
  * Execution order — cheapest phase runs first, paid phases only fire on miss:
  *
+ *   Phase B — Bridge entity  free  <1ms   runs BEFORE Phase R (added 2026-08-24) — a
+ *                                         catalogued entity empirically connecting two
+ *                                         domains (e.g. "Apache Iceberg" in both website
+ *                                         and podcast content) is a higher-precision signal
+ *                                         than a generic regex keyword, and must not be
+ *                                         masked by Phase R's short-circuit. See
+ *                                         documents/architecture/website-domain-cross-domain-routing-design-2026-08-24.md
+ *                                         §2.3 — additive only, every other phase below is
+ *                                         byte-for-byte unchanged by this addition.
  *   Phase R — Regex         free  <1ms   deterministic keyword/pattern matching
  *   Phase E — Entity catalog free  <1ms   in-memory name lookup (Neo4j snapshot at deploy time)
  *   Phase S — Embedding      paid  ~50ms  cosine similarity against domain prototype centroids;
@@ -95,6 +104,67 @@ function _entityClassify(q) {
         }
     }
     return bestDomain ? { domain: bestDomain, matched: bestName } : null;
+}
+
+// ─── Phase B: Bridge-entity lookup (added 2026-08-24) ────────────────────────
+// Separate from _entityLookup above by design — a distinct, deliberately narrow
+// structure (only entities empirically verified to connect 2+ domains, see
+// generate_entity_catalog.py's bridge_entities section), not a change to the existing
+// single-domain lookup's behavior or contract. See
+// website-domain-cross-domain-routing-design-2026-08-24.md §2.2/§2.3.
+
+let _bridgeEntityLookup = null;  // Map<lowerCaseName, string[]> (candidate domains)
+
+function _loadBridgeEntities() {
+    try {
+        const catalogPath = path.join(__dirname, '../config/entity_catalog.json');
+        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+        const lookup = new Map();
+        for (const [name, domains] of Object.entries(raw.bridge_entities || {})) {
+            if (name && name.length > 2 && Array.isArray(domains) && domains.length > 1) {
+                lookup.set(name.toLowerCase(), domains);
+            }
+        }
+        if (lookup.size > 0) {
+            console.log(`[CLASSIFY] Bridge entity catalog loaded: ${lookup.size} entities`);
+        }
+        return lookup;
+    } catch (e) {
+        console.warn('[CLASSIFY] Bridge entity catalog unavailable — Phase B skipped:', e.message);
+        return new Map();
+    }
+}
+
+function _bridgeClassify(q) {
+    if (!_bridgeEntityLookup || _bridgeEntityLookup.size === 0) return null;
+    const lower = q.toLowerCase();
+    // Longest-match wins, same discipline as _entityClassify above.
+    let bestDomains = null;
+    let bestLen      = 0;
+    let bestName     = null;
+    for (const [name, domains] of _bridgeEntityLookup) {
+        if (name.length > bestLen && lower.includes(name)) {
+            bestDomains = domains;
+            bestLen     = name.length;
+            bestName    = name;
+        }
+    }
+    return bestDomains ? { domains: bestDomains, matched: bestName } : null;
+}
+
+/**
+ * Resolve bridge-entity detail for a question already classified as 'cross_domain' via
+ * Phase B. Kept separate from classifyDomain()'s return value so its existing
+ * plain-string contract (one call site: cortex-gateway/index.js) is untouched — callers
+ * that need the bridge detail call this explicitly.
+ *
+ * @param {string} question
+ * @returns {{bridge_entity: string, candidate_domains: string[]} | null}
+ */
+function getBridgeContext(question) {
+    const match = _bridgeClassify(question || '');
+    if (!match) return null;
+    return { bridge_entity: match.matched, candidate_domains: match.domains };
 }
 
 // ─── Phase S: Embedding similarity ───────────────────────────────────────────
@@ -218,10 +288,21 @@ const SAFE_DEFAULT = 'career';
  *
  * @param {string} question
  * @param {import('openai').OpenAI} [openaiClient]  required for Phase S
- * @returns {Promise<'podcast' | 'career' | 'cross_domain'>}
+ * @returns {Promise<'podcast' | 'career' | 'website' | 'cross_domain'>}
  */
 async function classifyDomain(question, openaiClient) {
     const q = question || '';
+
+    // Phase B: Bridge entity — free, <1ms. Runs BEFORE Phase R's short-circuit (added
+    // 2026-08-24) — see the module doc comment at the top of this file. Root-caused a
+    // real failure this fix addresses: "What does the Apache Iceberg Wikipedia page
+    // discuss?" matched Phase R's podcast regex (the word "discuss") before Phase E's
+    // entity lookup ever ran, so a genuine website<->podcast bridge was missed entirely.
+    const bridgeMatch = _bridgeClassify(q);
+    if (bridgeMatch) {
+        console.log(`[CLASSIFY] phase=B(bridge) domain=cross_domain matched="${bridgeMatch.matched}" candidate_domains=${bridgeMatch.domains}`);
+        return 'cross_domain';
+    }
 
     // Phase R: Regex — free, <1ms
     const rxDomain = _regexClassify(q);
@@ -274,5 +355,6 @@ async function classifyDomain(question, openaiClient) {
 // ─── Module init ──────────────────────────────────────────────────────────────
 
 _entityLookup = _loadEntityCatalog();
+_bridgeEntityLookup = _loadBridgeEntities();
 
-module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS };
+module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS, getBridgeContext };
