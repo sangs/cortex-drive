@@ -9,6 +9,13 @@ The gateway loads this file at startup for Phase E (entity catalog lookup) of th
 multi-phase intent classifier. Phase E is free and runs before the paid embedding
 tier (Phase S).
 
+Also writes a "bridge_entities" section (added 2026-08-24, see
+documents/architecture/website-domain-cross-domain-routing-design-2026-08-24.md §2.2):
+Concept/Technology names that are EMPIRICALLY connected to more than one domain's real
+data (not a blanket re-inclusion of shared-label types — see the CAREER_LABELS/
+PODCAST_LABELS/WEBSITE_LABELS comment below for why shared labels stay excluded from the
+main per-domain lists). Consumed by intent_classifier.js's new pre-regex bridge check.
+
 Run manually:
     python3 scripts/generate_entity_catalog.py
 
@@ -45,6 +52,20 @@ CAREER_LABELS  = frozenset({
     'Degree', 'Institution', 'Certification', 'OpenSource', 'Team'
 })
 PODCAST_LABELS = frozenset({'Episode', 'Podcast'})
+# 'website' domain (added 2026-08-24) — WebsiteSource is exclusive to it, same pattern
+# as PODCAST_LABELS/CAREER_LABELS above. SourceSnapshot deliberately excluded — its
+# `name`-equivalent content isn't a meaningful classification signal the way a page
+# title is.
+WEBSITE_LABELS = frozenset({'WebsiteSource'})
+
+# Relationship types connecting a Concept/Technology bridge candidate back to each
+# domain's anchors. Bounded variable-length (*1..2) because the actual hop shape is
+# LLM-extraction-dependent for podcast (BAML's prompt says "link via Topic where
+# possible," not rigidly enforced) — see the design doc §2.2 for the full rationale.
+# NEEDS LIVE VERIFICATION against real graph data once Neo4j is reachable — this
+# pattern is reasoned from the write-path code (ingestion_engine.py), not yet run.
+BRIDGE_REL_TYPES_WEBSITE = ['COVERS_TECHNOLOGY', 'DISCUSSES']
+BRIDGE_REL_TYPES_PODCAST = ['COVERS_TECHNOLOGY', 'COVERS_CONCEPT', 'HAS_TOPIC']
 
 
 def main():
@@ -57,6 +78,8 @@ def main():
 
     career_names  = set()
     podcast_names = set()
+    website_names = set()
+    bridge_entities: dict[str, list[str]] = {}
 
     try:
         with driver.session() as session:
@@ -78,23 +101,56 @@ def main():
                     career_names.add(name)
                 elif labels & PODCAST_LABELS:
                     podcast_names.add(name)
-                # Shared/SYSTEM labels: intentionally skipped
+                elif labels & WEBSITE_LABELS:
+                    website_names.add(name)
+                # Shared/SYSTEM labels (Topic, Concept, Technology, Person, Community,
+                # Publication): intentionally skipped from the per-domain lists above —
+                # see the module docstring / WEBSITE_LABELS comment for why. They're
+                # handled separately below, only when empirically bridging two domains.
+
+            # Bridge-entity detection (added 2026-08-24) — see design doc §2.2. Only
+            # Concept/Technology nodes ACTUALLY connected to both a website anchor and a
+            # podcast anchor are included — not every Concept/Technology node.
+            website_rels = '|'.join(BRIDGE_REL_TYPES_WEBSITE)
+            podcast_rels = '|'.join(BRIDGE_REL_TYPES_PODCAST)
+            bridge_result = session.run(
+                f"""
+                MATCH (bridge) WHERE (bridge:Technology OR bridge:Concept)
+                  AND bridge.tenant_id IN [$tenant_id, 'SYSTEM', 'PUBLIC']
+                MATCH (bridge)-[:{website_rels}*1..2]-(website_anchor:WebsiteSource)
+                MATCH (bridge)-[:{podcast_rels}*1..2]-(podcast_anchor)
+                WHERE podcast_anchor:Episode OR podcast_anchor:Topic OR podcast_anchor:Podcast
+                RETURN DISTINCT bridge.name AS entity_name
+                """,
+                tenant_id=TENANT_ID
+            )
+            for record in bridge_result:
+                name = (record['entity_name'] or '').strip()
+                if name:
+                    bridge_entities[name.lower()] = ['website', 'podcast']
     finally:
         driver.close()
 
     catalog = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "node_count": len(career_names) + len(podcast_names),
+        "node_count": len(career_names) + len(podcast_names) + len(website_names),
         "domains": {
             "career":  sorted(career_names),
-            "podcast": sorted(podcast_names)
-        }
+            "podcast": sorted(podcast_names),
+            "website": sorted(website_names)
+        },
+        "bridge_entities": bridge_entities
     }
 
     OUTPUT_PATH.write_text(json.dumps(catalog, indent=2))
     print(f"✓ Entity catalog written to {OUTPUT_PATH}")
     print(f"  career:  {len(career_names)} entities")
     print(f"  podcast: {len(podcast_names)} entities")
+    print(f"  website: {len(website_names)} entities")
+    print(f"  bridge_entities (website<->podcast): {len(bridge_entities)}")
+    if bridge_entities:
+        for name, domains in sorted(bridge_entities.items()):
+            print(f"    - {name}: {domains}")
 
 
 if __name__ == '__main__':
