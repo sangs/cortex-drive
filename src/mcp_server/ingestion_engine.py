@@ -458,3 +458,161 @@ class IngestionEngine:
         # Placeholder for legacy steps 7-10 (GDS projections, KNN scoring)
         print(f"Triggering GDS enrichment for tenant {self.tenant_id}...")
         pass
+
+    def process_web_source(self, url: str, content: str, content_hash: str, owner_id: str):
+        """
+        Main entry point for processing a single web-URL source (Phase A —
+        documents/architecture/phase-a-web-url-adapter-design-2026-08-19.md).
+
+        Called by WebUrlAdapter.process_item() only when has_changed() already
+        determined this content differs from the current snapshot (or is a first-time
+        fetch) — this method always creates a new snapshot, it does not re-check the
+        hash itself. Mirrors process_transcript()'s shape (extract -> validate -> write
+        -> register in Permify), applied to a WebsiteSource anchor instead of an Episode.
+        """
+        print(f"Starting web-source ingestion for {url}...")
+
+        # 1. LLM extraction (title, description, entities, relationships)
+        extraction = b.ExtractWebPage(content=content, url=url)
+
+        # 2. Schema Validation for WebsiteSource
+        source_data = {
+            'tenant_id': self.tenant_id,
+            'owner_id': owner_id,
+            'source_type': 'website',
+            'name': extraction.title,
+            'description': extraction.description,
+            'uri': url,
+            'base_url': url,
+            'requires_auth': False,
+            'extraction_method': 'trafilatura',
+        }
+        validated_source = validate_upsert('WebsiteSource', source_data)
+
+        # 3. Upsert WebsiteSource + create new SourceSnapshot (flip old is_current)
+        source_node_id = self._upsert_website_source(validated_source, url, content_hash)
+
+        # 4. Upsert extracted entities + relationships, linked to the WebsiteSource
+        entity_ids = self._upsert_web_entities(source_node_id, extraction)
+
+        # 5. Register in Permify
+        all_node_ids = [source_node_id] + entity_ids
+        self._register_with_openfga([nid for nid in all_node_ids if nid])
+
+        print(f"Web-source ingestion complete for {url}.")
+        return source_node_id
+
+    def _upsert_website_source(self, source, url: str, content_hash: str) -> str | None:
+        """Upsert the WebsiteSource node (stable identity across snapshots — matched by
+        tenant_id + base_url, node_id set only ON CREATE so it never changes across
+        re-fetches), create a new SourceSnapshot, and flip any prior current snapshot to
+        is_current=false. Returns the WebsiteSource's node_id."""
+        props = source.dict()
+        if 'metadata' in props and isinstance(props['metadata'], dict):
+            props['metadata'] = json.dumps(props['metadata'])
+        now = datetime.now().isoformat()
+
+        query = """
+        MERGE (s:WebsiteSource {tenant_id: $tenant_id, base_url: $base_url})
+        ON CREATE SET s.node_id = randomUUID()
+        SET s += $props,
+            s.last_synced_at = $now
+
+        WITH s
+        OPTIONAL MATCH (s)-[:HAS_SNAPSHOT]->(old:SourceSnapshot {is_current: true})
+        SET old.is_current = false
+
+        WITH s
+        CREATE (snap:SourceSnapshot {
+            tenant_id: $tenant_id,
+            content_hash: $content_hash,
+            metadata_schema_version: $metadata_schema_version,
+            fetched_at: $now,
+            is_current: true
+        })
+        SET snap.node_id = randomUUID()
+        MERGE (s)-[:HAS_SNAPSHOT]->(snap)
+        SET s.current_snapshot_id = snap.node_id
+
+        RETURN s.node_id AS node_id
+        """
+        with self.driver.session() as session:
+            result = session.run(
+                query,
+                tenant_id=self.tenant_id,
+                base_url=url,
+                props=props,
+                now=now,
+                content_hash=content_hash,
+                metadata_schema_version=source.metadata_schema_version,
+            )
+            record = result.single()
+            return record["node_id"] if record else None
+
+    def _upsert_web_entities(self, source_node_id: str, extraction) -> list[str | None]:
+        """Upsert BAML-extracted Concept/Technology/Person/ReferenceLink entities and
+        link them to the WebsiteSource node via DISCUSSES/COVERS_TECHNOLOGY/MENTIONS —
+        the SAME node types the podcast pipeline already uses (shared ontology backbone,
+        the mechanism cross-domain bridge discovery already traverses), just a different
+        anchor and a Phase-A-scoped relationship set (WebRelationshipType) instead of the
+        podcast-specific RelationshipType. Returns list of node_ids for newly created
+        nodes."""
+        node_ids: list[str | None] = []
+
+        with self.driver.session() as session:
+            # Concepts
+            for concept in extraction.concepts:
+                query = """
+                MERGE (c:Concept {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET c.node_id = randomUUID(), c.description = $description
+                RETURN c.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, name=concept.name, description=concept.description)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
+            # Technologies
+            for tech in extraction.technologies:
+                query = """
+                MERGE (t:Technology {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET t.node_id = randomUUID()
+                RETURN t.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, name=tech.name)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
+            # People
+            for person in extraction.people:
+                query = """
+                MERGE (p:Person {tenant_id: $tenant_id, name: $name})
+                ON CREATE SET p.node_id = randomUUID(), p.role = $role
+                RETURN p.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, name=person.name, role=person.role)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
+            # ReferenceLinks
+            for link in extraction.reference_links:
+                query = """
+                MATCH (s:WebsiteSource {tenant_id: $tenant_id, node_id: $source_node_id})
+                MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
+                ON CREATE SET l.node_id = randomUUID(), l.text = $text
+                MERGE (s)-[:HAS_REFERENCE]->(l)
+                RETURN l.node_id AS node_id
+                """
+                result = session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, url=link.url, text=link.text)
+                record = result.single()
+                node_ids.append(record["node_id"] if record else None)
+
+            # Relationships (WebsiteSource -> Concept/Technology/Person)
+            for rel in extraction.relationships:
+                query = f"""
+                MATCH (s:WebsiteSource {{tenant_id: $tenant_id, node_id: $source_node_id}})
+                MATCH (t {{tenant_id: $tenant_id}}) WHERE (t:Concept OR t:Technology OR t:Person) AND t.name = $target
+                MERGE (s)-[r:{rel.relationship_type.name}]->(t)
+                """
+                session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, target=rel.target_node)
+
+        return node_ids

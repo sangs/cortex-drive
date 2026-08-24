@@ -102,6 +102,8 @@ TRAVERSAL_RELATIONSHIPS = [
     'HAS_EPISODE', 'HOSTS', 'GUEST_ON', 'INTERVIEWED_BY',
     # Leadership / portfolio
     'LED', 'HAS_PORTFOLIO',
+    # Universal Source Connector (Phase A+)
+    'HAS_SNAPSHOT',
 ]
 
 PROJECT_GRAPH_RELATIONSHIPS = [
@@ -134,6 +136,9 @@ COMPOSITION_RELATIONSHIPS = [
     # Owned reference/note content — ceases to exist without parent
     'HAS_REFERENCE',     # ThoughtLeadership/Project/Hackathon → ReferenceLink (5 live edges)
     'HAS_PRIVATE_NOTE',  # Project/ThoughtLeadership/Hackathon → PreparatoryNote (24 live org edges)
+    # Universal Source Connector (Phase A+) — a SourceSnapshot has no independent
+    # existence without its parent Source; deleting the Source should cascade.
+    'HAS_SNAPSHOT',
 ]
 
 # Relationships confirmed as NON-composition. Listed explicitly so future code review
