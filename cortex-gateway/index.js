@@ -9,6 +9,7 @@ const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 const DOMAIN_ALLOWED_TYPES = {
     podcast: new Set(_domainManifestsRaw.podcast.node_types),
     career: new Set(_domainManifestsRaw.career.node_types),
+    website: new Set(_domainManifestsRaw.website.node_types),
 };
 
 // Tools that return large graph payloads — LLM only needs a compact summary.

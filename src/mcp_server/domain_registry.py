@@ -109,6 +109,23 @@ DOMAIN_MANIFESTS = {
         "anchor_labels": ["Category", "Technology", "Skill", "Institution", "ThoughtLeadership", "Podcast", "Episode"],
         "realm": "PUBLIC" # Structural landmarks are always discoverable context
     },
+    "website": {
+        "persona": "website",
+        "ui_hints": {
+            "impact_label": "Page Summary",
+            "tech_label": "Referenced Tech",
+            "timeline_label": "Last Synced",
+            "narrative_label": "Extracted Description",
+            "trace_label": "Cross-Domain Bridge",
+            "trace_sub_label": "Shared Entity",
+            "placeholder": "Fetching registered web source metadata..."
+        },
+        # See documents/architecture/website-domain-cross-domain-routing-design-2026-08-24.md
+        "node_set": ["WebsiteSource", "SourceSnapshot"],
+        "anchor_labels": ["WebsiteSource"],
+        "backbone_labels": ["WebsiteSource"],
+        "realm": "INTERNAL"
+    },
     "federated": {
         "persona": "federated",
         "ui_hints": {

@@ -18,5 +18,8 @@
       "ExternalSilo", "DataLake", "GitHub", "Confluence", "TableMetadata", "PageMetadata",
       "ThoughtLeadership", "Community", "Person"
     ]
+  },
+  "website": {
+    "node_types": ["WebsiteSource", "SourceSnapshot"]
   }
 }
