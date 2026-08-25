@@ -2907,6 +2907,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         const querySeenUrls = new Set(); // accumulate tool-result URLs for grounding audit (AP-15)
         let q2RankedNodes = null; // ranked node list captured from search_enterprise_graph for Q2 override
         let isTargetedCareer = false; // true when domainSignal=career but keyword ≠ "Sangeetha" (targeted lookup, not broad map)
+        const bridgeDomainsSearched = new Set(); // domain_intent values actually searched via search_enterprise_graph, for the bridge auto-inject below
 
         const mergeGraphData = (parsed) => {
             if (!parsed || typeof parsed !== 'object') return;
@@ -2967,6 +2968,10 @@ app.post('/query', authMiddleware, async (req, res) => {
                     // rationale as the wants_visual_map override above (AP-20 pattern).
                     if (toolName === 'connect_knowledge_on_demand' || toolName === 'infer_context_on_demand') {
                         toolArgs.query_context = question;
+                    }
+
+                    if (toolName === 'search_enterprise_graph' && toolArgs.domain_intent) {
+                        bridgeDomainsSearched.add(toolArgs.domain_intent);
                     }
 
                     console.log(`[QUERY LOOP ${loopCount}] Executing ${toolName}`, JSON.stringify(toolArgs));
@@ -3062,6 +3067,24 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 continue;
             } else {
+                // Entity-bridge cross_domain: the LLM is instructed to search BOTH candidate
+                // domains, but prompt instructions alone are not reliable (AP-20 precedent —
+                // "never rely on the LLM remembering, override deterministically"). Found live
+                // 2026-08-25: the LLM searched only 1 of 2 candidate domains and answered from
+                // that alone. Rather than let the turn end incomplete, force one more loop
+                // iteration with an explicit correction — bounded by MAX_LOOPS, so this can
+                // only ever add one extra round-trip, never loop indefinitely.
+                if (domainSignal === 'cross_domain' && bridgeContext && loopCount < MAX_LOOPS) {
+                    const missingDomains = bridgeContext.candidate_domains.filter(d => !bridgeDomainsSearched.has(d));
+                    if (missingDomains.length > 0) {
+                        console.log(`[QUERY] Bridge incomplete — missing domain(s): ${missingDomains.join(', ')}. Forcing another loop iteration.`);
+                        messages.push({
+                            role: "user",
+                            content: `You have not yet called search_enterprise_graph for domain_intent="${missingDomains.join('" or "')}" . Call it now, then answer the ORIGINAL question ("${question}") by synthesizing BOTH domains' results together in one combined answer — do not answer about only the domain you just searched, and do not drop what you already found in ${bridgeContext.candidate_domains.filter(d => !missingDomains.includes(d)).join(', ')}.`
+                        });
+                        continue;
+                    }
+                }
                 // For career queries: auto-inject the backbone from get_cluster_context so the
                 // graph visualizer still shows Sangeetha + Category backbone even though the LLM
                 // didn't call the tool (per Q2 instructions to call only search_enterprise_graph).
@@ -3244,11 +3267,22 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // Audit response for hallucinated URLs before sending.
                 const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
 
-                // cross_domain: only bridge participants should reach the frontend.
-                // When a bridge IS found, prune to virtual_link endpoints only.
-                // When no bridge is found, clear entirely — the career/podcast backbone from
-                // the intermediate search_enterprise_graph call must not pollute the canvas.
-                if (domainSignal === 'cross_domain') {
+                // cross_domain (Tier-7 / connect_knowledge_on_demand path only): only
+                // bridge participants should reach the frontend. When a bridge IS found,
+                // prune to virtual_link endpoints only. When no bridge is found, clear
+                // entirely — the career/podcast backbone from the intermediate
+                // search_enterprise_graph call must not pollute the canvas.
+                //
+                // Does NOT apply to the entity-bridge path (bridgeContext !== null, added
+                // 2026-08-24) — that path never calls connect_knowledge_on_demand, so
+                // virtual_links is always empty by construction, not because "no bridge was
+                // found." Its accumulatedGraph already IS the correct graph view (every
+                // node contributing to the synthesized answer, from both domains' direct
+                // search_enterprise_graph calls) and must reach the frontend as-is — see
+                // website-domain-cross-domain-routing-design-2026-08-24.md §2.5. Found live
+                // 2026-08-25: without this guard, a real, correct 2-node WebsiteSource
+                // result was being silently wiped to raw_data:null by this exact branch.
+                if (domainSignal === 'cross_domain' && !bridgeContext) {
                     if (accumulatedGraph.virtual_links.length > 0) {
                         const bridgeIds = new Set();
                         accumulatedGraph.virtual_links.forEach(l => {
