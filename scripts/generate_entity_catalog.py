@@ -108,19 +108,36 @@ def main():
                 # see the module docstring / WEBSITE_LABELS comment for why. They're
                 # handled separately below, only when empirically bridging two domains.
 
-            # Bridge-entity detection (added 2026-08-24) — see design doc §2.2. Only
-            # Concept/Technology nodes ACTUALLY connected to both a website anchor and a
-            # podcast anchor are included — not every Concept/Technology node.
+            # Bridge-entity detection (added 2026-08-24, corrected 2026-08-25 after live
+            # testing) — see design doc §2.2. Only Concept/Technology NAMES actually
+            # connected to both a website anchor and a podcast anchor are included — not
+            # every Concept/Technology node.
+            #
+            # Matches by NAME, not node identity, across the two MATCH clauses —
+            # required because live testing found the same real-world concept (e.g.
+            # "Apache Iceberg") can exist as TWO separate physical Technology nodes: a
+            # pre-existing SYSTEM-tenant landmark (from the podcast pipeline's ontology)
+            # and a newly-MERGEd org-tenant node (from this pipeline's
+            # _upsert_web_entities, which follows the podcast pipeline's OWN existing
+            # _upsert_baml_entities MERGE pattern faithfully — this fragmentation is a
+            # pre-existing characteristic of that pattern, not introduced here). An
+            # identity-based match (same query, but requiring ONE node to satisfy both
+            # MATCH clauses) found zero results live despite a real, correct connection
+            # existing on each side — this name-based version is the fix, verified live.
             website_rels = '|'.join(BRIDGE_REL_TYPES_WEBSITE)
             podcast_rels = '|'.join(BRIDGE_REL_TYPES_PODCAST)
             bridge_result = session.run(
                 f"""
-                MATCH (bridge) WHERE (bridge:Technology OR bridge:Concept)
-                  AND bridge.tenant_id IN [$tenant_id, 'SYSTEM', 'PUBLIC']
-                MATCH (bridge)-[:{website_rels}*1..2]-(website_anchor:WebsiteSource)
-                MATCH (bridge)-[:{podcast_rels}*1..2]-(podcast_anchor)
+                MATCH (website_bridge) WHERE (website_bridge:Technology OR website_bridge:Concept)
+                  AND website_bridge.tenant_id IN [$tenant_id, 'SYSTEM', 'PUBLIC']
+                MATCH (website_bridge)-[:{website_rels}*1..2]-(:WebsiteSource)
+                WITH DISTINCT website_bridge.name AS candidate_name
+                MATCH (podcast_bridge) WHERE (podcast_bridge:Technology OR podcast_bridge:Concept)
+                  AND podcast_bridge.name = candidate_name
+                  AND podcast_bridge.tenant_id IN [$tenant_id, 'SYSTEM', 'PUBLIC']
+                MATCH (podcast_bridge)-[:{podcast_rels}*1..2]-(podcast_anchor)
                 WHERE podcast_anchor:Episode OR podcast_anchor:Topic OR podcast_anchor:Podcast
-                RETURN DISTINCT bridge.name AS entity_name
+                RETURN DISTINCT candidate_name AS entity_name
                 """,
                 tenant_id=TENANT_ID
             )
