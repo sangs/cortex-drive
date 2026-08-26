@@ -15,9 +15,22 @@ echo "=== cortex-gateway: build + deploy ==="
 # The catalog is bundled into the Docker image and loaded at gateway startup for
 # Phase E (entity name lookup) of the intent classifier. Non-blocking: if Neo4j
 # is unreachable, the previous catalog is used and a warning is printed.
+ENTITY_CATALOG_PATH="${REPO}/cortex-gateway/config/entity_catalog.json"
 echo "--- Generating entity catalog from Neo4j..."
 if "${REPO}/.venv/bin/python" "${REPO}/scripts/generate_entity_catalog.py"; then
     echo "✓ Entity catalog updated"
+    # Commit the regenerated catalog locally so the repo's committed copy never
+    # silently drifts from what's actually baked into the deployed image — but
+    # never push automatically (this script runs manually from whatever branch is
+    # checked out; auto-pushing could land on a branch the operator didn't intend).
+    if ! git -C "$REPO" diff --quiet -- "$ENTITY_CATALOG_PATH"; then
+        git -C "$REPO" add "$ENTITY_CATALOG_PATH"
+        git -C "$REPO" commit -m "chore: auto-regenerate entity_catalog.json (pre-deploy)" -- "$ENTITY_CATALOG_PATH"
+        echo "✓ entity_catalog.json changed — committed locally on branch $(git -C "$REPO" branch --show-current)."
+        echo "  >>> Remember to 'git push' this commit — it was NOT pushed automatically. <<<"
+    else
+        echo "  (entity_catalog.json unchanged since last commit — nothing to commit)"
+    fi
 else
     echo "⚠ Entity catalog generation failed — using existing catalog from last deploy"
 fi
