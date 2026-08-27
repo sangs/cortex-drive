@@ -7,12 +7,14 @@ load_dotenv()
 import uvicorn
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 import contextvars
 import asyncio
 import json
 import redis.asyncio as aioredis
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from neo4j import GraphDatabase
 from pydantic import Field
 from typing import Optional
 
@@ -581,6 +583,41 @@ async def infer_context_on_demand(
 
 # FastMCP exposes a starlette app for SSE via .sse_app()
 app = mcp.sse_app()
+
+# Neo4j health-check connect timeout — kept short so a hung/unreachable Aura instance
+# fails the status check quickly instead of hanging the request.
+NEO4J_HEALTH_CHECK_TIMEOUT_SECONDS = 5
+
+def _check_neo4j_connectivity() -> bool:
+    """Synchronous, tenant-agnostic Neo4j reachability check — a bare driver +
+    verify_connectivity(), not a query. Run off the event loop via asyncio.to_thread
+    since the neo4j driver's verify_connectivity() is blocking."""
+    driver = GraphDatabase.driver(
+        os.environ["NEO4J_URI"],
+        auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
+        connection_timeout=NEO4J_HEALTH_CHECK_TIMEOUT_SECONDS,
+    )
+    try:
+        driver.verify_connectivity()
+    finally:
+        driver.close()
+
+async def health_check(request):
+    """Reports MCP server liveness plus real Neo4j reachability — distinct from the
+    gateway's own /health, which only confirms the gateway process is up. The frontend's
+    System Health panel polls this (via the gateway's /api/system-status proxy) so the
+    'Neo4j Cloud' status card reflects an actual connectivity check instead of mirroring
+    the unrelated SSE-connection boolean.
+    See documents/architecture/neo4j-status-indicator-design-2026-08-27.md."""
+    try:
+        await asyncio.to_thread(_check_neo4j_connectivity)
+        neo4j_status = "up"
+    except Exception as e:
+        print(f"[HEALTH] Neo4j connectivity check failed: {e}")
+        neo4j_status = "down"
+    return JSONResponse({"status": "ok", "neo4j": neo4j_status})
+
+app.add_route("/health", health_check, methods=["GET"])
 
 from starlette.datastructures import QueryParams, Headers
 

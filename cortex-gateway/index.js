@@ -579,6 +579,29 @@ const guestTokenMiddleware = async (req, res, next) => {
 // Health check
 app.get('/health', (req, res) => res.send({ status: 'ok' }));
 
+// System status — real per-service reachability for the frontend's System Health panel.
+// Unauthenticated (infra status only, no tenant data), mirroring /health's scope.
+// See documents/architecture/neo4j-status-indicator-design-2026-08-27.md.
+const SYSTEM_STATUS_MCP_TIMEOUT_MS = 5000;
+
+app.get('/api/system-status', async (req, res) => {
+    try {
+        const oidcToken = await getCloudRunToken(mcpServerUrl);
+        const mcpRes = await fetch(`${mcpServerUrl}/health`, {
+            headers: oidcToken ? { Authorization: oidcToken } : {},
+            signal: AbortSignal.timeout(SYSTEM_STATUS_MCP_TIMEOUT_MS),
+        });
+        if (!mcpRes.ok) {
+            return res.send({ mcp: 'down', neo4j: 'unknown' });
+        }
+        const mcpHealth = await mcpRes.json();
+        return res.send({ mcp: 'up', neo4j: mcpHealth.neo4j === 'up' ? 'up' : 'down' });
+    } catch (e) {
+        console.error(`[SYSTEM-STATUS] MCP health check failed: ${e.message}`);
+        return res.send({ mcp: 'down', neo4j: 'unknown' });
+    }
+});
+
 // Auth Middleware
 const authMiddleware = async (req, res, next) => {
     // 0. Guest Share Token Bypass (Signature-validated by guestTokenMiddleware)

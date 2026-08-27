@@ -38,6 +38,9 @@ const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { 
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
 const ConversationHistoryModal = dynamic(() => import("@/components/ConversationHistoryModal"), { ssr: false });
+
+// System Health panel polling — see documents/architecture/neo4j-status-indicator-design-2026-08-27.md
+const SYSTEM_STATUS_POLL_INTERVAL_MS = 30000;
 import { getThemeForType } from "@/utils/GraphTheme";
 import {
     CAREER_BACKBONE,
@@ -105,6 +108,7 @@ export default function DashboardPage() {
     const [isActivating, setIsActivating] = useState(true);
     const [conversationId, setConversationId] = useState<string>('');
     const [historyModalOpen, setHistoryModalOpen] = useState(false);
+    const [systemStatus, setSystemStatus] = useState<{ mcp: string, neo4j: string }>({ mcp: 'unknown', neo4j: 'unknown' });
 
     // Restore dashboard state from sessionStorage on mount (survives settings navigation).
     useEffect(() => {
@@ -127,6 +131,30 @@ export default function DashboardPage() {
         setConversationId(prev => prev || crypto.randomUUID());
         setHasMounted(true);
     }, []);
+
+    // Poll real per-service reachability for the System Health panel. Distinct from
+    // useMCP()'s isConnected, which only reflects the gateway SSE connection — this
+    // reports actual MCP-server and Neo4j connectivity independently.
+    useEffect(() => {
+        if (!hasMounted) return;
+        const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+        let cancelled = false;
+
+        const pollSystemStatus = async () => {
+            try {
+                const res = await fetch(`${gatewayUrl}/api/system-status`);
+                if (!res.ok) throw new Error(`status ${res.status}`);
+                const data = await res.json();
+                if (!cancelled) setSystemStatus({ mcp: data.mcp, neo4j: data.neo4j });
+            } catch {
+                if (!cancelled) setSystemStatus({ mcp: 'down', neo4j: 'unknown' });
+            }
+        };
+
+        pollSystemStatus();
+        const intervalId = setInterval(pollSystemStatus, SYSTEM_STATUS_POLL_INTERVAL_MS);
+        return () => { cancelled = true; clearInterval(intervalId); };
+    }, [hasMounted]);
 
     // Persist key dashboard state to sessionStorage whenever it changes.
     useEffect(() => {
@@ -1070,13 +1098,13 @@ export default function DashboardPage() {
                                 <div className="flex flex-col">
                                     <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Neo4j Cloud</span>
                                     <div className="flex items-center gap-1.5">
-                                        {hasMounted ? (
-                                            isConnected ? <Wifi className="w-3 h-3 text-emerald-500" /> : <WifiOff className="w-3 h-3 text-rose-500" />
+                                        {hasMounted && systemStatus.neo4j !== 'unknown' ? (
+                                            systemStatus.neo4j === 'up' ? <Wifi className="w-3 h-3 text-emerald-500" /> : <WifiOff className="w-3 h-3 text-rose-500" />
                                         ) : (
                                             <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
                                         )}
-                                        <span className={`text-[10px] font-bold ${hasMounted && isConnected ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                            {(!hasMounted) ? "Verifying..." : (isConnected ? "Authorized" : "Halted")}
+                                        <span className={`text-[10px] font-bold ${hasMounted && systemStatus.neo4j === 'up' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                            {(!hasMounted || systemStatus.neo4j === 'unknown') ? "Verifying..." : (systemStatus.neo4j === 'up' ? "Connected" : "Unreachable")}
                                         </span>
                                     </div>
                                 </div>
@@ -1088,13 +1116,13 @@ export default function DashboardPage() {
                                 <div className="flex flex-col">
                                     <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">MCP Server</span>
                                     <div className="flex items-center gap-1.5">
-                                        {hasMounted ? (
-                                            isConnected ? <Wifi className="w-3 h-3 text-emerald-500" /> : <WifiOff className="w-3 h-3 text-rose-500" />
+                                        {hasMounted && systemStatus.mcp !== 'unknown' ? (
+                                            systemStatus.mcp === 'up' ? <Wifi className="w-3 h-3 text-emerald-500" /> : <WifiOff className="w-3 h-3 text-rose-500" />
                                         ) : (
                                             <div className="w-2 h-2 rounded-full bg-slate-200 animate-pulse" />
                                         )}
-                                        <span className={`text-[10px] font-bold ${hasMounted && isConnected ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                            {(!hasMounted) ? "Verifying..." : (isConnected ? "Responsive" : "Disconnected")}
+                                        <span className={`text-[10px] font-bold ${hasMounted && systemStatus.mcp === 'up' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                            {(!hasMounted || systemStatus.mcp === 'unknown') ? "Verifying..." : (systemStatus.mcp === 'up' ? "Responsive" : "Disconnected")}
                                         </span>
                                     </div>
                                 </div>
