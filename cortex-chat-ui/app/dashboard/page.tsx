@@ -532,10 +532,20 @@ export default function DashboardPage() {
                     processedNodes = collapsed.nodes;
                     processedLinks = collapsed.links;
                 }
-            } else if (!backboneOnly && nodes.some(n => n.type === 'Person') &&
-                       nodes.some(n => GROUPABLE_TYPES.has(n.type))) {
-                // Q3: Cross-domain mode with any groupable career type present.
-                // Collapse them so the graph starts at grouper level, not individual instances.
+            } else if (backboneOnly && backboneSet !== CAREER_BACKBONE) {
+                // Q1 (podcast) and cross-domain/bridge backbone mode (2026-08-28) — no Category-
+                // node special case like career (podcast/bridge results don't have Category
+                // groupers), so always collapse via collapseToGroupers. Safe to call
+                // unconditionally: it only collapses types that are both in GROUPABLE_TYPES and
+                // present at >= GROUPER_MIN_COUNT, everything else passes through unchanged.
+                const collapsed = collapseToGroupers(nodes, finalLinks);
+                processedNodes = collapsed.nodes;
+                processedLinks = collapsed.links;
+            } else if (!backboneOnly && nodes.some(n => GROUPABLE_TYPES.has(n.type))) {
+                // Fallback path (domain_signal absent/unrecognized, backboneOnly stays false) —
+                // widened 2026-08-28 to trigger on any groupable type present, not just when a
+                // Person node is also present (that condition missed Technology/Concept-only
+                // floods with no Person node).
                 const collapsed = collapseToGroupers(nodes, finalLinks);
                 processedNodes = collapsed.nodes;
                 processedLinks = collapsed.links;

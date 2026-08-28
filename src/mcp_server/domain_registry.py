@@ -45,6 +45,22 @@ SEARCH_EXPANSION_LIMIT_SCOPED = int(os.environ.get("SEARCH_EXPANSION_LIMIT_SCOPE
 # making the hub-degree penalty (base weight) disappear entirely.
 BRIDGE_RELEVANCE_DISCOUNT = float(os.environ.get("BRIDGE_RELEVANCE_DISCOUNT", "0.4"))
 
+# Minimum graph degree a node must have to be eligible as a connect_knowledge_on_demand
+# candidate *target* (2026-08-28). Root-caused live: all 13 :Skill nodes in this graph have
+# degree=1 (resume-seeded, one HAS_SKILL edge each) and Skill is part of the "professional"
+# domain's node_set (PROJECT_GRAPH_NODES) — so every one of them is a maximally cheap Dijkstra
+# target (weight = 1 + ln(2)) that can crowd a legitimate, more-distant target (e.g.
+# "Cortex-Drive") out of the top-N ranking. This is a different failure mode from
+# BRIDGE_RELEVANCE_DISCOUNT (§8b of bridge-discovery-shortest-path-redesign-2026-07-23.md):
+# that mechanism rewards relevant nodes, this one excludes structurally-uninformative ones,
+# regardless of relevance. Deliberately NOT embedding/semantic similarity — that approach was
+# already considered and rejected for this tool (breaks Invariant 11 groundability, see the
+# same redesign doc §8b). Default 2 clears every observed degree-1 Skill node while preserving
+# degree>=3 legitimate bridge participants (e.g. "Governance"/"Explainability", degree 3).
+# Does not apply to a node matching an explicit target_node_name hint — that guarantee of
+# inclusion (§8a) must survive regardless of degree.
+BRIDGE_MIN_CANDIDATE_DEGREE = int(os.environ.get("BRIDGE_MIN_CANDIDATE_DEGREE", "2"))
+
 # infer_context_on_demand structural-fact caps (2026-08-03). Env-var configurable for the same
 # reason as BRIDGE_DEFAULT_LIMIT/BRIDGE_MAX_LIMIT — bounds how much of a node's neighborhood a
 # single request can return, regardless of the node's actual degree.

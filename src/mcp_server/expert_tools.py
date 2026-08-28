@@ -1790,7 +1790,7 @@ class ExpertTools:
             adjacency: dict = {}
             node_info: dict = {}
 
-            def _remember(nid, name, labels_, node_id_, description_):
+            def _remember(nid, name, labels_, node_id_, description_, degree_):
                 if nid not in node_info:
                     node_info[nid] = {
                         "name": name,
@@ -1798,25 +1798,28 @@ class ExpertTools:
                         "labels": labels_ or [],
                         "node_id": node_id_,
                         "description": description_ or "",
+                        "degree": degree_ or 0,
                     }
 
             for rec in edge_result.records:
                 a_id, b_id, rel_type = rec["a_id"], rec["b_id"], rec["rel_type"]
                 deg_a, deg_b = rec["deg_a"], rec["deg_b"]
-                _remember(a_id, rec["a_name"], rec["a_labels"], rec["a_node_id"], rec["a_description"])
-                _remember(b_id, rec["b_name"], rec["b_labels"], rec["b_node_id"], rec["b_description"])
+                _remember(a_id, rec["a_name"], rec["a_labels"], rec["a_node_id"], rec["a_description"], deg_a)
+                _remember(b_id, rec["b_name"], rec["b_labels"], rec["b_node_id"], rec["b_description"], deg_b)
                 adjacency.setdefault(a_id, []).append((b_id, rel_type, deg_b))
                 adjacency.setdefault(b_id, []).append((a_id, rel_type, deg_a))
 
-            # Candidate targets: any node in the authorized subgraph whose labels intersect the
-            # target domain, excluding the source itself (matches labels() in full, not just the
-            # primary label, so dual-labeled nodes like Project+ThoughtLeadership still qualify).
-            candidate_targets = {
+            # Label-matched targets: any node in the authorized subgraph whose labels intersect
+            # the target domain, excluding the source itself (matches labels() in full, not just
+            # the primary label, so dual-labeled nodes like Project+ThoughtLeadership still
+            # qualify). This is the pool a target_node_name hint resolves against, BEFORE the
+            # degree floor below — an explicit hint must resolve regardless of degree.
+            label_matched_targets = {
                 nid for nid, info in node_info.items()
                 if nid != source_eid and target_domain_labels & set(info["labels"])
             }
 
-            if not candidate_targets:
+            if not label_matched_targets:
                 return json.dumps({
                     "nodes": [],
                     "virtual_links": [],
@@ -1825,18 +1828,18 @@ class ExpertTools:
                 })
 
             # Resolve an explicit target hint (2026-07-23), if given, against the already-fetched
-            # node_info — no extra Cypher round trip needed. Restricted to candidate_targets so a
-            # hint outside target_domain can't silently widen scope. Exact match preferred,
+            # node_info — no extra Cypher round trip needed. Restricted to label_matched_targets so
+            # a hint outside target_domain can't silently widen scope. Exact match preferred,
             # CONTAINS fallback with shortest-name tiebreak, mirroring the source resolution above.
             must_include_id = None
             target_hint_unresolved = False
             if target_node_name:
                 tnl = target_node_name.strip().lower()
-                exact = [nid for nid in candidate_targets if node_info[nid]["name"] and node_info[nid]["name"].lower() == tnl]
+                exact = [nid for nid in label_matched_targets if node_info[nid]["name"] and node_info[nid]["name"].lower() == tnl]
                 if exact:
                     must_include_id = exact[0]
                 else:
-                    contains = [nid for nid in candidate_targets if node_info[nid]["name"] and tnl in node_info[nid]["name"].lower()]
+                    contains = [nid for nid in label_matched_targets if node_info[nid]["name"] and tnl in node_info[nid]["name"].lower()]
                     if contains:
                         contains.sort(key=lambda nid: len(node_info[nid]["name"]))
                         must_include_id = contains[0]
@@ -1844,6 +1847,24 @@ class ExpertTools:
                     target_hint_unresolved = True
 
             must_include = {must_include_id} if must_include_id else set()
+
+            # Minimum-degree floor (2026-08-28) — excludes structurally-uninformative candidates
+            # (e.g. degree-1 :Skill nodes) from the ORGANIC ranking pool only. A resolved
+            # target_node_name hint is exempted (§8a's guarantee of inclusion must survive
+            # regardless of degree) — see domain_registry.BRIDGE_MIN_CANDIDATE_DEGREE.
+            from domain_registry import BRIDGE_MIN_CANDIDATE_DEGREE
+            candidate_targets = {
+                nid for nid in label_matched_targets
+                if nid == must_include_id or node_info[nid]["degree"] >= BRIDGE_MIN_CANDIDATE_DEGREE
+            }
+
+            if not candidate_targets:
+                return json.dumps({
+                    "nodes": [],
+                    "virtual_links": [],
+                    "bridge_summary": f"No sufficiently-connected candidate nodes found in target domain '{target_domain}'.",
+                    "confidence_tier": "none"
+                })
 
             found = self._dijkstra_to_targets(
                 adjacency, source_eid, candidate_targets, limit,

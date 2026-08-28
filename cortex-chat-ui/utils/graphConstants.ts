@@ -23,13 +23,26 @@ export const PODCAST_BACKBONE = new Set([
     'Podcast', 'Episode', 'Year'
 ]);
 
+/**
+ * Extra types admitted for cross-domain/bridge results (2026-08-28) on top of the career+podcast
+ * union — these are the actual answer-relevant anchors for a bridge query (the website source
+ * itself, and the shared Technology/Concept entities the bridge is built on). Without these,
+ * backboneOnly:true would hide the very nodes the answer is about, not just the flood around them.
+ * SourceSnapshot deliberately excluded — it's an internal Iceberg-style version pointer with no
+ * `name` field (by design, see phase-a-web-url-adapter-design-2026-08-19.md), not a user-facing
+ * entity; it belongs in GRAPH_VISUAL_EXCLUDE below alongside Chunk/Source, not the backbone.
+ */
+export const BRIDGE_BACKBONE_EXTRA = new Set([
+    'Technology', 'Concept', 'WebsiteSource'
+]);
+
 // ---------------------------------------------------------------------------
 // Node affordance type sets (visual + interaction behavior)
 // ---------------------------------------------------------------------------
 
 /** Node types that are never rendered on the canvas (noise / privacy). */
 export const GRAPH_VISUAL_EXCLUDE = new Set([
-    'Chunk', 'Source', 'PreparatoryNote', '__MetaContext__', 'Year'
+    'Chunk', 'Source', 'PreparatoryNote', '__MetaContext__', 'Year', 'SourceSnapshot'
 ]);
 
 /** Node types that carry no semantic content — show as leaves only. */
@@ -100,6 +113,12 @@ export const GROUPER_LABELS: Record<string, string> = {
     Startup:         'Startups',
     Degree:          'Education',
     ProfessionalEducation: 'Education',
+    // Podcast (Q1) and cross-domain/bridge groupers — added 2026-08-28 so those query types get
+    // the same "backbone + double-click expand" collapse as career, instead of rendering every
+    // matched instance flat. See documents/architecture/backbone-graph-rendering-2026-08-28.md.
+    Episode:         'Episodes',
+    Technology:      'Technologies',
+    Concept:         'Concepts',
 };
 
 /** Minimum number of instances required before collapsing into a grouper node. */
@@ -305,7 +324,10 @@ export function inferBackbone(raw: any): Set<string> {
 
 /**
  * Selects backbone set and backboneOnly flag from gateway-declared domain_signal.
- * cross_domain passes all node types through (bridge nodes span both domains).
+ * cross_domain (2026-08-28) now gets backboneOnly:true too — career ∪ podcast ∪
+ * BRIDGE_BACKBONE_EXTRA (the bridge-relevant anchors: Technology/Concept/WebsiteSource/
+ * SourceSnapshot), instead of passing every node type through unfiltered. Same reasoning as
+ * podcast/career: a flood of 100+ nodes with no filtering isn't a "backbone" view.
  */
 export function domainToBackbone(
     signal: string | undefined,
@@ -313,6 +335,6 @@ export function domainToBackbone(
 ): { backbone: Set<string>; backboneOnly: boolean } {
     if (signal === 'podcast')      return { backbone: PODCAST_BACKBONE, backboneOnly: true };
     if (signal === 'career')       return { backbone: CAREER_BACKBONE,  backboneOnly: true };
-    if (signal === 'cross_domain') return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]), backboneOnly: false };
-    return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]), backboneOnly: false };
+    if (signal === 'cross_domain') return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE, ...BRIDGE_BACKBONE_EXTRA]), backboneOnly: true };
+    return { backbone: new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE, ...BRIDGE_BACKBONE_EXTRA]), backboneOnly: false };
 }
