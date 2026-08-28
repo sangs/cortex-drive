@@ -130,6 +130,15 @@ export const GRAPH_THEME: Record<string, ThemeToken> = {
         hsl: 'hsl(226, 70%, 94%)',
         tailwind: 'bg-indigo-100 shadow-[0_0_8px_rgba(199,210,254,0.5)]',
         radius: 12
+    },
+
+    // 4. WEBSITE ENTITIES (added 2026-08-29 — was falling through to DEFAULT_THEME's gray)
+    WebsiteSource: {
+        hsl: 'hsl(190, 80%, 50%)',      // Cyan — unused elsewhere in this palette, distinct
+                                         // from podcast's blue/indigo family and career's
+                                         // slate/orange family, reads naturally as "web"
+        tailwind: 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]',
+        radius: 12
     }
 };
 

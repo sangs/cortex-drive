@@ -2952,7 +2952,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         let isTargetedCareer = false; // true when domainSignal=career but keyword ≠ "Sangeetha" (targeted lookup, not broad map)
         const bridgeDomainsSearched = new Set(); // domain_intent values actually searched via search_enterprise_graph, for the bridge auto-inject below
 
-        const mergeGraphData = (parsed) => {
+        const mergeGraphData = (parsed, sourceDomain) => {
             if (!parsed || typeof parsed !== 'object') return;
             const inNodes = parsed.nodes || (Array.isArray(parsed) ? parsed : []);
             const inLinks = parsed.links || [];
@@ -2962,6 +2962,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                 const id = n.element_id || n.id || n.name;
                 if (id && !seenNodeIds.has(id)) {
                     seenNodeIds.add(id);
+                    // Tags which domain_intent call produced this node — used by the
+                    // entity-bridge VIRTUAL_BRIDGE construction below to tell apart a
+                    // same-domain name coincidence from an actual cross-domain bridge.
+                    // Undefined/absent for tool calls that don't pass a domain (harmless).
+                    if (sourceDomain) n.__bridgeDomain = sourceDomain;
                     accumulatedGraph.nodes.push(n);
                 }
             });
@@ -3040,7 +3045,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                         // Accumulate graph data from every tool that returns nodes/links
                         try {
                             const parsed = JSON.parse(toolContent);
-                            mergeGraphData(parsed);
+                            mergeGraphData(parsed, toolName === 'search_enterprise_graph' ? toolArgs.domain_intent : undefined);
                             // Accumulate tool-result URLs for grounding audit (AP-15).
                             extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
@@ -3319,6 +3324,51 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 // Audit response for hallucinated URLs before sending.
                 const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
+
+                // Entity-bridge path (bridgeContext !== null): the two (or more, as domains are
+                // added) search_enterprise_graph calls each return their own internally-linked
+                // subgraph, but nothing connects the domains to each other — the shared
+                // bridge_entity that caused them to appear together is never rendered. Construct
+                // session-only VIRTUAL_BRIDGE links (same zero-write, gold-dashed mechanism
+                // connect_knowledge_on_demand already uses — see
+                // documents/architecture/ontology-persistence-vs-virtual-bridges.md) connecting
+                // every pair of nodes, FROM DIFFERENT DOMAINS, whose name matches the bridge
+                // entity. Domain membership comes from mergeGraphData's __bridgeDomain tag (set
+                // from toolArgs.domain_intent), not node type — an earlier version tried
+                // inferring domain from each domain's broad anchor_labels type set, but several
+                // types (Technology, Publication, Person, Concept) legitimately belong to more
+                // than one domain's manifest, which produced a combinatorial explosion of
+                // unrelated nodes all wired to one match. Matching by literal name AND requiring
+                // different __bridgeDomain tags is what actually scales to N domains: however
+                // many domains contribute a same-named match, every cross-domain pair gets one
+                // link, same-domain duplicates (e.g. a WebsiteSource and a Technology node both
+                // named "Apache Iceberg" from the *same* website call) are skipped as noise, not
+                // a real bridge. See documents/architecture/backbone-graph-rendering-2026-08-28.md
+                // Addendum 3.
+                if (bridgeContext && bridgeContext.bridge_entity) {
+                    const bridgeEntityLower = bridgeContext.bridge_entity.toLowerCase();
+                    const matchingNodes = accumulatedGraph.nodes.filter(n =>
+                        n.name && n.name.toLowerCase().includes(bridgeEntityLower)
+                    );
+                    const seenVirtualKeys = new Set(accumulatedGraph.virtual_links.map(l => `${l.source}-${l.target}-${l.type || ''}`));
+                    for (let i = 0; i < matchingNodes.length; i++) {
+                        for (let j = i + 1; j < matchingNodes.length; j++) {
+                            const a = matchingNodes[i];
+                            const b = matchingNodes[j];
+                            if (!a.__bridgeDomain || !b.__bridgeDomain || a.__bridgeDomain === b.__bridgeDomain) continue;
+                            const key = `${a.id}-${b.id}-VIRTUAL_BRIDGE`;
+                            const keyRev = `${b.id}-${a.id}-VIRTUAL_BRIDGE`;
+                            if (seenVirtualKeys.has(key) || seenVirtualKeys.has(keyRev)) continue;
+                            seenVirtualKeys.add(key);
+                            accumulatedGraph.virtual_links.push({
+                                source: a.id,
+                                target: b.id,
+                                type: 'VIRTUAL_BRIDGE',
+                                discovery_reason: `shared entity: ${bridgeContext.bridge_entity}`,
+                            });
+                        }
+                    }
+                }
 
                 // cross_domain (Tier-7 / connect_knowledge_on_demand path only): only
                 // bridge participants should reach the frontend. When a bridge IS found,

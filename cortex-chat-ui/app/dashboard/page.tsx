@@ -292,7 +292,18 @@ export default function DashboardPage() {
                     });
                 }
                 if (parsedRaw.virtual_links && Array.isArray(parsedRaw.virtual_links)) {
-                    parsedRaw.virtual_links.forEach((l: any) => addLinkToArray({ ...l, isVirtual: true }));
+                    parsedRaw.virtual_links.forEach((l: any) => {
+                        // Same backbone-membership guard as regular links above (2026-08-29) —
+                        // without it, a virtual link whose endpoint didn't survive the type
+                        // filter (e.g. a bridge target that's a Topic, not in any backbone set)
+                        // renders as a dangling edge to a node that doesn't exist. Previously
+                        // unguarded because every connect_knowledge_on_demand (Q3) bridge target
+                        // happened to already be a backbone-eligible career type — not a safe
+                        // assumption for the newer entity-bridge VIRTUAL_BRIDGE links, which can
+                        // point at any node type that shares the bridge entity's name.
+                        if (backboneOnly && (!allowedIds.has(l.source) || !allowedIds.has(l.target))) return;
+                        addLinkToArray({ ...l, isVirtual: true });
+                    });
                 }
 
                 // Identity anchor detection (mirrors legacy path — needed when gateway returns { nodes, links })
