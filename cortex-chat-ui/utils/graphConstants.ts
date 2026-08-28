@@ -31,9 +31,13 @@ export const PODCAST_BACKBONE = new Set([
  * SourceSnapshot deliberately excluded — it's an internal Iceberg-style version pointer with no
  * `name` field (by design, see phase-a-web-url-adapter-design-2026-08-19.md), not a user-facing
  * entity; it belongs in GRAPH_VISUAL_EXCLUDE below alongside Chunk/Source, not the backbone.
+ * Project included so career-side bridge targets (e.g. the Cortex-Drive project itself) survive
+ * the cross_domain backboneOnly filter — confirmed missing 2026-08-28 for the JPMorgan-AI-governance
+ * -> Cortex-Drive bridge query. Not added to GROUPER_LABELS: a bridge result typically surfaces
+ * only 1-2 Project nodes, and those are usually the exact node the query is about.
  */
 export const BRIDGE_BACKBONE_EXTRA = new Set([
-    'Technology', 'Concept', 'WebsiteSource'
+    'Technology', 'Concept', 'WebsiteSource', 'Project'
 ]);
 
 // ---------------------------------------------------------------------------
