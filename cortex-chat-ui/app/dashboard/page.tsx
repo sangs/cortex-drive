@@ -325,6 +325,15 @@ export default function DashboardPage() {
                         applyAffordanceFlags(filteredNodes, filteredLinks);
                         return { nodes: filteredNodes, links: filteredLinks };
                     }
+                } else if (backboneOnly && backboneSet !== CAREER_BACKBONE) {
+                    // Podcast (Q1) and cross-domain/bridge backbone mode (2026-08-28, moved here
+                    // 2026-08-29 — this {nodes,links}-shaped branch is the one search_enterprise_graph
+                    // and get_cluster_context actually hit; the identical addition made to the
+                    // rawResults/addNode branch below never ran for those tools, since this branch
+                    // returns unconditionally at the bottom before that code is ever reached).
+                    const collapsed = collapseToGroupers(nodes, links);
+                    applyAffordanceFlags(collapsed.nodes, collapsed.links);
+                    return { nodes: collapsed.nodes, links: collapsed.links };
                 }
                 applyAffordanceFlags(nodes, links);
                 return { nodes, links };
