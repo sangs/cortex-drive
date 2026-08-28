@@ -119,6 +119,13 @@ export const GROUPER_LABELS: Record<string, string> = {
     Episode:         'Episodes',
     Technology:      'Technologies',
     Concept:         'Concepts',
+    // Added 2026-08-29: still too many top-level nodes after the 2026-08-28 pass — individual
+    // Person (podcast guests/hosts) and Podcast (show) nodes were rendering ungrouped. No-op for
+    // Q2/career (exactly one Person there, below GROUPER_MIN_COUNT) — collapseToGroupers
+    // preserves `type` on the synthetic grouper, so type-keyed logic elsewhere (spine-mode
+    // Person visibility, bridge-discovery domain inference) is unaffected.
+    Person:          'People',
+    Podcast:         'Podcasts',
 };
 
 /** Minimum number of instances required before collapsing into a grouper node. */
