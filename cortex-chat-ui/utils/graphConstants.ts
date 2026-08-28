@@ -24,20 +24,25 @@ export const PODCAST_BACKBONE = new Set([
 ]);
 
 /**
- * Extra types admitted for cross-domain/bridge results (2026-08-28) on top of the career+podcast
- * union — these are the actual answer-relevant anchors for a bridge query (the website source
- * itself, and the shared Technology/Concept entities the bridge is built on). Without these,
- * backboneOnly:true would hide the very nodes the answer is about, not just the flood around them.
- * SourceSnapshot deliberately excluded — it's an internal Iceberg-style version pointer with no
- * `name` field (by design, see phase-a-web-url-adapter-design-2026-08-19.md), not a user-facing
- * entity; it belongs in GRAPH_VISUAL_EXCLUDE below alongside Chunk/Source, not the backbone.
- * Project included so career-side bridge targets (e.g. the Cortex-Drive project itself) survive
- * the cross_domain backboneOnly filter — confirmed missing 2026-08-28 for the JPMorgan-AI-governance
- * -> Cortex-Drive bridge query. Not added to GROUPER_LABELS: a bridge result typically surfaces
- * only 1-2 Project nodes, and those are usually the exact node the query is about.
+ * Static extra types admitted for cross-domain/bridge results (2026-08-28) on top of the
+ * career+podcast union — SYSTEM-tenant ontological anchors (Invariant 9) that are always
+ * backbone-worthy for cross_domain regardless of any specific bridge result, plus the website
+ * domain's own anchor type. SourceSnapshot deliberately excluded — it's an internal
+ * Iceberg-style version pointer with no `name` field (by design, see
+ * phase-a-web-url-adapter-design-2026-08-19.md), not a user-facing entity; it belongs in
+ * GRAPH_VISUAL_EXCLUDE below alongside Chunk/Source, not the backbone.
+ *
+ * NOT the mechanism for org-tenant, domain-specific bridge targets (Project, and whatever future
+ * domains introduce) — a 2026-08-28 attempt to blanket-admit 'Project' here caused every one of a
+ * person's Projects to survive the filter, not just the actually-bridge-connected one (confirmed
+ * on the JPMorgan-AI-governance -> Cortex-Drive query: Gain/Loss Cloud Native Microservice and
+ * other unrelated Projects rendered ungrouped alongside the real answer). That's superseded by the
+ * dynamic clause in domainToBackbone() below: any node that's actually an endpoint of a
+ * virtual_link is backbone-admitted on its own merits, regardless of type — so a future domain's
+ * node type never needs an entry here to appear in a bridge result.
  */
 export const BRIDGE_BACKBONE_EXTRA = new Set([
-    'Technology', 'Concept', 'WebsiteSource', 'Project'
+    'Technology', 'Concept', 'WebsiteSource'
 ]);
 
 // ---------------------------------------------------------------------------
@@ -135,11 +140,21 @@ export const GROUPER_LABELS: Record<string, string> = {
 /** Minimum number of instances required before collapsing into a grouper node. */
 export const GROUPER_MIN_COUNT = 2;
 
-/** Set of types eligible for virtual grouper collapse. */
-export const GROUPABLE_TYPES = new Set(Object.keys(GROUPER_LABELS));
-
 /** Prefix used for synthetic grouper node ids (e.g. "group-Company"). */
 export const GROUPER_ID_PREFIX = 'group-';
+
+/**
+ * Naive English pluralization fallback for a grouper display label when a type has no
+ * GROUPER_LABELS entry (2026-08-29). GROUPER_LABELS stays as an override map for nicer copy
+ * ("Education" instead of "Degrees") — it is no longer a required allowlist. This is what lets a
+ * brand-new domain's new node type collapse into a sensible grouper ("Widgets (4)") the first
+ * time it shows up in volume, with zero edit to this file.
+ */
+function pluralizeType(type: string): string {
+    if (/[sxz]$|[^aeiou]h$/i.test(type)) return `${type}es`;
+    if (/[^aeiou]y$/i.test(type)) return `${type.slice(0, -1)}ies`;
+    return `${type}s`;
+}
 
 // ---------------------------------------------------------------------------
 // Category hierarchy constants
@@ -195,9 +210,28 @@ export function deduplicateNodes<N extends { id?: any; name?: any }, L extends {
 }
 
 /**
- * Collapses ≥ GROUPER_MIN_COUNT instances of the same groupable type into a single
- * representative grouper node. Rewires all links through the grouper.
- * Used on the initial backbone render so the graph starts at a clean summary level.
+ * True when a node must always render individually and can never be swept into a same-type
+ * grouper, regardless of type or how many siblings it has (2026-08-29). A node earns protection
+ * by being the actual thing a query result is about — a confirmed-relevance bridge target
+ * (`relevance_tier === 'confirmed'`, set by connect_knowledge_on_demand) or a resolved bridge
+ * answer (`bridge_reason` + `is_bento_eligible`). This is what keeps e.g. a "Governance"
+ * Technology node that's the real answer to a bridge query from disappearing into an opaque
+ * "Technologies (6)" grouper alongside unrelated same-type nodes.
+ */
+function isGroupingProtected(n: GraphNode): boolean {
+    return n.relevance_tier === 'confirmed' || (Boolean(n.bridge_reason) && n.is_bento_eligible === true);
+}
+
+/**
+ * Collapses ≥ GROUPER_MIN_COUNT unprotected instances of the same type into a single
+ * representative grouper node. Rewires all links through the grouper. Used on the initial
+ * backbone render so the graph starts at a clean summary level.
+ *
+ * Type-generic (2026-08-29) — any type with enough unprotected instances collapses, not just
+ * types hand-listed in a GROUPABLE_TYPES allowlist. GROUPER_LABELS is consulted only for a nicer
+ * display name; an unlisted type falls back to a naive pluralization. This is the property that
+ * lets a future domain's new node type group correctly the first time it appears in volume, with
+ * zero edit to this file.
  */
 export function collapseToGroupers(
     nodes: GraphNode[],
@@ -206,9 +240,9 @@ export function collapseToGroupers(
     const byType = new Map<string, GraphNode[]>();
     const ungrouped: GraphNode[] = [];
     nodes.forEach(n => {
-        if (GROUPABLE_TYPES.has(n.type ?? '')) {
-            if (!byType.has(n.type!)) byType.set(n.type!, []);
-            byType.get(n.type!)!.push(n);
+        if (n.type && !isGroupingProtected(n)) {
+            if (!byType.has(n.type)) byType.set(n.type, []);
+            byType.get(n.type)!.push(n);
         } else {
             ungrouped.push(n);
         }
@@ -223,7 +257,7 @@ export function collapseToGroupers(
             const grouperId = `${GROUPER_ID_PREFIX}${type}`;
             outNodes.push({
                 id: grouperId,
-                name: `${GROUPER_LABELS[type]} (${instances.length})`,
+                name: `${GROUPER_LABELS[type] || pluralizeType(type)} (${instances.length})`,
                 type,
                 isGrouper: true,
                 groupCount: instances.length,

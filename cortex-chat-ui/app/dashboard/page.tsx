@@ -51,7 +51,6 @@ import {
     HUB_TYPES,
     CATEGORY_CHILD_TYPES,
     GROUPER_LABELS,
-    GROUPABLE_TYPES,
     GROUPER_MIN_COUNT,
     PROFESSIONAL_EXPERIENCE_CATEGORY,
     collapseToGroupers,
@@ -229,9 +228,23 @@ export default function DashboardPage() {
 
             // Helper to decide if a node should even be added in backbone-only mode
             const allowedSet = backboneSet || new Set([...CAREER_BACKBONE, ...PODCAST_BACKBONE]);
-            const isAllowed = (nodeType: string) => {
+            // Dynamic bridge-endpoint admission (2026-08-29) — any node that's actually an
+            // endpoint of a virtual_link is backbone-admitted regardless of type, on top of the
+            // static allowedSet. This is what lets a bridge-connected node of a type nobody
+            // pre-declared (e.g. Cortex-Drive, a Project) survive the filter, without requiring a
+            // BRIDGE_BACKBONE_EXTRA edit every time a new domain's node type shows up in a bridge
+            // result — participating in the bridge is sufficient admission on its own. See
+            // graphConstants.ts's BRIDGE_BACKBONE_EXTRA doc comment for the full reasoning.
+            const virtualBridgeNodeIds = new Set<string>();
+            if (Array.isArray(parsedRaw.virtual_links)) {
+                parsedRaw.virtual_links.forEach((l: any) => {
+                    if (l.source) virtualBridgeNodeIds.add(l.source);
+                    if (l.target) virtualBridgeNodeIds.add(l.target);
+                });
+            }
+            const isAllowed = (nodeType: string, nodeId?: string) => {
                 if (!backboneOnly) return true;
-                return allowedSet.has(nodeType);
+                return allowedSet.has(nodeType) || (nodeId ? virtualBridgeNodeIds.has(nodeId) : false);
             };
 
             // Affordance constants are imported from graphConstants — not re-declared here.
@@ -266,7 +279,7 @@ export default function DashboardPage() {
                 parsedRaw.nodes.forEach((n: any) => {
                     if (!n.id) return;
                     if (GRAPH_VISUAL_EXCLUDE.has(n.type)) return;
-                    if (!isAllowed(n.type)) return;
+                    if (!isAllowed(n.type, n.id)) return;
                     allowedIds.add(n.id);
                     const existingIdx = nodes.findIndex(node => nodeKey(node) === nodeKey(n));
                     if (existingIdx === -1) nodes.push(n);
@@ -354,7 +367,7 @@ export default function DashboardPage() {
 
             const addNode = (node: any) => {
                 if (!node.id || GRAPH_VISUAL_EXCLUDE.has(node.type)) return null;
-                if (!isAllowed(node.type)) return null; // Backbone-only filter
+                if (!isAllowed(node.type, node.id)) return null; // Backbone-only filter
 
                 const existingIndex = nodes.findIndex(n => nodeKey(n) === nodeKey(node));
                 if (existingIndex === -1) {
@@ -556,16 +569,17 @@ export default function DashboardPage() {
                 // Q1 (podcast) and cross-domain/bridge backbone mode (2026-08-28) — no Category-
                 // node special case like career (podcast/bridge results don't have Category
                 // groupers), so always collapse via collapseToGroupers. Safe to call
-                // unconditionally: it only collapses types that are both in GROUPABLE_TYPES and
-                // present at >= GROUPER_MIN_COUNT, everything else passes through unchanged.
+                // unconditionally: it only collapses unprotected types present at >=
+                // GROUPER_MIN_COUNT, everything else passes through unchanged.
                 const collapsed = collapseToGroupers(nodes, finalLinks);
                 processedNodes = collapsed.nodes;
                 processedLinks = collapsed.links;
-            } else if (!backboneOnly && nodes.some(n => GROUPABLE_TYPES.has(n.type))) {
+            } else if (!backboneOnly) {
                 // Fallback path (domain_signal absent/unrecognized, backboneOnly stays false) —
-                // widened 2026-08-28 to trigger on any groupable type present, not just when a
-                // Person node is also present (that condition missed Technology/Concept-only
-                // floods with no Person node).
+                // always attempt grouping (2026-08-29): collapseToGroupers is safe to call
+                // unconditionally, it only collapses types actually present at >=
+                // GROUPER_MIN_COUNT and passes everything else through unchanged, so a type-based
+                // pre-check here was a redundant optimization, not a correctness requirement.
                 const collapsed = collapseToGroupers(nodes, finalLinks);
                 processedNodes = collapsed.nodes;
                 processedLinks = collapsed.links;

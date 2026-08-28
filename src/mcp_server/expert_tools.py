@@ -1879,31 +1879,75 @@ class ExpertTools:
                     "confidence_tier": "none"
                 })
 
-            ranked_organic = sorted(found.items(), key=lambda kv: kv[1][0])[:limit]
+            # Relevance tiering (2026-08-29) — pure path weight rewards structural proximity, not
+            # topical relevance: a highly-connected source (e.g. a Person node) has many one-hop
+            # neighbors that will always out-rank a real but farther/differently-matched topical
+            # connection. Split organic candidates into "confirmed" (some node along the path
+            # literally matches a query keyword, in name or description) vs "structural" (no
+            # match), and rank confirmed-tier first — so topical relevance always wins a `limit`
+            # slot over raw proximity, and structural-only candidates only fill leftover capacity.
+            # Degrades to today's weight-only ranking when no query_context was supplied
+            # (relevance_keywords empty): every candidate is "structural" by construction, so the
+            # tiering split is a no-op and ranking falls back to pure weight, unchanged.
+            def _path_is_confirmed(path: list) -> bool:
+                if not relevance_keywords:
+                    return False
+                # path[0] is always the source node (Dijkstra reconstruction walks target -> source
+                # then reverses) — excluded here. Every path shares the same source, and a person's
+                # own bio/description will trivially contain broad terms ("AI", their employer's
+                # name) that would otherwise confirm every single candidate regardless of the
+                # actual target, defeating the tiering entirely. Only the hops the path actually
+                # traverses through/to should count as topical confirmation.
+                for nid in path[1:]:
+                    info = node_info.get(nid, {})
+                    text = f"{info.get('name') or ''} {info.get('description') or ''}".lower()
+                    if self._keyword_hit(text, relevance_keywords):
+                        return True
+                return False
+
+            organic = [(tid, data) for tid, data in found.items() if tid != must_include_id]
+            confirmed_organic = sorted(
+                (item for item in organic if _path_is_confirmed(item[1][1])),
+                key=lambda kv: kv[1][0],
+            )
+            structural_organic = sorted(
+                (item for item in organic if not _path_is_confirmed(item[1][1])),
+                key=lambda kv: kv[1][0],
+            )
+            ranked_organic = (confirmed_organic + structural_organic)[:limit]
             ranked_ids = {tid for tid, _ in ranked_organic}
+            dropped_structural_count = max(0, len(structural_organic) - max(0, limit - len(confirmed_organic)))
+
             # "Additional, on top of limit" — a resolved target hint is guaranteed a slot even if
             # it wouldn't otherwise make the top-`limit` cut, rather than bumping an organic result.
+            # Always tier "confirmed" — it's either the LLM's explicit target hint or the resolved
+            # answer, worth showing regardless of keyword overlap.
             extra_targets = [
                 (must_include_id, found[must_include_id])
             ] if must_include_id and must_include_id in found and must_include_id not in ranked_ids else []
             ranked = ranked_organic + extra_targets
+            confirmed_ids = {tid for tid, _ in confirmed_organic} | ({must_include_id} if must_include_id else set())
 
             nodes_by_id: dict = {}
             virtual_links = []
 
             for target_eid, (weight, path, rels) in ranked:
                 rel_chain = " → ".join(rels)
+                tier = "confirmed" if target_eid in confirmed_ids else "structural"
 
                 # Every hop becomes one VIRTUAL_BRIDGE link, labeled with the real relationship
                 # traversed — more groundable (Invariant 11) than the old "Shared: <anchor>"
                 # label, since it exposes the actual relationship chain rather than an inferred
-                # shared-concept grouping.
+                # shared-concept grouping. Tagged with the target's relevance_tier (2026-08-29) so
+                # the frontend can protect confirmed-tier bridge results from generic type-based
+                # grouping without needing to know anything about the node's type.
                 for i in range(len(path) - 1):
                     virtual_links.append({
                         "source": path[i],
                         "target": path[i + 1],
                         "type": "VIRTUAL_BRIDGE",
-                        "discovery_reason": f"via {rels[i]}"
+                        "discovery_reason": f"via {rels[i]}",
+                        "relevance_tier": tier,
                     })
 
                 for node_id in path:
@@ -1917,6 +1961,7 @@ class ExpertTools:
                         "name": info["name"],
                         "type": info["type"],
                         "has_federated_bridge": True,
+                        "relevance_tier": tier,
                     }
                     if node_id == target_eid:
                         entry.update({
@@ -1950,6 +1995,11 @@ class ExpertTools:
             bridge_summary = f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."
             if target_hint_unresolved:
                 bridge_summary += f" Note: requested target '{target_node_name}' was not found in domain '{target_domain}'."
+            if dropped_structural_count > 0:
+                bridge_summary += (
+                    f" {dropped_structural_count} additional structurally-close candidate(s) were "
+                    f"found but excluded as topically unconfirmed against the query."
+                )
 
             return json.dumps({
                 "nodes": list(nodes_by_id.values()),
@@ -1989,6 +2039,23 @@ class ExpertTools:
         return {w for w in words if w not in cls._BRIDGE_QUERY_STOPWORDS}
 
     @staticmethod
+    def _keyword_hit(text: str, keywords: set) -> bool:
+        """Word-boundary keyword match — NOT plain substring containment (2026-08-29).
+
+        Short/common keywords like "ai" are legitimate and meaningful against short node
+        `name` fields, but a naive `kw in text` check catastrophically over-matches once `text`
+        includes full-sentence `description` prose: "ai" is a substring of "explAIn", "domAIn",
+        "certAIn", "maintAIn", etc., so almost any paragraph of English text would spuriously
+        "confirm" against it. \\b-anchored regex requires the keyword to appear as a whole word
+        (case-insensitive, already-lowercased input assumed), which is what "literal keyword
+        match" was always supposed to mean here — the substring form only got away with it while
+        the check was scoped to short, curated names.
+        """
+        if not text or not keywords:
+            return False
+        return any(re.search(rf"\b{re.escape(kw)}\b", text) for kw in keywords)
+
+    @staticmethod
     def _dijkstra_to_targets(
         adjacency: dict,
         source_id: str,
@@ -2001,10 +2068,14 @@ class ExpertTools:
         """Single-source Dijkstra with a logarithmic hub-degree edge penalty, over an
         already-fetched adjacency dict of {node_id: [(neighbor_id, rel_type, neighbor_degree)]}.
 
-        When relevance_keywords is given, a hop into a node whose name (via node_info) literally
-        contains one of those keywords gets its weight multiplied by
+        When relevance_keywords is given, a hop into a node whose name OR description (via
+        node_info) literally contains one of those keywords gets its weight multiplied by
         domain_registry.BRIDGE_RELEVANCE_DISCOUNT — makes ranking query-aware without needing a
-        caller to already know the target (2026-07-23).
+        caller to already know the target (2026-07-23). Description is included (2026-08-29) since
+        it's already fetched for every node in the traversal and often carries the actual topical
+        language that a short name doesn't (e.g. a Technology node named "Governance" is an exact
+        match, but a Project's relevance to "AI governance" usually only shows up in its
+        description).
 
         Stops once `limit` targets have been settled AND every id in `must_include` (if any) has
         been found — Dijkstra pops nodes in non-decreasing distance order, so the first `limit`
@@ -2027,8 +2098,9 @@ class ExpertTools:
         def edge_weight(neighbor_id: str, neighbor_degree: int) -> float:
             w = 1 + math.log(1 + neighbor_degree)
             if relevance_keywords:
-                name = (node_info.get(neighbor_id, {}).get("name") or "").lower()
-                if name and any(kw in name for kw in relevance_keywords):
+                info = node_info.get(neighbor_id, {})
+                text = f"{info.get('name') or ''} {info.get('description') or ''}".lower()
+                if ExpertTools._keyword_hit(text, relevance_keywords):
                     w *= BRIDGE_RELEVANCE_DISCOUNT
             return w
 
