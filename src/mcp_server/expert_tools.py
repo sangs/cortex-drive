@@ -93,7 +93,12 @@ class ExpertTools:
         OPTIONAL MATCH (expandedNode)<-[:CONTAINS|HAS_SOURCE|MENTIONS*1..3]-(parentEpisode:Episode)
         WHERE ({sec_parent})
         
-        WITH collect(DISTINCT elementId(anchor)) + collect(DISTINCT elementId(expandedNode)) + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
+        // expandedNode fan-out capped via $expansion_limit — same query text for every caller,
+        // only the parameter value differs (SEARCH_EXPANSION_LIMIT_DEFAULT vs _SCOPED in
+        // domain_registry.py). anchor/parentEpisode aren't capped: in practice they're already
+        // small (anchor = literal keyword-name matches; parentEpisode is reached only via a
+        // further, naturally-bounded hop from expandedNode).
+        WITH collect(DISTINCT elementId(anchor)) + collect(DISTINCT elementId(expandedNode))[0..$expansion_limit] + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
         """
         return query.replace("{sec_anchor}", self._get_security_clause("anchor")).replace("{sec_expanded}", self._get_security_clause("expandedNode")).replace("{sec_parent}", self._get_security_clause("parentEpisode"))
 
@@ -113,17 +118,23 @@ class ExpertTools:
           AND ($allowed_labels IS NULL OR any(label IN labels(neighbor) WHERE label IN $allowed_labels))
 
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
-        
-        WITH node, expanded_ids, 
-             collect(DISTINCT neighbor) AS neighbors,
-             collect(DISTINCT r) AS rels,
+
+        // Prefer content-bearing neighbors (real description/text) before the per-anchor cap
+        // below truncates — otherwise the cap keeps whatever Neo4j happened to match first,
+        // which can silently drop the most relevant neighbor (see SEARCH_NEIGHBOR_LIMIT_DEFAULT/_SCOPED).
+        WITH node, expanded_ids, neighbor, r, tech
+        ORDER BY CASE WHEN coalesce(neighbor.description, neighbor.text, "") <> "" THEN 0 ELSE 1 END
+
+        WITH node, expanded_ids,
+             collect(DISTINCT neighbor)[0..$neighbor_limit] AS neighbors,
+             collect(DISTINCT r)[0..$neighbor_limit] AS rels,
              collect(DISTINCT {
                 id: neighbor.node_id,
                 name: neighbor.name,
                 type: labels(neighbor)[0],
                 relationship: type(r),
                 target_id: neighbor.node_id
-             }) AS relationships,
+             })[0..$neighbor_limit] AS relationships,
              collect(DISTINCT tech.name) AS technologies,
              collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date, rel_title: coalesce(r.title, r.role)} ELSE null END)) AS relDates
         """
@@ -1157,9 +1168,14 @@ class ExpertTools:
     def _inject_federated_demo_boost(self) -> str:
         return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
 
-    def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all") -> str:
+    def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all", scoped_expansion: bool = False) -> str:
         """
         Search for entities across the Universal Enterprise Graph dynamically, explicitly crossing boundaries between domains (Podcast/Resume/Federated).
+
+        scoped_expansion: set deterministically by the gateway for bridge/cross_domain entity
+        queries only (never LLM-chosen — AP-20 pattern). Caps the taxonomy-expansion anchor
+        fan-out to SEARCH_EXPANSION_LIMIT_SCOPED instead of the default practical-no-op limit.
+        See domain_registry.py and documents/architecture/search-enterprise-graph-expansion-cap-2026-08-27.md.
         """
         # Career cluster shortcut: only fire when the LLM explicitly signals wants_visual_map=True.
         # Keyword-based triggering (checking for "career", "map", etc.) is suppressed because it
@@ -1286,8 +1302,14 @@ class ExpertTools:
         try:
             # AP-2: get_authorized_labels returns None for "all" → Cypher $allowed_labels IS NULL → neighbor filter bypassed.
             allowed_labels = get_authorized_labels(domain_intent)
+            from domain_registry import (
+                SEARCH_NEIGHBOR_LIMIT_DEFAULT, SEARCH_NEIGHBOR_LIMIT_SCOPED,
+                SEARCH_EXPANSION_LIMIT_DEFAULT, SEARCH_EXPANSION_LIMIT_SCOPED,
+            )
+            neighbor_limit = SEARCH_NEIGHBOR_LIMIT_SCOPED if scoped_expansion else SEARCH_NEIGHBOR_LIMIT_DEFAULT
+            expansion_limit = SEARCH_EXPANSION_LIMIT_SCOPED if scoped_expansion else SEARCH_EXPANSION_LIMIT_DEFAULT
 
-            print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id}")
+            print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id} (scoped_expansion={scoped_expansion})")
             result = self._exec_query(
                 query,
                 **self._security_params(),
@@ -1297,7 +1319,9 @@ class ExpertTools:
                 allowed_labels=allowed_labels,
                 has_temporal_intent=has_temporal_intent,
                 embedding=embedding,
-                owner_id=os.environ.get("OWNER_USER_ID")
+                owner_id=os.environ.get("OWNER_USER_ID"),
+                neighbor_limit=neighbor_limit,
+                expansion_limit=expansion_limit
             )
             
             # --- SELF-CORRECTION FALLBACK ---

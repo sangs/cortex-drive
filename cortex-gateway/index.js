@@ -22,7 +22,7 @@ const COMPOSITION_RELS = ['HAS_EPISODE', 'HAS_SOURCE', 'CONTAINS', 'HAS_REFERENC
 // Max chars sent to LLM for knowledge/text tools (chunks, resume narratives).
 const MAX_KNOWLEDGE_CONTENT_CHARS = 8000;
 
-function buildLlmToolContent(toolName, toolContent) {
+function buildLlmToolContent(toolName, toolContent, toolArgs = {}) {
     if (GRAPH_HEAVY_TOOLS.has(toolName)) {
         try {
             const parsed = JSON.parse(toolContent);
@@ -37,6 +37,26 @@ function buildLlmToolContent(toolName, toolContent) {
             // Sort by temporal_boost DESC (Cypher-computed field; preserves the ordering already
             // established by the query — re-sorting by isPresent/endYear scrambles it).
             uniqueNodes.sort((a, b) => (b.temporal_boost || 0) - (a.temporal_boost || 0));
+
+            // search_enterprise_graph never sets temporal_boost (that field only exists on
+            // get_cluster_context/the semantic-fallback path), so the sort above is a no-op here
+            // — which query result of a 100+ node keyword match happens to end up in the top 20
+            // truncation below is then arbitrary Cypher/Map order, not relevance. Re-sort by
+            // actual relevance to the search keyword before truncating, so content-bearing,
+            // keyword-matching nodes (e.g. the one episode transcript that actually discusses
+            // the topic) survive instead of getting silently cut. Found live 2026-08-27: real
+            // grounded content existed in the tool result but never reached the LLM because of
+            // this gap — see documents/architecture/search-enterprise-graph-relevance-ranking-fix-2026-08-27.md.
+            if (toolName === 'search_enterprise_graph') {
+                const searchKeyword = (toolArgs.keyword || '').toLowerCase();
+                const relevanceScore = (n) => {
+                    const name = (n.name || '').toLowerCase();
+                    const hasContent = (n.description && n.description.length > 5) || (n.text && n.text.length > 5);
+                    const nameMatch = searchKeyword && name.includes(searchKeyword);
+                    return (nameMatch ? 2 : 0) + (hasContent ? 1 : 0);
+                };
+                uniqueNodes.sort((a, b) => relevanceScore(b) - relevanceScore(a));
+            }
             const extra = uniqueNodes.length > 20 ? ` … and ${uniqueNodes.length - 20} more` : '';
             const vl = parsed.virtual_links ? ` ${parsed.virtual_links.length} virtual bridge(s).` : '';
             const bs = parsed.bridge_summary ? ` ${parsed.bridge_summary}` : '';
@@ -2803,7 +2823,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: buildLlmToolContent(toolName, toolContent)
+                            content: buildLlmToolContent(toolName, toolContent, toolArgs)
                         });
 
                     } catch (err) {
@@ -2984,6 +3004,16 @@ app.post('/query', authMiddleware, async (req, res) => {
                         console.log('[QUERY] Career override: wants_visual_map→false for Q2 content fetch');
                     }
 
+                    // Bridge/cross-domain entity queries: cap search_enterprise_graph's anchor-
+                    // expansion fan-out (documents/architecture/search-enterprise-graph-expansion-cap-2026-08-27.md).
+                    // Deterministic — set by the gateway based on bridgeContext, never left to the
+                    // LLM (AP-20 pattern, same rationale as the wants_visual_map override above).
+                    // Q1/Q2/Q3 (bridgeContext null) never set this, so their call args — and the
+                    // resulting Cypher parameter value — are unchanged from before this fix.
+                    if (bridgeContext && toolName === 'search_enterprise_graph') {
+                        toolArgs.scoped_expansion = true;
+                    }
+
                     // Cross-domain bridge query-aware ranking (2026-07-23), and node-context
                     // inference query-aware ranking (2026-08-03): always supply the user's
                     // original question as query_context, overriding anything the LLM passed.
@@ -3075,7 +3105,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                             role: "tool",
                             tool_call_id: toolCall.id,
                             name: toolName,
-                            content: buildLlmToolContent(toolName, toolContent)
+                            content: buildLlmToolContent(toolName, toolContent, toolArgs)
                         });
 
                     } catch (err) {

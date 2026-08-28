@@ -15,6 +15,30 @@ def get_bridge_limit(requested: int = None) -> int:
     value = requested if requested else BRIDGE_DEFAULT_LIMIT
     return max(1, min(value, BRIDGE_MAX_LIMIT))
 
+# search_enterprise_graph's per-anchor neighbor cap (2026-08-27, revised same day). Bounds how
+# much of each matched node's 1-hop neighborhood the initial query returns — the frontend's
+# click-to-expand UI (expandedNodes/expansionCache in dashboard/page.tsx) is the intended path
+# for going deeper, not an unbounded first response. Originally applied unconditionally to every
+# search_enterprise_graph call; found live to silently drop Q2's established baseline from
+# 50 nodes/88 links to 26/25 (career-map neighbor sets exceeding 20 per anchor). Split into the
+# same DEFAULT/SCOPED two-tier pattern as SEARCH_EXPANSION_LIMIT_* below so Q1/Q2/Q3 (which never
+# set scoped_expansion) keep their exact historical Cypher parameter value and result, and only
+# bridge/cross_domain queries opt into the tight "core + immediate connections" cap.
+SEARCH_NEIGHBOR_LIMIT_DEFAULT = int(os.environ.get("SEARCH_NEIGHBOR_LIMIT_DEFAULT", "10000"))
+SEARCH_NEIGHBOR_LIMIT_SCOPED = int(os.environ.get("SEARCH_NEIGHBOR_LIMIT_SCOPED", "20"))
+
+# search_enterprise_graph's taxonomy-expansion anchor-fan-out cap (2026-08-27). The Cypher
+# fragment always applies `[0..$expansion_limit]` to the expanded-node id list it collects — the
+# SAME query text runs for every caller, only this parameter's value differs. DEFAULT is a
+# practical no-op (larger than this graph's realistic per-query fan-out) so Q1/Q2/Q3's existing
+# call site — which never sets scoped_expansion — gets byte-for-byte the same behavior as before
+# this fix. SCOPED is the tight cap the gateway opts into deterministically (never LLM-chosen,
+# AP-20 pattern) only for bridge/cross_domain entity queries, where an unbounded 0..2 hop walk
+# from a broadly-matching anchor was found live to pull in ~200 nodes for one question.
+# See documents/architecture/search-enterprise-graph-expansion-cap-2026-08-27.md.
+SEARCH_EXPANSION_LIMIT_DEFAULT = int(os.environ.get("SEARCH_EXPANSION_LIMIT_DEFAULT", "10000"))
+SEARCH_EXPANSION_LIMIT_SCOPED = int(os.environ.get("SEARCH_EXPANSION_LIMIT_SCOPED", "20"))
+
 # Multiplier applied to a Dijkstra hop's weight in connect_knowledge_on_demand when the
 # destination node's name literally matches a keyword extracted from the caller's query_context
 # (2026-07-23 query-aware ranking). <1.0 makes query-relevant nodes cheaper to traverse, without

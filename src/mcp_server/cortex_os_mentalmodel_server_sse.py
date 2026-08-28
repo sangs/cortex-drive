@@ -407,11 +407,12 @@ async def get_node_details(
 async def search_enterprise_graph(
     keyword: str = Field(description="The search term to find across the graph (e.g., 'startup', 'BAML', 'Iceberg', 'Kafka')."),
     domain_intent: str = Field("all", description="The domain sandbox to search within. Allowed values: 'professional' (Resume), 'podcast' (Episodes/Chunks), 'federated' (External Silos), or 'all'."),
-    wants_visual_map: bool = Field(False, description="Set to true if the user asks for a map, graph, overview, or visual landscape.")
+    wants_visual_map: bool = Field(False, description="Set to true if the user asks for a map, graph, overview, or visual landscape."),
+    scoped_expansion: bool = Field(False, description="Internal — set automatically by the gateway for bridge/cross-domain entity queries. Do not set this based on user phrasing.")
 ) -> str:
     """
     Search for entities across the Universal Enterprise Graph.
-    Acts as the main switchboard for all domain-specific subgraph routing. 
+    Acts as the main switchboard for all domain-specific subgraph routing.
     Use this when the user asks questions spanning Resume, Podcasts, or Federated Data Silos.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
@@ -420,7 +421,7 @@ async def search_enterprise_graph(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent)
+        return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent, scoped_expansion=scoped_expansion)
     except Exception as e:
         print(f"Error in search_enterprise_graph: {e}")
         return json.dumps({"error": str(e)})
