@@ -373,6 +373,10 @@ const gatewaySystemPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_syste
 const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_security_guest.md'), 'utf-8');
 const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
 const gatewayQ2WriterPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_q2_writer.md'), 'utf-8').trim();
+const gatewayDomainInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_domain_instruction.md'), 'utf-8');
+const gatewayCrossDomainBridgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_bridge.md'), 'utf-8').trim();
+const gatewayCrossDomainTier7Prompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_tier7.md'), 'utf-8').trim();
+const gatewayBridgeCompletionNudgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_bridge_completion_nudge.md'), 'utf-8').trim();
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
@@ -2863,6 +2867,50 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 });
 
 
+// --- Cross-domain bridge-context helpers for the /query orchestration loop ---
+// Extracted 2026-08-29, named per the 2026-08-26 code-quality audit finding — the
+// 2026-08-24/25 query-routing fix added this logic directly inline in the already-large
+// /query handler instead of as named helpers. Scoped to this feature's own code, not a
+// decomposition of the pre-existing handler as a whole (a larger, separate effort).
+
+// Bridge context (added 2026-08-24) — only resolved when domainSignal is cross_domain via
+// the classifier's Phase B (bridge-entity match), not the existing regex-triggered
+// cross_domain path (named-target "how did X influence Y" questions). Kept separate so
+// classifyDomain()'s own contract is untouched — see
+// website-domain-cross-domain-routing-design-2026-08-24.md §2.3.
+function resolveBridgeContext(domainSignal, question) {
+    const bridgeContext = domainSignal === 'cross_domain' ? getBridgeContext(question) : null;
+    if (bridgeContext) {
+        console.log(`[QUERY] bridge_entity="${bridgeContext.bridge_entity}" candidate_domains=${bridgeContext.candidate_domains}`);
+    }
+    return bridgeContext;
+}
+
+function buildCrossDomainInstruction(bridgeContext) {
+    return bridgeContext
+        ? gatewayCrossDomainBridgePrompt
+            .replace(/\{bridge_entity\}/g, bridgeContext.bridge_entity)
+            .replace('{candidate_domains_joined}', bridgeContext.candidate_domains.join(' and '))
+            .replace('{domain_1}', bridgeContext.candidate_domains[0])
+            .replace('{domain_2}', bridgeContext.candidate_domains[1])
+        : gatewayCrossDomainTier7Prompt;
+}
+
+// Returns the corrective nudge message to push onto `messages` (and re-loop) when an
+// entity-bridge cross_domain query hasn't yet searched all candidate domains, or null if
+// nothing is missing / not applicable. Caller owns the push/continue and the MAX_LOOPS
+// bound — this stays a pure constructor, no side effects on the loop.
+function checkBridgeCompletion(domainSignal, bridgeContext, bridgeDomainsSearched, question) {
+    if (domainSignal !== 'cross_domain' || !bridgeContext) return null;
+    const missingDomains = bridgeContext.candidate_domains.filter(d => !bridgeDomainsSearched.has(d));
+    if (missingDomains.length === 0) return null;
+    console.log(`[QUERY] Bridge incomplete — missing domain(s): ${missingDomains.join(', ')}. Forcing another loop iteration.`);
+    return gatewayBridgeCompletionNudgePrompt
+        .replace('{missing_domains_joined}', missingDomains.join('" or "'))
+        .replace('{question}', question)
+        .replace('{searched_domains_joined}', bridgeContext.candidate_domains.filter(d => !missingDomains.includes(d)).join(', '));
+}
+
 /**
  * Non-streaming Orchestration Endpoint
  * Used by the Dashboard for backward compatibility.
@@ -2908,26 +2956,12 @@ app.post('/query', authMiddleware, async (req, res) => {
         const domainSignal = await classifyDomain(question, openai);
         console.log(`[QUERY] domain_signal=${domainSignal}`);
 
-        // Bridge context (added 2026-08-24) — only resolved when domainSignal is
-        // cross_domain via the classifier's new Phase B (bridge-entity match), not the
-        // existing regex-triggered cross_domain path (named-target "how did X influence
-        // Y" questions). Kept as a separate lookup so classifyDomain()'s own contract is
-        // untouched — see website-domain-cross-domain-routing-design-2026-08-24.md §2.3.
-        const bridgeContext = domainSignal === 'cross_domain' ? getBridgeContext(question) : null;
-        if (bridgeContext) {
-            console.log(`[QUERY] bridge_entity="${bridgeContext.bridge_entity}" candidate_domains=${bridgeContext.candidate_domains}`);
-        }
+        const bridgeContext = resolveBridgeContext(domainSignal, question);
+        const crossDomainInstruction = buildCrossDomainInstruction(bridgeContext);
 
-        const crossDomainInstruction = bridgeContext
-            ? `For 'cross_domain' (entity-bridge match): the term "${bridgeContext.bridge_entity}" appears in both the ${bridgeContext.candidate_domains.join(' and ')} domains. Call search_enterprise_graph once per domain (domain_intent="${bridgeContext.candidate_domains[0]}" and domain_intent="${bridgeContext.candidate_domains[1]}") using "${bridgeContext.bridge_entity}" as the keyword, then synthesize one answer grounded in what each domain's actual data says. Do NOT use connect_knowledge_on_demand for this — it is for named-entity path-discovery questions, not shared-topic lookups.`
-            : `For 'cross_domain': follow Tier 7 — search_enterprise_graph first to find ThoughtLeadership node names, then connect_knowledge_on_demand per node.`;
-
-        const domainInstruction = `\n\nCURRENT QUERY DOMAIN CONTEXT: ${domainSignal}\n` +
-            `Respect this classification. ` +
-            `For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. ` +
-            `For 'career': You MUST call search_enterprise_graph(domain_intent="professional", keyword=<specific topic from user query>) before answering — this is REQUIRED for ALL career queries including publications, projects, roles, companies, certifications, and conferences. Early stop is NOT allowed for career domain. Answering from prior knowledge without a tool call is a grounding violation. Do NOT call get_cluster_context. The backbone graph is auto-injected. ` +
-            `For 'website': call search_enterprise_graph(domain_intent="website", keyword=<specific topic from user query>) before answering — do NOT call get_cluster_context. ` +
-            crossDomainInstruction;
+        const domainInstruction = gatewayDomainInstructionPrompt
+            .replace('{domain_signal}', domainSignal)
+            .replace('{cross_domain_instruction}', crossDomainInstruction);
 
         const restrictionNote = accessScope === 'restricted'
             ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
@@ -3132,14 +3166,10 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // that alone. Rather than let the turn end incomplete, force one more loop
                 // iteration with an explicit correction — bounded by MAX_LOOPS, so this can
                 // only ever add one extra round-trip, never loop indefinitely.
-                if (domainSignal === 'cross_domain' && bridgeContext && loopCount < MAX_LOOPS) {
-                    const missingDomains = bridgeContext.candidate_domains.filter(d => !bridgeDomainsSearched.has(d));
-                    if (missingDomains.length > 0) {
-                        console.log(`[QUERY] Bridge incomplete — missing domain(s): ${missingDomains.join(', ')}. Forcing another loop iteration.`);
-                        messages.push({
-                            role: "user",
-                            content: `You have not yet called search_enterprise_graph for domain_intent="${missingDomains.join('" or "')}" . Call it now, then answer the ORIGINAL question ("${question}") by synthesizing BOTH domains' results together in one combined answer — do not answer about only the domain you just searched, and do not drop what you already found in ${bridgeContext.candidate_domains.filter(d => !missingDomains.includes(d)).join(', ')}.`
-                        });
+                if (loopCount < MAX_LOOPS) {
+                    const nudge = checkBridgeCompletion(domainSignal, bridgeContext, bridgeDomainsSearched, question);
+                    if (nudge) {
+                        messages.push({ role: "user", content: nudge });
                         continue;
                     }
                 }

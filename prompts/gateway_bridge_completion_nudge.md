@@ -1,0 +1,1 @@
+You have not yet called search_enterprise_graph for domain_intent="{missing_domains_joined}" . Call it now, then answer the ORIGINAL question ("{question}") by synthesizing BOTH domains' results together in one combined answer — do not answer about only the domain you just searched, and do not drop what you already found in {searched_domains_joined}.

@@ -89,21 +89,30 @@ function _loadEntityCatalog() {
     }
 }
 
-function _entityClassify(q) {
-    if (!_entityLookup || _entityLookup.size === 0) return null;
-    const lower = q.toLowerCase();
-    // Longest-match wins to avoid false positives on short names
-    let bestDomain = null;
-    let bestLen    = 0;
-    let bestName   = null;
-    for (const [name, domain] of _entityLookup) {
+// Shared by _entityClassify and _bridgeClassify below — both need "does any key in this
+// lookup map appear as a substring of the question, and if multiple do, which one is
+// longest" (longest-match wins to avoid false positives on short names, e.g. "AI" matching
+// inside an unrelated longer entity name). Extracted 2026-08-29 — the two call sites had
+// duplicated this loop almost verbatim, differing only in what value each map stores.
+function _longestMatchLookup(query, lookupMap) {
+    if (!lookupMap || lookupMap.size === 0) return null;
+    const lower = query.toLowerCase();
+    let bestValue = null;
+    let bestLen   = 0;
+    let bestName  = null;
+    for (const [name, value] of lookupMap) {
         if (name.length > bestLen && lower.includes(name)) {
-            bestDomain = domain;
-            bestLen    = name.length;
-            bestName   = name;
+            bestValue = value;
+            bestLen   = name.length;
+            bestName  = name;
         }
     }
-    return bestDomain ? { domain: bestDomain, matched: bestName } : null;
+    return bestValue !== null ? { value: bestValue, matched: bestName } : null;
+}
+
+function _entityClassify(q) {
+    const match = _longestMatchLookup(q, _entityLookup);
+    return match ? { domain: match.value, matched: match.matched } : null;
 }
 
 // ─── Phase B: Bridge-entity lookup (added 2026-08-24) ────────────────────────
@@ -136,20 +145,8 @@ function _loadBridgeEntities() {
 }
 
 function _bridgeClassify(q) {
-    if (!_bridgeEntityLookup || _bridgeEntityLookup.size === 0) return null;
-    const lower = q.toLowerCase();
-    // Longest-match wins, same discipline as _entityClassify above.
-    let bestDomains = null;
-    let bestLen      = 0;
-    let bestName     = null;
-    for (const [name, domains] of _bridgeEntityLookup) {
-        if (name.length > bestLen && lower.includes(name)) {
-            bestDomains = domains;
-            bestLen     = name.length;
-            bestName    = name;
-        }
-    }
-    return bestDomains ? { domains: bestDomains, matched: bestName } : null;
+    const match = _longestMatchLookup(q, _bridgeEntityLookup);
+    return match ? { domains: match.value, matched: match.matched } : null;
 }
 
 /**

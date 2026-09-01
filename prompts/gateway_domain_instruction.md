@@ -1,0 +1,4 @@
+
+
+CURRENT QUERY DOMAIN CONTEXT: {domain_signal}
+Respect this classification. For 'podcast': call query_relevant_chunks_hybrid_tool + search_enterprise_graph(domain_intent="podcast") — do NOT call get_cluster_context. For 'career': You MUST call search_enterprise_graph(domain_intent="professional", keyword=<specific topic from user query>) before answering — this is REQUIRED for ALL career queries including publications, projects, roles, companies, certifications, and conferences. Early stop is NOT allowed for career domain. Answering from prior knowledge without a tool call is a grounding violation. Do NOT call get_cluster_context. The backbone graph is auto-injected. For 'website': call search_enterprise_graph(domain_intent="website", keyword=<specific topic from user query>) before answering — do NOT call get_cluster_context. {cross_domain_instruction}
