@@ -22,6 +22,33 @@ EMBEDDABLE_LABELS = [
     'OpenSource', 'SocialLearning',
 ]
 
+# ExpertTools._semantic_candidate_search() tuning (2026-09-08, Phase 1 of
+# node-metadata-embedding-hybrid-retrieval-2026-09-04.md). Kill switch first: disabled by
+# default, mirroring intent_classifier.js's ENABLE_LLM_CLASSIFICATION pattern — this changes
+# live retrieval behavior and must be instantly disable-able without a redeploy, not something
+# that ships always-on. When false, _semantic_candidate_search short-circuits to an empty
+# result; every caller degrades to exactly today's behavior with zero code-path difference.
+ENABLE_SEMANTIC_CANDIDATE_SEARCH = os.environ.get("ENABLE_SEMANTIC_CANDIDATE_SEARCH", "false").lower() == "true"
+
+# How many raw nearest-neighbor candidates to over-fetch from nodeMetadataIndex per requested
+# top_k, before the security post-filter drops any the caller isn't authorized to see. A fixed
+# constant today — see the design doc's Phase 1 "named, tracked scale risk" note: at much larger
+# multi-tenant scale a fixed multiplier can under-serve a small tenant if large tenants dominate
+# the global index's nearest-neighbor space; revisit before that scale is reached, not now.
+SEMANTIC_OVERFETCH_MULTIPLIER = int(os.environ.get("SEMANTIC_OVERFETCH_MULTIPLIER", "5"))
+
+# Hard similarity floor below which a semantic candidate is treated as noise, not surfaced at
+# all. NOT copied from intent_classifier.js's EMBEDDING_CONFIDENCE_THRESHOLD (0.75) — tried that
+# first, found live (2026-09-08) that it excludes the "Governance" node (0.7492) for the query
+# "AI ethics and governance work", the exact motivating example for this feature. Domain-centroid
+# similarity (Phase S: query vs. an averaged centroid of many prototypes) and single-node
+# similarity (query vs. one short metadata string) are different score distributions even on the
+# same model — copying the threshold across was the wrong assumption. 0.70 is set from one real
+# calibration point (0.7492 true positive, 0.7067 a second plausibly-relevant node, 0.6942 and
+# below a gradually-decaying tail of weaker matches) — a single data point, not a robust
+# calibration; revisit with more query/target pairs before relying on this heavily.
+SEMANTIC_CANDIDATE_MIN_SIMILARITY = float(os.environ.get("SEMANTIC_CANDIDATE_MIN_SIMILARITY", "0.70"))
+
 # connect_knowledge_on_demand bridge result limits. Env-var configurable so an operator can
 # tune the breadth/cost tradeoff per deployment without a code change; BRIDGE_MAX_LIMIT bounds
 # how much of the authorized subgraph a single request can force Dijkstra to explore/return,

@@ -311,6 +311,77 @@ class ExpertTools:
         tag_part = f" [{', '.join(tags)}]" if tags else ''
         return f"{name} ({label}){tag_part}: {desc}".strip()
 
+    def _semantic_candidate_search(self, query_text: str, allowed_labels: Optional[set] = None, top_k: int = 10) -> dict:
+        """Security-safe semantic candidate generator over nodeMetadataIndex (Phase 1 of
+        documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md).
+
+        Returns {node_id: similarity_score} for nodes the caller is actually authorized to see —
+        NEVER the raw vector-index result, which has no concept of tenant/security at all. This
+        method has zero knowledge of what's citable downstream; it only ever widens a candidate-ID
+        set for a caller (e.g. connect_knowledge_on_demand) to decide what to do with — every
+        assertion still has to be earned separately by whatever consumes this result.
+
+        Deliberately does NOT resolve `allowed_labels` from a domain-name string itself (2026-09-08,
+        found live) — get_authorized_labels()'s manifest keys ("professional", not "career") don't
+        match the gateway's domainSignal vocabulary, and a naive narrowing pass would have excluded
+        Technology/Concept from "professional" entirely — the exact node types
+        connect_knowledge_on_demand's own target_domain_labels fallback (this file, ~line 1722-1729)
+        already knows to broaden back in, because they're the cross-domain anchor types this whole
+        feature exists to surface. Pushing label resolution to the caller avoids a second,
+        potentially-diverging copy of that already-correct, already-tested logic. Pass None for no
+        narrowing (caller-authorized-labels-unknown / intentionally broad).
+
+        Gated by domain_registry.ENABLE_SEMANTIC_CANDIDATE_SEARCH — returns {} immediately when
+        disabled (default), so every caller degrades to today's behavior with zero code-path
+        difference. Not wired into any tool yet as of Phase 1 — see the design doc's Phase 2/3.
+        """
+        from domain_registry import (
+            ENABLE_SEMANTIC_CANDIDATE_SEARCH, SEMANTIC_OVERFETCH_MULTIPLIER,
+            SEMANTIC_CANDIDATE_MIN_SIMILARITY,
+        )
+        if not ENABLE_SEMANTIC_CANDIDATE_SEARCH or not query_text:
+            return {}
+
+        query_embedding = self.get_embedding(query_text)
+        raw = self._exec_query(
+            """
+            CALL db.index.vector.queryNodes('nodeMetadataIndex', $fetch_k, $embedding)
+            YIELD node, score
+            WHERE score >= $min_similarity
+            RETURN elementId(node) AS eid, labels(node)[0] AS label, score AS score
+            """,
+            fetch_k=top_k * SEMANTIC_OVERFETCH_MULTIPLIER,
+            embedding=query_embedding,
+            min_similarity=SEMANTIC_CANDIDATE_MIN_SIMILARITY,
+        )
+        candidates = raw.records
+        if not candidates:
+            return {}
+
+        # Optional label narrowing — caller-supplied, never resolved here (see docstring).
+        if allowed_labels:
+            candidates = [r for r in candidates if r["label"] in allowed_labels]
+        if not candidates:
+            return {}
+
+        # Security post-filter, batched — ONE round-trip regardless of candidate count. Vector
+        # index queries can't carry a WHERE clause, so this is the only place authorization is
+        # actually enforced; without it this becomes a new security hole of the same shape AP-1
+        # already fixed for Cypher MATCH. A per-candidate re-check would be N round-trips per
+        # caller at real traffic volume — deliberately not built that way (2026-09-08).
+        candidate_ids = [r["eid"] for r in candidates]
+        sec_result = self._exec_query(
+            f"""
+            MATCH (n) WHERE elementId(n) IN $candidate_ids AND ({self._get_security_clause('n')})
+            RETURN elementId(n) AS eid
+            """,
+            candidate_ids=candidate_ids,
+            **self._security_params(),
+        )
+        authorized_ids = {r["eid"] for r in sec_result.records}
+
+        return {r["eid"]: r["score"] for r in candidates if r["eid"] in authorized_ids}
+
     def cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """Calculate cosine similarity between two vectors"""
         vec1_np = np.array(vec1)
