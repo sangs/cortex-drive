@@ -1769,15 +1769,23 @@ class ExpertTools:
         CONTAINS fallback, restricted to nodes matching target_domain (a hint outside the
         requested domain is reported as not found rather than silently expanding scope).
 
-        query_context (2026-07-23): free text — normally the user's original question —
-        used to make ranking query-aware for the case where no specific target is known.
-        Hops into a node whose name literally matches a keyword extracted from this text
-        get a weight discount (domain_registry.BRIDGE_RELEVANCE_DISCOUNT), so e.g. a
-        question mentioning "governance" ranks a bridge through a "Governance" node above
-        an equally-cheap bridge through an unrelated node. Deliberately literal keyword
-        matching, not embedding similarity — keeps every ranking decision traceable to an
-        actual matched word (Invariant 11 grounding), at the cost of missing non-literal
-        matches (e.g. "AI ethics" vs. "Governance").
+        query_context (2026-07-23): free text — normally the user's original question — used
+        two ways, both query-aware, neither ever fabricates a connection:
+        (1) Ranking: hops into a node whose name/description literally matches a keyword
+        extracted from this text get a weight discount (domain_registry.BRIDGE_RELEVANCE_DISCOUNT),
+        so e.g. a question mentioning "governance" ranks a bridge through a "Governance" node
+        above an equally-cheap bridge through an unrelated node. This part is still deliberately
+        literal keyword matching, not embedding similarity — keeps every ranking decision
+        traceable to an actual matched word (Invariant 11 grounding).
+        (2) Candidate pool (2026-09-08, node-metadata-embedding-hybrid-retrieval-2026-09-04.md
+        Phase 2): also embeds query_context and unions in any semantically-similar node already
+        present in this call's traversed subgraph but excluded by the label match alone — this is
+        what now lets a question about "AI ethics" find a bridge through a "Governance" node with
+        zero literal overlap, previously the documented gap here. Still fully groundable: a
+        semantically-widened candidate still needs a real Dijkstra-walked path to appear in
+        results, exactly like any other candidate — this only changes which nodes are worth
+        trying to reach, never what a found path is allowed to assert. Gated by
+        domain_registry.ENABLE_SEMANTIC_CANDIDATE_SEARCH (default off).
 
         Zero-write guarantee: nothing is persisted to Neo4j. All returned links are
         session-only virtual bridges rendered as gold dashed lines in the UI.
@@ -1914,6 +1922,59 @@ class ExpertTools:
                 nid for nid, info in node_info.items()
                 if nid != source_eid and target_domain_labels & set(info["labels"])
             }
+
+            # Semantic widening (2026-09-08, Phase 2 of
+            # node-metadata-embedding-hybrid-retrieval-2026-09-04.md) — union in nodes that are
+            # semantically similar to query_context but didn't survive the label match above (e.g.
+            # a Technology node when target_domain is "professional", which excludes Technology).
+            # Deliberately intersected with node_info.keys() — _semantic_candidate_search searches
+            # the entire tenant-authorized nodeMetadataIndex, most of which is NOT part of this
+            # source's already-traversed subgraph (node_info/adjacency, built from the BFS edge
+            # fetch above). Dijkstra can only ever find a path to a node already in that set;
+            # anything outside it would silently never appear in results regardless of being added
+            # here, so intersecting first avoids wasted candidates and keeps candidate_targets a
+            # subset of what Dijkstra can actually evaluate. No new link-construction path: a node
+            # that enters via this branch still has to be reached by Dijkstra through a real
+            # relationship chain below, exactly like every other candidate — this only changes
+            # which nodes are worth trying to path to, never what a found path is allowed to
+            # assert. Gated by ENABLE_SEMANTIC_CANDIDATE_SEARCH inside _semantic_candidate_search
+            # itself (default off) — returns {} when disabled, so this whole block is a no-op
+            # until the flag is turned on.
+            #
+            # KNOWN, ACCEPTED LIMITATION (found live 2026-09-08, deliberately not "fixed" here —
+            # see design doc §9): query_context is embedded whole. Real Q3-shaped questions are
+            # inherently two-topic ("decision trace from X to Y"), and embedding a long, two-topic
+            # sentence dilutes the resulting vector across both topics rather than matching either
+            # one closely — measured live: a short, single-topic phrase ("AI ethics and governance
+            # work") scored 0.75 similarity against the "Governance" node, but the realistic full
+            # Q3 question mentioning both the source topic AND "zero-trust security architecture of
+            # Cortex-Drive" scored only 0.33 against the same node — well under the 0.70 floor.
+            # Extracting keywords first (_extract_bridge_keywords) does not meaningfully help
+            # (0.35) since the keyword set still mixes both topics. This means semantic widening is
+            # mechanically correct and safe but will often not fire for realistic Q3 phrasing —
+            # accepted rather than solved here; a real fix (e.g. splitting the question into
+            # source-clause/target-clause before embedding) is a separate, larger NLP problem that
+            # would likely need its own LLM call, cutting against this codebase's deterministic-
+            # over-fuzzy retrieval philosophy — not attempted in this pass.
+            semantic_candidate_ids: set = set()
+            if query_context:
+                # allowed_labels=None here, deliberately — NOT target_domain_labels. The entire
+                # point of this widening is to rescue node types a strict domain match excludes
+                # (Technology/Concept, the cross-domain anchor types) when they're topically
+                # justified; passing the same narrow label set that caused the exclusion would
+                # defeat it before any candidate is even returned. Security is not weakened by
+                # this — the node_info.keys() intersection below is the real gate: only nodes
+                # already inside this source's security-clause-fetched subgraph survive, and that
+                # fetch already enforced tenant authorization independent of domain-label scoping.
+                semantic_hits = self._semantic_candidate_search(
+                    query_context, allowed_labels=None, top_k=limit
+                )
+                # candidacy_source should mean "found ONLY via semantic search", not "also found
+                # via it" — subtract nodes that were already label-matched before recording which
+                # ids are semantic-only, otherwise a node reachable by both paths would be
+                # mislabeled and undercut the field's own debugging purpose.
+                semantic_candidate_ids = (set(semantic_hits.keys()) & node_info.keys()) - {source_eid} - label_matched_targets
+                label_matched_targets |= semantic_candidate_ids
 
             if not label_matched_targets:
                 return json.dumps({
@@ -2063,7 +2124,11 @@ class ExpertTools:
                         entry.update({
                             "description": info["description"],
                             "is_bento_eligible": True,
-                            "bridge_reason": f"Connected via: {rel_chain}"
+                            "bridge_reason": f"Connected via: {rel_chain}",
+                            # Transparency/debugging only, not grounding-relevant — see the
+                            # semantic-widening block above. Never affects relevance_tier, which
+                            # is independently re-evaluated from the resolved path either way.
+                            "candidacy_source": "semantic_widening" if target_eid in semantic_candidate_ids else "label_match",
                         })
                     else:
                         entry.update({

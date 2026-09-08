@@ -148,6 +148,49 @@ function auditResponseUrls(content, seenUrls) {
     return audited;
 }
 
+/**
+ * Structured-citation groundedness backstop (2026-09-08, Phase 2 of
+ * node-metadata-embedding-hybrid-retrieval-2026-09-04.md §5) — strips any citation line whose
+ * cited node_name was not actually returned by a tool call this turn. Same deterministic,
+ * cannot-be-overridden-by-prompt-injection pattern as auditResponseUrls() above — plain set
+ * membership against accumulatedGraph.nodes, never fuzzy/approximate matching. Built as the
+ * groundedness backstop for connect_knowledge_on_demand's semantic-widening (Part B.1, same
+ * phase) — widened recall raises the cost of an ungrounded citation slipping through, this is
+ * the deterministic check that catches it regardless of how a node entered the candidate pool.
+ *
+ * Parses the `<citations>` block the system prompt now requires for cross_domain responses
+ * (gateway_citation_requirement.md): one `[n] claim → node_name` line per claim. A line whose
+ * node_name doesn't match any accumulatedGraph node's name is dropped and logged; the response
+ * prose itself is untouched — this strips the citation footnote, not the sentence it supports
+ * (matching auditResponseUrls()'s scope: it strips the offending link, not the surrounding text).
+ * No-op (returns content unchanged) when there's no <citations> block at all — most responses
+ * (Q1/Q2, or a cross_domain response with no tool-sourced claims) won't have one.
+ */
+function auditResponseCitations(content, nodeNames) {
+    if (!content) return content;
+    const blockMatch = content.match(/<citations>([\s\S]*?)<\/citations>/i);
+    if (!blockMatch) return content;
+
+    const lines = blockMatch[1].split('\n');
+    const keptLines = [];
+    for (const line of lines) {
+        const citeMatch = line.match(/^\s*\[\d+\]\s*.+?→\s*(.+?)\s*$/);
+        if (!citeMatch) {
+            if (line.trim()) keptLines.push(line); // non-citation-shaped line (e.g. blank) — leave as-is
+            continue;
+        }
+        const citedName = citeMatch[1].trim();
+        if (nodeNames.has(citedName)) {
+            keptLines.push(line);
+        } else {
+            console.warn(`[GROUNDING] Stripping citation to node not in tool results this turn: "${citedName}"`);
+        }
+    }
+
+    const newBlock = keptLines.length > 0 ? `<citations>\n${keptLines.join('\n')}\n</citations>` : '';
+    return content.replace(/<citations>[\s\S]*?<\/citations>/i, newBlock);
+}
+
 // Node types eligible to appear in a Q2 (career map) chat response.
 // Excludes structural nodes (Category, Person, Year, Technology, Skill) and
 // granular project-breakdown types that add noise rather than career narrative.
@@ -377,6 +420,7 @@ const gatewayDomainInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'ga
 const gatewayCrossDomainBridgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_bridge.md'), 'utf-8').trim();
 const gatewayCrossDomainTier7Prompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_tier7.md'), 'utf-8').trim();
 const gatewayBridgeCompletionNudgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_bridge_completion_nudge.md'), 'utf-8').trim();
+const gatewayCitationRequirementPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_citation_requirement.md'), 'utf-8').trim();
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
@@ -2886,14 +2930,29 @@ function resolveBridgeContext(domainSignal, question) {
     return bridgeContext;
 }
 
+// Same flag Python's domain_registry.ENABLE_SEMANTIC_CANDIDATE_SEARCH reads (plain OS env var,
+// shared across both processes) — kept in lockstep so "flag off" is a single, honest guarantee:
+// pre-Phase-2 behavior, prompt included, not just retrieval behavior. Without this, the citation
+// block would be added to every cross_domain response regardless of the flag, breaking the
+// byte-identical-when-disabled claim the rest of Phase 2 relies on for its regression story.
+const SEMANTIC_CANDIDATE_SEARCH_ENABLED = (process.env.ENABLE_SEMANTIC_CANDIDATE_SEARCH || '').toLowerCase() === 'true';
+
 function buildCrossDomainInstruction(bridgeContext) {
-    return bridgeContext
+    const base = bridgeContext
         ? gatewayCrossDomainBridgePrompt
             .replace(/\{bridge_entity\}/g, bridgeContext.bridge_entity)
             .replace('{candidate_domains_joined}', bridgeContext.candidate_domains.join(' and '))
             .replace('{domain_1}', bridgeContext.candidate_domains[0])
             .replace('{domain_2}', bridgeContext.candidate_domains[1])
         : gatewayCrossDomainTier7Prompt;
+    if (!SEMANTIC_CANDIDATE_SEARCH_ENABLED) return base;
+    // Structured-citation groundedness backstop (2026-09-08, Phase 2 of
+    // node-metadata-embedding-hybrid-retrieval-2026-09-04.md) — scoped to cross_domain responses
+    // only, not global. connect_knowledge_on_demand's new semantic-widening (Part B.1, same phase)
+    // only ever affects cross_domain/bridge results, so the backstop is scoped to match rather
+    // than changing Q1/Q2 response format for a risk that doesn't apply to them. See
+    // auditResponseCitations() for the gateway-side validation half.
+    return base + '\n\n' + gatewayCitationRequirementPrompt;
 }
 
 // Returns the corrective nudge message to push onto `messages` (and re-loop) when an
@@ -3353,7 +3412,13 @@ app.post('/query', authMiddleware, async (req, res) => {
                     }
                 }
                 // Audit response for hallucinated URLs before sending.
-                const auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
+                let auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
+                // Structured-citation groundedness backstop (Phase 2, see auditResponseCitations()
+                // above) — scoped to the /query endpoint only, where accumulatedGraph.nodes exists;
+                // the separate /sse streaming endpoint has no equivalent node-tracking and is out
+                // of scope for this pass. No-op for responses with no <citations> block.
+                const queryNodeNames = new Set(accumulatedGraph.nodes.map(n => n.name).filter(Boolean));
+                auditedAnswer = auditResponseCitations(auditedAnswer, queryNodeNames);
 
                 // Entity-bridge path (bridgeContext !== null): the two (or more, as domains are
                 // added) search_enterprise_graph calls each return their own internally-linked
