@@ -180,6 +180,18 @@ class Neo4jBaseModel(BaseModel):
             f"Current primary: {primary_tenant}, fallback: {fallback_tenant}"
         )
 
+class EmbeddableNodeMixin(BaseModel):
+    """Mixed into node models whose label is in domain_registry.EMBEDDABLE_LABELS
+    (2026-09-04) — see documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md.
+    `metadata_embedding` vectorizes name + description + tags ONLY, never a node's full content —
+    deliberately named apart from ChunkNode.embedding (full transcript text) to keep that
+    distinction unambiguous. Optional because most existing nodes don't have one yet; populated by
+    scripts/backfill_node_embeddings.py (idempotent reconciliation, not a validate_upsert()-time
+    write — see the design doc §2.5 for why a single write-path hook isn't reliable here)."""
+    metadata_embedding: Optional[List[float]] = Field(
+        None, description="1536-dim text-embedding-3-small vector of name+description+tags only."
+    )
+
 class EpisodeNode(Neo4jBaseModel):
     """Schema for Episode nodes."""
     name: str = Field(..., description="The title of the podcast episode.")
@@ -221,7 +233,7 @@ class TopicNode(Neo4jBaseModel):
     summary: Optional[str] = None
     importance: float = Field(0.0, description="Inferred importance score.")
 
-class PersonNode(Neo4jBaseModel):
+class PersonNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Hosts/Guests/Listeners."""
     name: str = Field(..., description="Full name of the person.")
     role: Optional[str] = None # Host, Guest, Researcher
@@ -236,17 +248,19 @@ class ReferenceLinkNode(Neo4jBaseModel):
     text: str = Field(..., description="Link display text.")
     url: str = Field(..., description="The actual URL.")
 
-class TechnologyNode(Neo4jBaseModel):
+class TechnologyNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Technology mentioned in episodes."""
     name: str = Field(..., description="Name of the technology.")
 
-class ConceptNode(Neo4jBaseModel):
+class ConceptNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Concepts mentioned in episodes."""
     name: str = Field(..., description="Name of the concept.")
     description: Optional[str] = None
 
-class GenericProjectNode(Neo4jBaseModel):
-    """Generic schema for project-related components."""
+class GenericProjectNode(Neo4jBaseModel, EmbeddableNodeMixin):
+    """Generic schema for project-related components. Also backs Role/Startup/Hackathon/
+    Certification/Publication/OpenSource/SocialLearning/etc — see schema_guard.validate_upsert's
+    model_map. All are EMBEDDABLE_LABELS-eligible via this one shared model."""
     text: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
@@ -258,13 +272,13 @@ class InfrastructureNode(Neo4jBaseModel):
     context: Optional[str] = None
     version: Optional[int] = None
 
-class CompanyNode(Neo4jBaseModel):
+class CompanyNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Company or Organization nodes."""
     name: str = Field(..., description="Name of the company or organization.")
     industry: Optional[str] = None
     description: Optional[str] = None
 
-class InstitutionNode(Neo4jBaseModel):
+class InstitutionNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Educational Institutions."""
     name: str = Field(..., description="Name of the university/institution.")
     location: Optional[str] = None
@@ -274,7 +288,7 @@ class DegreeNode(Neo4jBaseModel):
     name: str = Field(..., description="Name of the degree.")
     year: str = Field(..., description="Graduation year.")
 
-class SkillNode(Neo4jBaseModel):
+class SkillNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for technical and soft skills."""
     name: str = Field(..., description="Name of the skill.")
     category: Optional[str] = None
@@ -346,7 +360,7 @@ class SourceBaseModel(Neo4jBaseModel):
             raise ValueError(f"status must be one of {SOURCE_CONNECTOR_STATUSES}, got '{v}'")
         return v
 
-class WebsiteSource(SourceBaseModel):
+class WebsiteSource(SourceBaseModel, EmbeddableNodeMixin):
     """Schema for Phase A (unauthenticated) / Phase A.5 (authenticated) web URL sources."""
     base_url: str = Field(..., description="The registered URL.")
     requires_auth: bool = Field(False, description="False for Phase A; True distinguishes Phase A.5 sources.")

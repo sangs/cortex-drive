@@ -286,6 +286,31 @@ class ExpertTools:
         )
         return response.data[0].embedding
 
+    @staticmethod
+    def _resolve_embeddable_text(label: str, props: dict) -> str:
+        """Builds the text to embed into a node's metadata_embedding — name + description + tags
+        ONLY, never a node's full content/all fields (2026-09-04). See
+        documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md §2.2.
+
+        Reads live Neo4j properties directly, not schema_guard.py's declared Pydantic fields — a
+        live per-type audit found the schema unreliable here: TechnologyNode/PersonNode declare no
+        description-like field at all despite live data having `description`/`bio` (written by
+        seed_resume_graph.py's raw Cypher, which never calls validate_upsert()); TopicNode uses
+        `summary`, not `description`; GenericProjectNode has both `description` and `text` as
+        separate optional fields; a subset of podcast-guest Person nodes (confirmed live,
+        2026-09-08) use `id` — a human-readable name string, unrelated to the UUID `node_id`
+        property — instead of `name`/`title`. Fixed priority order, first non-empty value wins at
+        each step — deterministic and inspectable, no fuzzy matching.
+        """
+        name = props.get('name') or props.get('title') or props.get('id') or ''
+        desc = (props.get('description') or props.get('bio')
+                or props.get('summary') or props.get('text') or '')
+        tags = props.get('tags') or props.get('content_categories') or []
+        if props.get('category'):  # Skill's existing tag-like field
+            tags = [props['category'], *tags]
+        tag_part = f" [{', '.join(tags)}]" if tags else ''
+        return f"{name} ({label}){tag_part}: {desc}".strip()
+
     def cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """Calculate cosine similarity between two vectors"""
         vec1_np = np.array(vec1)

@@ -2,6 +2,26 @@ import os
 
 from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES
 
+# Node-metadata embedding eligibility (2026-09-04) — single source of truth for "which node
+# types get a metadata_embedding" (schema_guard.EmbeddableNodeMixin) and "which types the
+# :Embeddable label / nodeMetadataIndex cover". See
+# documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md. Reuses the same
+# content/structural split cortex-chat-ui/utils/graphConstants.ts already draws via
+# isBentoEligible()/TAG_LEAF_TYPES/GRAPH_VISUAL_EXCLUDE — not a new taxonomy. Excludes Category
+# (pure UI grouper), SourceSnapshot/__MetaContext__ (no name field), Chunk (already has its own,
+# separate full-text embedding), PreparatoryNote (private authored notes, not a search target).
+# ThoughtLeadership is embeddable in principle but has no Pydantic model in schema_guard.py's
+# model_map to mix EmbeddableNodeMixin into — a pre-existing, separately-tracked Node Hydration
+# Contract gap; scripts/backfill_node_embeddings.py still covers it since it reads live Neo4j
+# properties directly, not through Pydantic.
+EMBEDDABLE_LABELS = [
+    'Technology', 'Concept', 'Company', 'Person', 'Institution', 'Skill', 'WebsiteSource',
+    'ThoughtLeadership',
+    # GenericProjectNode-backed labels (schema_guard.validate_upsert's model_map)
+    'Project', 'Role', 'Startup', 'Hackathon', 'Certification', 'Publication',
+    'OpenSource', 'SocialLearning',
+]
+
 # connect_knowledge_on_demand bridge result limits. Env-var configurable so an operator can
 # tune the breadth/cost tradeoff per deployment without a code change; BRIDGE_MAX_LIMIT bounds
 # how much of the authorized subgraph a single request can force Dijkstra to explore/return,
