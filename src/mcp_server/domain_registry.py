@@ -86,6 +86,25 @@ SEARCH_NEIGHBOR_LIMIT_SCOPED = int(os.environ.get("SEARCH_NEIGHBOR_LIMIT_SCOPED"
 SEARCH_EXPANSION_LIMIT_DEFAULT = int(os.environ.get("SEARCH_EXPANSION_LIMIT_DEFAULT", "10000"))
 SEARCH_EXPANSION_LIMIT_SCOPED = int(os.environ.get("SEARCH_EXPANSION_LIMIT_SCOPED", "20"))
 
+# search_enterprise_graph Phase 3 semantic widening (2026-09-09, node-metadata-embedding-hybrid-
+# retrieval-2026-09-04.md §2.7). Dedicated flag, deliberately separate from
+# ENABLE_SEMANTIC_CANDIDATE_SEARCH above — this tool carries the majority of production traffic
+# (Q1/Q2/Q4, often Q3), so its blast radius is far larger than connect_knowledge_on_demand's;
+# operators need to be able to roll this back independently without also disabling Phase 2's
+# already-verified bridge widening. Default off — flag-off must stay byte-identical to
+# pre-Phase-3 behavior.
+ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH = os.environ.get("ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH", "false").lower() == "true"
+
+# Cheap count()-only pre-check threshold: semantic widening only fires when the primary keyword
+# match already found fewer than this many nodes — avoids paying the embedding-API round-trip
+# (~50-150ms) on every call of the highest-traffic tool when keyword matching already succeeded.
+# NOT calibrated against live data yet (see §2.7/§9 of the design doc) — this is a reasoned
+# starting point (mirrors the "a few weak hits" scenario named as the more common failure mode
+# in expert_tools.py's Chunk-only-fallback comment), not a verified number. Revisit once real
+# query volume is available, the same discipline SEMANTIC_CANDIDATE_MIN_SIMILARITY's own comment
+# documents for its single-data-point calibration.
+SEARCH_SEMANTIC_TRIGGER_MAX_COUNT = int(os.environ.get("SEARCH_SEMANTIC_TRIGGER_MAX_COUNT", "3"))
+
 # Multiplier applied to a Dijkstra hop's weight in connect_knowledge_on_demand when the
 # destination node's name literally matches a keyword extracted from the caller's query_context
 # (2026-07-23 query-aware ranking). <1.0 makes query-relevant nodes cheaper to traverse, without
@@ -107,6 +126,39 @@ BRIDGE_RELEVANCE_DISCOUNT = float(os.environ.get("BRIDGE_RELEVANCE_DISCOUNT", "0
 # Does not apply to a node matching an explicit target_node_name hint — that guarantee of
 # inclusion (§8a) must survive regardless of degree.
 BRIDGE_MIN_CANDIDATE_DEGREE = int(os.environ.get("BRIDGE_MIN_CANDIDATE_DEGREE", "2"))
+
+# Degree above which a node on a connect_knowledge_on_demand path is treated as a generic hub
+# rather than a topical signal, when deciding whether a path is keyword-"confirmed" vs.
+# "structural" (2026-09-11). Found live: a query naming a specific person ("Sangeetha's AI
+# governance work...") extracts that person's own name as a relevance keyword; since that person
+# is the graph's central hub — nearly every path to nearly every project passes through them —
+# their name matches on virtually any path regardless of the path's real topic (confirmed live: a
+# JPMorgan Chase cloud-migration project with zero relation to governance/explainability/zero-trust
+# got tagged "confirmed" this way). Generic, degree-based, identity-agnostic by design (Invariant
+# 1) — works for any hub node, any name, without hardcoding who today's hub happens to be. Same
+# underlying principle as CONTEXT_HUB_DEGREE_THRESHOLD (infer_context_on_demand's landmark/
+# specific framing) and the log-degree Dijkstra edge penalty below — kept as its own constant
+# rather than reusing either, since this governs a different decision (keyword-confirmation
+# eligibility, not narrative framing or path cost) that may need independent tuning. Remains
+# useful even after a future question-decomposition/embedding-similarity fix for target relevance
+# (tracked separately) — this specifically guards path-traversal confirmation for node types with
+# no metadata_embedding (Category, PreparatoryNote, etc.), and doubles as a tie-breaker signal
+# alongside any future similarity score, matching how degree already serves as a secondary
+# ranking key elsewhere (see the neighbor-ranking ORDER BY in get_cluster_context).
+BRIDGE_HUB_DEGREE_THRESHOLD = int(os.environ.get("BRIDGE_HUB_DEGREE_THRESHOLD", "25"))
+
+# Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
+# tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
+# BRIDGE_HUB_DEGREE_THRESHOLD above: a single generic technical word (e.g. "architecture") shared
+# between the query and an unrelated node's description was enough to confirm a path on its own —
+# in a tech-heavy graph, common nouns like this coincidentally appear across many project
+# descriptions regardless of true topical relevance. Requiring multiple distinct matches is
+# generic (no word-specific blocklist to maintain, unlike extending _BRIDGE_QUERY_STOPWORDS) and
+# targets the actual problem: a genuinely relevant node should usually share more than one query
+# concept, not just one throwaway noun. A known, real limitation of literal keyword matching that
+# this doesn't fully solve — see the tracked question-decomposition/embedding-similarity fix for
+# the more durable approach.
+BRIDGE_RELEVANCE_MIN_KEYWORD_MATCHES = int(os.environ.get("BRIDGE_RELEVANCE_MIN_KEYWORD_MATCHES", "2"))
 
 # infer_context_on_demand structural-fact caps (2026-08-03). Env-var configurable for the same
 # reason as BRIDGE_DEFAULT_LIMIT/BRIDGE_MAX_LIMIT — bounds how much of a node's neighborhood a
@@ -163,6 +215,13 @@ DOMAIN_MANIFESTS = {
         "node_set": PROJECT_GRAPH_NODES + ["Publication", "ThoughtLeadership", "Certification"],
         "anchor_labels": ["Project", "Company", "Skill", "Certification", "Industry", "ThoughtLeadership"],
         "backbone_labels": ["Person", "Category"],
+        # Node types that qualify as cross-domain bridge SOURCES for this domain (added
+        # 2026-09-14, see auth-derived-identity-and-bridge-source-config-design-2026-09-12.md
+        # §4). Replaces a hardcoded "thought leadership" keyword search the LLM was
+        # instructed (prompt-text only) to run before calling connect_knowledge_on_demand —
+        # live-confirmed the LLM can skip that step and fabricate a source name instead.
+        # enumerate_bridge_sources() matches on these labels directly, deterministically.
+        "bridge_source_labels": ["ThoughtLeadership"],
         "realm": "INTERNAL"
     },
     "podcast": {

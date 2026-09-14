@@ -58,6 +58,14 @@ PODCAST_LABELS = frozenset({'Episode', 'Podcast'})
 # title is.
 WEBSITE_LABELS = frozenset({'WebsiteSource'})
 
+# Person is a shared/SYSTEM label (excluded from the per-domain lists above for the same
+# misclassification reason), but named-person detection is a real, separate need — the
+# gateway's career-backbone auto-inject and Tier 7 bridge-source resolution both need to
+# tell whether a question names a specific person, distinct from asking whether a question
+# belongs to the "career" domain. Given its own top-level `persons` section (2026-09-14),
+# not folded into `domains.career`, so it can't affect domain classification.
+PERSON_LABELS = frozenset({'Person'})
+
 # Relationship types connecting a Concept/Technology bridge candidate back to each
 # domain's anchors. Bounded variable-length (*1..2) because the actual hop shape is
 # LLM-extraction-dependent for podcast (BAML's prompt says "link via Topic where
@@ -79,6 +87,7 @@ def main():
     career_names  = set()
     podcast_names = set()
     website_names = set()
+    person_names  = set()
     bridge_entities: dict[str, list[str]] = {}
 
     try:
@@ -103,10 +112,13 @@ def main():
                     podcast_names.add(name)
                 elif labels & WEBSITE_LABELS:
                     website_names.add(name)
-                # Shared/SYSTEM labels (Topic, Concept, Technology, Person, Community,
+                elif labels & PERSON_LABELS:
+                    person_names.add(name)
+                # Remaining shared/SYSTEM labels (Topic, Concept, Technology, Community,
                 # Publication): intentionally skipped from the per-domain lists above —
-                # see the module docstring / WEBSITE_LABELS comment for why. They're
-                # handled separately below, only when empirically bridging two domains.
+                # see the module docstring / WEBSITE_LABELS comment for why. Concept/
+                # Technology are handled separately below, only when empirically
+                # bridging two domains.
 
             # Bridge-entity detection (added 2026-08-24, corrected 2026-08-25 after live
             # testing) — see design doc §2.2. Only Concept/Technology NAMES actually
@@ -156,6 +168,7 @@ def main():
             "podcast": sorted(podcast_names),
             "website": sorted(website_names)
         },
+        "persons": sorted(person_names),
         "bridge_entities": bridge_entities
     }
 
@@ -164,6 +177,7 @@ def main():
     print(f"  career:  {len(career_names)} entities")
     print(f"  podcast: {len(podcast_names)} entities")
     print(f"  website: {len(website_names)} entities")
+    print(f"  persons: {len(person_names)} entities")
     print(f"  bridge_entities (website<->podcast): {len(bridge_entities)}")
     if bridge_entities:
         for name, domains in sorted(bridge_entities.items()):

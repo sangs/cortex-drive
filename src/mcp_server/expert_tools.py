@@ -79,26 +79,48 @@ class ExpertTools:
 
     def _fragment_taxonomy_expansion(self) -> str:
         query = """
-        // Step 0: Taxonomy Expansion (Identify Anchor Topics from keywords)
+        // Step 0: Taxonomy Expansion (Identify Anchor Topics from keywords, or from Phase 3
+        // semantic widening — node-metadata-embedding-hybrid-retrieval-2026-09-04.md §2.7).
+        // $semantic_seed_ids is always passed (empty list when Phase 3's flag is off or its
+        // count pre-check didn't trigger it), so this OR is a no-op in that case.
         OPTIONAL MATCH (anchor)
-        WHERE any(label IN labels(anchor) WHERE label IN $anchorLabels)
-          AND any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
+        WHERE (
+                (
+                  any(label IN labels(anchor) WHERE label IN $anchorLabels)
+                  AND any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
+                )
+                OR elementId(anchor) IN $semantic_seed_ids
+              )
           AND ({sec_anchor})
-        
+
         // Find children/related entities AND their parent Episodes - Relaxed traversal
         OPTIONAL MATCH (anchor)-[*0..2]-(expandedNode)
         WHERE ({sec_expanded})
           AND NOT expandedNode:ReferenceLink
-        
+
         OPTIONAL MATCH (expandedNode)<-[:CONTAINS|HAS_SOURCE|MENTIONS*1..3]-(parentEpisode:Episode)
         WHERE ({sec_parent})
-        
+
         // expandedNode fan-out capped via $expansion_limit — same query text for every caller,
         // only the parameter value differs (SEARCH_EXPANSION_LIMIT_DEFAULT vs _SCOPED in
         // domain_registry.py). anchor/parentEpisode aren't capped: in practice they're already
         // small (anchor = literal keyword-name matches; parentEpisode is reached only via a
         // further, naturally-bounded hop from expandedNode).
-        WITH collect(DISTINCT elementId(anchor)) + collect(DISTINCT elementId(expandedNode))[0..$expansion_limit] + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
+        //
+        // Anchor admission (Phase 3): a keyword-matched anchor is always admitted — unchanged,
+        // direct textual evidence justifies it regardless of connectivity. A semantic-widening-
+        // only anchor (matched solely via $semantic_seed_ids) is admitted only on rows where its
+        // own [*0..2] expansion found a real expandedNode — a true orphan contributes nothing.
+        // collect(DISTINCT ...) drops nulls automatically, so this needs no extra filter step.
+        // With $semantic_seed_ids=[], every admitted anchor is keyword-matched by construction
+        // and this CASE always evaluates true — byte-identical to the prior unconditional
+        // collect(DISTINCT elementId(anchor)).
+        WITH collect(DISTINCT CASE
+                        WHEN any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
+                             OR expandedNode IS NOT NULL
+                        THEN elementId(anchor) ELSE null END)
+             + collect(DISTINCT elementId(expandedNode))[0..$expansion_limit]
+             + collect(DISTINCT elementId(parentEpisode)) AS expanded_ids
         """
         return query.replace("{sec_anchor}", self._get_security_clause("anchor")).replace("{sec_expanded}", self._get_security_clause("expandedNode")).replace("{sec_parent}", self._get_security_clause("parentEpisode"))
 
@@ -311,7 +333,7 @@ class ExpertTools:
         tag_part = f" [{', '.join(tags)}]" if tags else ''
         return f"{name} ({label}){tag_part}: {desc}".strip()
 
-    def _semantic_candidate_search(self, query_text: str, allowed_labels: Optional[set] = None, top_k: int = 10) -> dict:
+    def _semantic_candidate_search(self, query_text: str, allowed_labels: Optional[set] = None, top_k: int = 10, force_enabled: bool = False) -> dict:
         """Security-safe semantic candidate generator over nodeMetadataIndex (Phase 1 of
         documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md).
 
@@ -333,13 +355,25 @@ class ExpertTools:
 
         Gated by domain_registry.ENABLE_SEMANTIC_CANDIDATE_SEARCH — returns {} immediately when
         disabled (default), so every caller degrades to today's behavior with zero code-path
-        difference. Not wired into any tool yet as of Phase 1 — see the design doc's Phase 2/3.
+        difference. Wired into connect_knowledge_on_demand (Phase 2) and search_enterprise_graph
+        (Phase 3, §2.7).
+
+        force_enabled (2026-09-09, Phase 3): search_enterprise_graph is gated by its own dedicated
+        flag, ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH — deliberately independent of
+        ENABLE_SEMANTIC_CANDIDATE_SEARCH below, so operators can roll either integration back
+        without affecting the other (this tool's blast radius is far larger than
+        connect_knowledge_on_demand's). Without this param, this method's own internal
+        ENABLE_SEMANTIC_CANDIDATE_SEARCH check would silently make Phase 3 inert whenever Phase 2's
+        flag happens to be off, defeating that independence. The caller passes force_enabled=True
+        only after it has already checked its own flag — this parameter does not bypass the
+        security post-filter below, only the kill-switch check. Defaults False; Phase 2's call site
+        is unchanged.
         """
         from domain_registry import (
             ENABLE_SEMANTIC_CANDIDATE_SEARCH, SEMANTIC_OVERFETCH_MULTIPLIER,
             SEMANTIC_CANDIDATE_MIN_SIMILARITY,
         )
-        if not ENABLE_SEMANTIC_CANDIDATE_SEARCH or not query_text:
+        if not (ENABLE_SEMANTIC_CANDIDATE_SEARCH or force_enabled) or not query_text:
             return {}
 
         query_embedding = self.get_embedding(query_text)
@@ -1278,7 +1312,9 @@ class ExpertTools:
         # intercepts Q2 career map queries, returning backbone-only nodes that fail the
         # CAREER_CHAT_NODE_TYPES filter in the gateway and produce ungrounded LLM responses.
         if wants_visual_map and domain_intent in ("professional", "all"):
-            return self.get_cluster_context("Sangeetha Ramadurai", depth=1, backbone_only=True, domain="professional")
+            # node_name omitted deliberately (2026-09-14, was a hardcoded literal name) —
+            # get_cluster_context falls back to _resolve_primary_subject() for the tenant.
+            return self.get_cluster_context(depth=1, backbone_only=True, domain="professional")
 
         discovery_synonyms = ["portfolio", "overview", "background", "experience", "career", "map"]
         is_discovery_request = any(s in keyword.lower() for s in discovery_synonyms)
@@ -1294,7 +1330,17 @@ class ExpertTools:
 
         from domain_registry import get_authorized_labels, get_backbone_labels, get_anchor_labels
         
-        keywords_list = [w.lower() for w in keyword.split() if len(w) > 2]
+        # Reuses the stop_words set defined above (2026-09-10 fix) — previously this filtered only
+        # by length (>2 chars), which let common words like "and"/"for"/"with" through into the
+        # $keywords Cypher param used for anchor CONTAINS-matching in
+        # _fragment_taxonomy_expansion(). Found live: "and" substring-matched several podcast
+        # Episode titles (Episode is anchor-eligible for domain_intent="podcast"), and Episodes are
+        # large hub nodes — one coincidental match triggered a ~390-node explosion, confirmed
+        # present with ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH off too (pre-existing, not a Phase 3
+        # regression — Phase 3's testing just exercised a natural-language podcast-domain query
+        # with "and" in it for the first time). stop_words already existed and was correctly
+        # applied to the `keywords` variable a few lines up — it just never reached this one.
+        keywords_list = [w.lower() for w in keyword.split() if len(w) > 2 and w.lower() not in stop_words]
         if not keywords_list:
             keywords_list = [keyword.lower()]
         
@@ -1376,7 +1422,15 @@ class ExpertTools:
                 technologies: [t IN cluster_tech_urls WHERE t IS NOT NULL AND t <> ""],
                 isPresent: node.isPresent,
                 endDate: node.endDate,
-                endYear: node.endYear
+                endYear: node.endYear,
+                candidacy_source: CASE
+                    WHEN elementId(node) IN $semantic_seed_ids AND NOT (
+                        toLower(node.name) CONTAINS toLower($keyword)
+                        OR toLower(node.title) CONTAINS toLower($keyword)
+                        OR toLower(node.description) CONTAINS toLower($keyword)
+                        OR any(word IN $keywords WHERE toLower(word) = toLower(labels(node)[0]))
+                    )
+                    THEN 'semantic_widening' ELSE null END
              }}) AS uiNodes
 
         RETURN uiNodes AS nodes,
@@ -1387,7 +1441,23 @@ class ExpertTools:
                }}] AS links
         LIMIT 1
         """
-        # Phase 3: Hybrid Search Fallback
+        # Chunk-only semantic fallback (podcast transcripts), zero-results-trigger only.
+        #
+        # NOT the "Phase 3" of documents/architecture/node-metadata-embedding-hybrid-retrieval-
+        # 2026-09-04.md §2.7 (search_enterprise_graph semantic widening via
+        # ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH, implemented below). This is an older, narrower,
+        # pre-existing mechanism, renamed here
+        # 2026-09-08 to stop colliding with that name. Two things make it unable to cover the
+        # gap Phase 3 is meant to close:
+        #   1. Only fires when the primary CONTAINS query returns ZERO rows (below) — it never
+        #      blends with or reranks weak-but-nonzero keyword matches, which is the more common
+        #      failure mode (e.g. "AI governance and explainability" matching nothing literal
+        #      when a node named "Governance" exists and is the right answer).
+        #   2. Reads node.embedding, which is populated only on :Chunk nodes (chunkIndex, podcast
+        #      transcript text) — NOT node.metadata_embedding (nodeMetadataIndex, EMBEDDABLE_LABELS:
+        #      Company/Project/Person/Technology/etc., built in Phase 0). For professional/career-
+        #      domain queries — most of search_enterprise_graph's traffic — this fallback cannot
+        #      return anything at all; it can only ever surface podcast chunks.
         embedding = None
         try:
             if len(keywords_list) > 0:
@@ -1405,6 +1475,71 @@ class ExpertTools:
             neighbor_limit = SEARCH_NEIGHBOR_LIMIT_SCOPED if scoped_expansion else SEARCH_NEIGHBOR_LIMIT_DEFAULT
             expansion_limit = SEARCH_EXPANSION_LIMIT_SCOPED if scoped_expansion else SEARCH_EXPANSION_LIMIT_DEFAULT
 
+            # Phase 3 (2026-09-09): search_enterprise_graph semantic widening — see
+            # documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md §2.7.
+            # Dedicated flag (independent of Phase 2's ENABLE_SEMANTIC_CANDIDATE_SEARCH — this
+            # tool's blast radius is far larger). Conditional trigger: a cheap count()-only
+            # pre-check runs first; semantic search only fires when keyword matching alone found
+            # few results (< SEARCH_SEMANTIC_TRIGGER_MAX_COUNT), avoiding the embedding-API
+            # round-trip on the common case where keyword match already succeeds.
+            #
+            # Deliberately does NOT include the taxonomy-expansion fragment's expanded_ids (found
+            # live, 2026-09-09): that expansion matches anchors via CONTAINS on individual
+            # tokenized keywords, including short/common ones — a multi-word natural-language
+            # query almost always trips one of these loose matches, inflating the count regardless
+            # of true relevance and defeating the trigger for exactly the realistic queries this
+            # feature exists to help. This pre-check counts only strict, direct evidence (literal
+            # name/title/description match on the full keyword, or an exact label-name match) —
+            # a cheaper query too, since it skips the expansion fragment entirely.
+            semantic_seed_ids: List[str] = []
+            from domain_registry import ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH, SEARCH_SEMANTIC_TRIGGER_MAX_COUNT
+            if ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH:
+                try:
+                    precheck_query = f"""
+                    MATCH (node:{match_label_string})
+                    WHERE ({self._get_security_clause("node")})
+                      AND (
+                            toLower(node.name) CONTAINS toLower($keyword)
+                            OR toLower(node.title) CONTAINS toLower($keyword)
+                            OR toLower(node.description) CONTAINS toLower($keyword)
+                            OR any(word IN $keywords WHERE toLower(word) = toLower(labels(node)[0]))
+                      )
+                    RETURN collect(DISTINCT elementId(node)) AS matched_ids
+                    """
+                    precheck_result = self._exec_query(
+                        precheck_query,
+                        **self._security_params(),
+                        keyword=keyword,
+                        keywords=keywords_list,
+                    )
+                    strict_matched_ids = set(precheck_result.records[0]["matched_ids"]) if precheck_result.records else set()
+                    match_count = len(strict_matched_ids)
+                    if match_count < SEARCH_SEMANTIC_TRIGGER_MAX_COUNT:
+                        semantic_query_text = " ".join(keywords_list) if keywords_list else keyword
+                        semantic_candidates = self._semantic_candidate_search(
+                            semantic_query_text, allowed_labels=None, top_k=10, force_enabled=True
+                        )
+                        # Found live 2026-09-12: a query naming a specific entity by name (e.g.
+                        # "Sangeetha Ramadurai") near-guarantees that entity is its own top
+                        # semantic match — nothing embeds closer to a name than the name's own
+                        # node. Granting it the semantic-seed anchor's expanded [*0..2] privileges
+                        # (which bypass the anchor_labels type restriction, including for types
+                        # like Person that were never anchor-eligible before) let a single query
+                        # reach 3 hops out through a chain of authorized-label node types, when
+                        # pre-Phase-3 the same entity could only ever reach 1 hop (via direct
+                        # neighbor-aggregation). A node already found by strict matching doesn't
+                        # need the semantic path's widened reach — it was already going to be
+                        # found and returned through the normal path. Same principle as Phase 2's
+                        # candidacy_source fix (a node found via both label-match and semantic
+                        # search isn't "semantic-only" either).
+                        semantic_seed_ids = [eid for eid in semantic_candidates if eid not in strict_matched_ids]
+                        print(f"[SEARCH] Phase 3 semantic widening: keyword match_count={match_count} < {SEARCH_SEMANTIC_TRIGGER_MAX_COUNT}, found {len(semantic_candidates)} semantic candidate(s), {len(semantic_seed_ids)} after excluding strict-match duplicates")
+                    else:
+                        print(f"[SEARCH] Phase 3 semantic widening skipped: keyword match_count={match_count} >= {SEARCH_SEMANTIC_TRIGGER_MAX_COUNT}")
+                except Exception as e:
+                    print(f"Warning: Phase 3 semantic widening failed, continuing without it: {e}")
+                    semantic_seed_ids = []
+
             print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id} (scoped_expansion={scoped_expansion})")
             result = self._exec_query(
                 query,
@@ -1417,12 +1552,13 @@ class ExpertTools:
                 embedding=embedding,
                 owner_id=os.environ.get("OWNER_USER_ID"),
                 neighbor_limit=neighbor_limit,
-                expansion_limit=expansion_limit
+                expansion_limit=expansion_limit,
+                semantic_seed_ids=semantic_seed_ids
             )
-            
-            # --- SELF-CORRECTION FALLBACK ---
+
+            # --- SELF-CORRECTION FALLBACK (Chunk-only — see comment above embedding=None) ---
             if not result.records and embedding is not None:
-                print(f"[SEARCH] No results for '{keyword}'. Attempting broader semantic fallback...")
+                print(f"[SEARCH] No results for '{keyword}'. Attempting broader semantic fallback (Chunk nodes only)...")
                 fallback_query = f"""
                 MATCH (node)
                 WHERE node.embedding IS NOT NULL
@@ -1550,13 +1686,36 @@ class ExpertTools:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    def _resolve_primary_subject(self) -> Optional[str]:
+        """
+        Resolve the tenant's default backbone subject — the Person node marked
+        is_primary_subject=true for this tenant. Used only as a fallback when a caller
+        omits node_name/node_id entirely (e.g. the gateway's deterministic career-backbone
+        auto-inject, which no longer hardcodes a literal name — see
+        auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §3). An
+        LLM-initiated call always supplies node_name explicitly and never reaches this.
+        """
+        query = f"""
+        MATCH (p:Person)
+        WHERE p.is_primary_subject = true AND ({self._get_security_clause("p")})
+        RETURN p.name AS name
+        LIMIT 1
+        """
+        try:
+            result = self._exec_query(query, **self._security_params())
+            return result.records[0]["name"] if result.records else None
+        except Exception:
+            return None
+
     def get_cluster_context(self, node_name: Optional[str] = None, depth: int = 1, backbone_only: bool = False, domain: str = "all", node_id: Optional[str] = None) -> str:
         """
         Fetch the semantic neighbors and relationships for a specific node to expand the graph view.
         Uses Progressive Discovery (Backbone-First) and Domain Masking to maintain scalability and clarity.
         """
         if not node_name and not node_id:
-            return json.dumps({"error": "node_name or node_id is required"})
+            node_name = self._resolve_primary_subject()
+            if not node_name:
+                return json.dumps({"error": "node_name or node_id is required, and no primary subject is configured for this tenant"})
         safe_depth = max(1, min(depth, 2))
         
         # 1. Progressive Discovery Filter
@@ -1728,6 +1887,39 @@ class ExpertTools:
                 "links": record["links"],
                 "snapshot": record["snapshot"]
             }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def enumerate_bridge_sources(self, domain: str = "professional") -> str:
+        """
+        Deterministically enumerate real cross-domain bridge-source candidates for a domain,
+        type-filtered by domain_registry.py's per-domain bridge_source_labels config. Replaces
+        the LLM being instructed (prompt-text only) to search for a fixed keyword like "thought
+        leadership" as a first step before calling connect_knowledge_on_demand — live-confirmed
+        (2026-09-12) the LLM can skip that step and fabricate a source_node_name instead. Not
+        exposed to the LLM's own tool-selection schema (deliberately absent from
+        cortex-gateway/index.js's mcpToolsDefinitions) — called only by the gateway itself,
+        deterministically, before the LLM ever gets a turn on a cross_domain query. See
+        auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §4.
+        """
+        from domain_registry import DOMAIN_MANIFESTS
+        manifest = DOMAIN_MANIFESTS.get(domain.lower(), {})
+        labels = manifest.get("bridge_source_labels", [])
+        if not labels:
+            return json.dumps({"sources": []})
+        query = f"""
+        MATCH (n)
+        WHERE labels(n)[0] IN $bridge_source_labels
+          AND ({self._get_security_clause("n")})
+        RETURN n.name AS name, n.node_id AS node_id, elementId(n) AS element_id
+        """
+        try:
+            result = self._exec_query(query, bridge_source_labels=labels, **self._security_params())
+            sources = [
+                {"name": r["name"], "node_id": r["node_id"], "element_id": r["element_id"]}
+                for r in result.records
+            ]
+            return json.dumps({"sources": sources})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -2046,6 +2238,8 @@ class ExpertTools:
             # Degrades to today's weight-only ranking when no query_context was supplied
             # (relevance_keywords empty): every candidate is "structural" by construction, so the
             # tiering split is a no-op and ranking falls back to pure weight, unchanged.
+            from domain_registry import BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_RELEVANCE_MIN_KEYWORD_MATCHES
+
             def _path_is_confirmed(path: list) -> bool:
                 if not relevance_keywords:
                     return False
@@ -2055,11 +2249,34 @@ class ExpertTools:
                 # name) that would otherwise confirm every single candidate regardless of the
                 # actual target, defeating the tiering entirely. Only the hops the path actually
                 # traverses through/to should count as topical confirmation.
+                #
+                # Found live 2026-09-11: the same failure mode recurs when a generic hub node
+                # (degree >= BRIDGE_HUB_DEGREE_THRESHOLD) appears as an *intermediate* hop rather
+                # than the source — e.g. the graph's central Person node, connected to nearly every
+                # project, whose own name matches a query keyword ("Sangeetha's AI governance
+                # work...") on virtually any path regardless of that path's real topic. Excluded by
+                # degree, not identity — generic, works for any hub, any name, no hardcoding.
+                #
+                # Also found live 2026-09-11, a second and separate problem: even with the hub
+                # exclusion above, a single generic technical word (e.g. "architecture") shared
+                # between the query and an unrelated node's own description was enough to confirm
+                # a path on its own — common nouns coincidentally appear across many project
+                # descriptions in a tech-heavy graph, regardless of true relevance. Fixed by
+                # requiring BRIDGE_RELEVANCE_MIN_KEYWORD_MATCHES distinct keywords (not just one)
+                # to match across the whole path before it counts as confirmed — degrades to the
+                # old any-match behavior when the query itself only yields 1 keyword.
+                required = max(1, min(BRIDGE_RELEVANCE_MIN_KEYWORD_MATCHES, len(relevance_keywords)))
+                matched_keywords = set()
                 for nid in path[1:]:
                     info = node_info.get(nid, {})
+                    if info.get('degree', 0) >= BRIDGE_HUB_DEGREE_THRESHOLD:
+                        continue
                     text = f"{info.get('name') or ''} {info.get('description') or ''}".lower()
-                    if self._keyword_hit(text, relevance_keywords):
-                        return True
+                    for kw in relevance_keywords:
+                        if kw not in matched_keywords and self._keyword_hit(text, {kw}):
+                            matched_keywords.add(kw)
+                            if len(matched_keywords) >= required:
+                                return True
                 return False
 
             organic = [(tid, data) for tid, data in found.items() if tid != must_include_id]

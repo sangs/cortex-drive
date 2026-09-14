@@ -497,6 +497,30 @@ async def get_cluster_context(
         expert.close()
 
 @mcp.tool()
+async def enumerate_bridge_sources(
+    domain: str = Field("professional", description="Domain whose bridge_source_labels config to enumerate. Default 'professional'.")
+) -> str:
+    """
+    Deterministically enumerate real cross-domain bridge-source candidates for a domain
+    (type-filtered by domain_registry.py's bridge_source_labels config, e.g. ThoughtLeadership
+    nodes for 'professional'). Not exposed to the LLM's own tool schema — called only by the
+    gateway directly, before the LLM's turn on a cross_domain query, so a real, verified name
+    list is always supplied rather than left for the LLM to search for and risk fabricating.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return expert.enumerate_bridge_sources(domain=domain)
+    except Exception as e:
+        print(f"Error in enumerate_bridge_sources: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
 async def connect_knowledge_on_demand(
     source_node_id: Optional[str] = Field(None, description="The node_id (UUID, preferred) or elementId of the source node."),
     source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),

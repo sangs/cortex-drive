@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { classifyDomain, initClassifier, getBridgeContext } = require('./utils/intent_classifier');
+const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } = require('./utils/intent_classifier');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -158,8 +158,8 @@ function auditResponseUrls(content, seenUrls) {
  * phase) — widened recall raises the cost of an ungrounded citation slipping through, this is
  * the deterministic check that catches it regardless of how a node entered the candidate pool.
  *
- * Parses the `<citations>` block the system prompt now requires for cross_domain responses
- * (gateway_citation_requirement.md): one `[n] claim → node_name` line per claim. A line whose
+ * Parses the `<citations>` block buildCitationWriterCall() generates for cross_domain responses
+ * (gateway_citation_writer.md): one `[n] claim → node_name` line per claim. A line whose
  * node_name doesn't match any accumulatedGraph node's name is dropped and logged; the response
  * prose itself is untouched — this strips the citation footnote, not the sentence it supports
  * (matching auditResponseUrls()'s scope: it strips the offending link, not the surrounding text).
@@ -420,7 +420,8 @@ const gatewayDomainInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'ga
 const gatewayCrossDomainBridgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_bridge.md'), 'utf-8').trim();
 const gatewayCrossDomainTier7Prompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_tier7.md'), 'utf-8').trim();
 const gatewayBridgeCompletionNudgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_bridge_completion_nudge.md'), 'utf-8').trim();
-const gatewayCitationRequirementPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_citation_requirement.md'), 'utf-8').trim();
+const gatewayBridgeSourceCandidatesPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_bridge_source_candidates.md'), 'utf-8').trim();
+const gatewayCitationWriterPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_citation_writer.md'), 'utf-8').trim();
 const { createClerkClient, verifyToken } = require('@clerk/backend');
 const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
@@ -2938,21 +2939,56 @@ function resolveBridgeContext(domainSignal, question) {
 const SEMANTIC_CANDIDATE_SEARCH_ENABLED = (process.env.ENABLE_SEMANTIC_CANDIDATE_SEARCH || '').toLowerCase() === 'true';
 
 function buildCrossDomainInstruction(bridgeContext) {
-    const base = bridgeContext
+    return bridgeContext
         ? gatewayCrossDomainBridgePrompt
             .replace(/\{bridge_entity\}/g, bridgeContext.bridge_entity)
             .replace('{candidate_domains_joined}', bridgeContext.candidate_domains.join(' and '))
             .replace('{domain_1}', bridgeContext.candidate_domains[0])
             .replace('{domain_2}', bridgeContext.candidate_domains[1])
         : gatewayCrossDomainTier7Prompt;
-    if (!SEMANTIC_CANDIDATE_SEARCH_ENABLED) return base;
-    // Structured-citation groundedness backstop (2026-09-08, Phase 2 of
-    // node-metadata-embedding-hybrid-retrieval-2026-09-04.md) — scoped to cross_domain responses
-    // only, not global. connect_knowledge_on_demand's new semantic-widening (Part B.1, same phase)
-    // only ever affects cross_domain/bridge results, so the backstop is scoped to match rather
-    // than changing Q1/Q2 response format for a risk that doesn't apply to them. See
-    // auditResponseCitations() for the gateway-side validation half.
-    return base + '\n\n' + gatewayCitationRequirementPrompt;
+}
+
+/**
+ * Dedicated, single-purpose call that appends a <citations> block to an already-finished
+ * cross_domain answer. Mirrors buildQ2WriterCall's isolation principle above.
+ *
+ * SUPERSEDES an earlier approach (2026-09-08) that appended the citation instruction onto the
+ * main orchestration loop's system prompt (buildCrossDomainInstruction, when the flag was on).
+ * That was verified live, twice, to never produce a <citations> block — the instruction was one
+ * paragraph competing against ~4,000+ tokens of unrelated rules in gateway_system_assistant.md,
+ * and GPT-4o consistently deprioritized it even with a "MANDATORY" framing and a worked example.
+ * The main-loop instruction has been removed entirely (see buildCrossDomainInstruction above) —
+ * this isolated call is now the sole citation-generation mechanism, same pattern already proven
+ * reliable for Q2 prose quality: a system prompt with nothing else in it for the model to weigh
+ * the instruction against.
+ *
+ * Returns the citations block text (including <citations>...</citations> tags) or '' if the
+ * model found nothing citable / the call failed — never throws, caller treats '' as a no-op.
+ * auditResponseCitations() still runs on the result afterward — this call is a generator, not a
+ * trusted source; the existing node-name backstop polices it exactly like any other citation.
+ */
+async function buildCitationWriterCall(answerText, nodeNames, openaiClient) {
+    if (!answerText || nodeNames.size === 0) return '';
+    try {
+        const response = await openaiClient.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                { role: "system", content: gatewayCitationWriterPrompt },
+                {
+                    role: "user",
+                    content: `Response:\n${answerText}\n\nAvailable node names (cite only these, exact spelling):\n${[...nodeNames].join('\n')}`
+                }
+            ],
+            max_tokens: 400,
+            temperature: 0.2
+        });
+        const block = response.choices[0].message.content?.trim() || '';
+        console.log(`[QUERY] Citation writer call returned ${block.length} chars, hasCitationsTag=${block.includes('<citations>')}: ${block.slice(0, 200)}`);
+        return block.includes('<citations>') ? block : '';
+    } catch (e) {
+        console.warn('[QUERY] Citation writer call failed:', e.message);
+        return '';
+    }
 }
 
 // Returns the corrective nudge message to push onto `messages` (and re-loop) when an
@@ -2968,6 +3004,35 @@ function checkBridgeCompletion(domainSignal, bridgeContext, bridgeDomainsSearche
         .replace('{missing_domains_joined}', missingDomains.join('" or "'))
         .replace('{question}', question)
         .replace('{searched_domains_joined}', bridgeContext.candidate_domains.filter(d => !missingDomains.includes(d)).join(', '));
+}
+
+// Bridge-source candidate injection (added 2026-09-14) — deterministic replacement for Tier 7
+// Step a's prompt-only "call search_enterprise_graph(keyword='thought leadership', ...)"
+// instruction. Live-confirmed 2026-09-12 the LLM can skip that step and fabricate a
+// source_node_name instead (the Q2 "regression" report, root-caused to this, not a code
+// defect — see documents/daily_logs/daily_log-2026-09-12.md). Runs BEFORE the LLM's first
+// turn, not as a post-hoc nudge like checkBridgeCompletion above — there must be no window
+// where the LLM has already attempted (and can fabricate) a bridge call. bridge_source_labels
+// is config (domain_registry.py), not a literal keyword — see
+// auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §4. Mutates `messages`
+// directly, matching this file's existing push/continue convention for injected turns.
+async function injectBridgeSourceCandidates(domainSignal, tenantId, userId, question, messages) {
+    if (domainSignal !== 'cross_domain') return;
+    try {
+        const enumMcp = await callMcpTool(tenantId, 'enumerate_bridge_sources', { domain: 'professional' }, userId, false, {});
+        const enumText = enumMcp?.result?.content?.[0]?.text;
+        if (!enumText) return;
+        const parsed = JSON.parse(enumText);
+        const names = (parsed.sources || []).map(s => s.name).filter(Boolean);
+        if (names.length === 0) return;
+        const injected = gatewayBridgeSourceCandidatesPrompt
+            .replace('{candidate_names_joined}', names.map(n => `"${n}"`).join(', '))
+            .replace('{question}', question);
+        messages.push({ role: "user", content: injected });
+        console.log(`[QUERY] Injected ${names.length} verified bridge-source candidate(s) before LLM turn`);
+    } catch (e) {
+        console.warn('[QUERY] Bridge-source candidate injection failed (non-fatal):', e.message);
+    }
 }
 
 /**
@@ -3031,6 +3096,11 @@ app.post('/query', authMiddleware, async (req, res) => {
             ...(history || []),
             { role: "user", content: question }
         ];
+
+        // Deterministic bridge-source enumeration — before the LLM's first turn, so it never
+        // gets a chance to search for or fabricate a source name itself. See
+        // injectBridgeSourceCandidates above.
+        await injectBridgeSourceCandidates(domainSignal, tenantId, userId, question, messages);
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
@@ -3233,12 +3303,20 @@ app.post('/query', authMiddleware, async (req, res) => {
                     }
                 }
                 // For career queries: auto-inject the backbone from get_cluster_context so the
-                // graph visualizer still shows Sangeetha + Category backbone even though the LLM
-                // didn't call the tool (per Q2 instructions to call only search_enterprise_graph).
+                // graph visualizer still shows the subject + Category backbone even though the
+                // LLM didn't call the tool (per Q2 instructions to call only
+                // search_enterprise_graph). Whose backbone to show is resolved, not hardcoded
+                // (2026-09-14): if the question names a specific known person, use that name
+                // directly (same catalog lookup Fix 2 uses); otherwise omit node_name entirely
+                // and let get_cluster_context's own _resolve_primary_subject fallback pick the
+                // tenant's default subject. For the current single-tenant, single-person state
+                // this still resolves to the same name every time — see
+                // auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §3.4.
                 if (domainSignal === 'career' && accumulatedGraph.nodes.length > 0) {
                     try {
+                        const namedPerson = classifyNamedPerson(question);
                         const backboneMcp = await callMcpTool(tenantId, 'get_cluster_context', {
-                            node_name: 'Sangeetha Ramadurai',
+                            ...(namedPerson ? { node_name: namedPerson } : {}),
                             backbone_only: true,
                             depth: 1,
                             domain: 'professional'
@@ -3413,11 +3491,21 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 // Audit response for hallucinated URLs before sending.
                 let auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
-                // Structured-citation groundedness backstop (Phase 2, see auditResponseCitations()
-                // above) — scoped to the /query endpoint only, where accumulatedGraph.nodes exists;
-                // the separate /sse streaming endpoint has no equivalent node-tracking and is out
-                // of scope for this pass. No-op for responses with no <citations> block.
+                // Structured-citation groundedness backstop (Phase 2) — scoped to the /query
+                // endpoint only, where accumulatedGraph.nodes exists; the separate /sse streaming
+                // endpoint has no equivalent node-tracking and is out of scope for this pass.
+                // Generation: buildCitationWriterCall(), a dedicated isolated call (see its doc
+                // comment for why the main-loop-instruction approach was replaced). Scoped to
+                // cross_domain + flag on, same risk scope as connect_knowledge_on_demand's
+                // semantic widening that this backstop exists for.
+                // Validation: auditResponseCitations() always runs on the result — the writer
+                // call is a generator, not a trusted source, so it gets policed the same as any
+                // other citation.
                 const queryNodeNames = new Set(accumulatedGraph.nodes.map(n => n.name).filter(Boolean));
+                if (domainSignal === 'cross_domain' && SEMANTIC_CANDIDATE_SEARCH_ENABLED) {
+                    const citationsBlock = await buildCitationWriterCall(auditedAnswer, queryNodeNames, openai);
+                    if (citationsBlock) auditedAnswer = `${auditedAnswer}\n\n${citationsBlock}`;
+                }
                 auditedAnswer = auditResponseCitations(auditedAnswer, queryNodeNames);
 
                 // Entity-bridge path (bridgeContext !== null): the two (or more, as domains are

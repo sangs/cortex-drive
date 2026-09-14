@@ -237,6 +237,12 @@ class PersonNode(Neo4jBaseModel, EmbeddableNodeMixin):
     """Schema for Hosts/Guests/Listeners."""
     name: str = Field(..., description="Full name of the person.")
     role: Optional[str] = None # Host, Guest, Researcher
+    # True for exactly one Person node per tenant — the default subject of that tenant's
+    # career backbone (get_cluster_context's ExpertTools._resolve_primary_subject fallback,
+    # used only when a caller doesn't name a specific person). Added 2026-09-14 to replace a
+    # hardcoded literal name in the gateway's backbone auto-inject. See
+    # auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §3.
+    is_primary_subject: Optional[bool] = None
 
 class PodcastNode(Neo4jBaseModel):
     """Schema for Podcast nodes."""

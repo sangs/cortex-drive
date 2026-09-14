@@ -164,6 +164,49 @@ function getBridgeContext(question) {
     return { bridge_entity: match.matched, candidate_domains: match.domains };
 }
 
+// ─── Named-person lookup (added 2026-09-14) ──────────────────────────────────
+// Separate from _entityLookup by design, same reasoning as _bridgeEntityLookup above —
+// Person is a shared/SYSTEM label excluded from domains.* (see generate_entity_catalog.py),
+// but "does this question name a specific person" is a distinct, real need: both the
+// career-backbone auto-inject and Tier 7 bridge-source resolution must prefer an
+// explicitly-named person over a tenant-default fallback. See
+// documents/architecture/auth-derived-identity-and-bridge-source-config-design-2026-09-12.md
+// §3.3/§4.2 — reuses the existing catalog + longest-match-lookup pattern rather than a new
+// mechanism.
+
+let _personLookup = null;  // Map<lowerCaseName, originalCaseName>
+
+function _loadPersonCatalog() {
+    try {
+        const catalogPath = path.join(__dirname, '../config/entity_catalog.json');
+        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+        const lookup = new Map();
+        for (const name of raw.persons || []) {
+            if (name && name.length > 2) lookup.set(name.toLowerCase(), name);
+        }
+        if (lookup.size > 0) {
+            console.log(`[CLASSIFY] Person catalog loaded: ${lookup.size} names`);
+        }
+        return lookup;
+    } catch (e) {
+        console.warn('[CLASSIFY] Person catalog unavailable — named-person lookup skipped:', e.message);
+        return new Map();
+    }
+}
+
+/**
+ * Resolve whether a question explicitly names a known person, independent of domain
+ * classification. Returns the person's name in its original catalog casing (the exact
+ * form Neo4j stores it as), suitable for passing straight through as a node_name argument.
+ *
+ * @param {string} question
+ * @returns {string | null}
+ */
+function classifyNamedPerson(question) {
+    const match = _longestMatchLookup(question || '', _personLookup);
+    return match ? match.value : null;
+}
+
 // ─── Phase S: Embedding similarity ───────────────────────────────────────────
 // Uses text-embedding-3-small — same model as Neo4j chunk embeddings.
 // Prototype centroids are pre-computed once at gateway startup via initClassifier().
@@ -353,5 +396,6 @@ async function classifyDomain(question, openaiClient) {
 
 _entityLookup = _loadEntityCatalog();
 _bridgeEntityLookup = _loadBridgeEntities();
+_personLookup = _loadPersonCatalog();
 
-module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS, getBridgeContext };
+module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS, getBridgeContext, classifyNamedPerson };
