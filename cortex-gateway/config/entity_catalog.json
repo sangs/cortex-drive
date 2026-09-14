@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-08T23:01:04.189035+00:00",
+  "generated_at": "2026-09-14T18:18:41.245882+00:00",
   "node_count": 45,
   "domains": {
     "career": [
@@ -54,6 +54,21 @@
       "Apache Iceberg"
     ]
   },
+  "persons": [
+    "Ben Lorica",
+    "Dan Sotolongo",
+    "Daniel Weeks",
+    "David Hughes",
+    "David Soria Parra",
+    "Hannes M\u00fchleisen",
+    "Jordi Mon Companys",
+    "Lee Atchison",
+    "Mark Raasveldt",
+    "Prashanth Rao",
+    "Ryan Blue",
+    "Sangeetha Ramadurai",
+    "Tobias Macey"
+  ],
   "bridge_entities": {
     "apache iceberg": [
       "website",
