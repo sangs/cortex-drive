@@ -66,6 +66,60 @@ APP_DOMAIN="${APP_DOMAIN:-https://app.cortex-drive.com}"
 
 CLOUD_SQL_CONN="cortex-drive-496915:us-central1:cortex-openfga-db"
 
+# This string is the full, authoritative plain-env-var set for cortex-gateway —
+# gcloud run deploy --set-env-vars REPLACES the live set rather than merging with
+# it, so anything live but missing from this string is silently dropped on deploy.
+NEW_ENV_VARS="MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
+CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
+PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
+CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\
+ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true}"
+
+# --- Env-var drift guard --------------------------------------------------
+# Incident 2026-09-08: ENABLE_SEMANTIC_CANDIDATE_SEARCH was turned on live via a
+# one-off `gcloud run services update --update-env-vars`, then silently dropped
+# by the next run of this script (--set-env-vars replaces, not merges) — no
+# error, no warning, just a feature that quietly stopped working. Misdiagnosed
+# for two test rounds as an LLM prompt-following bug before the real cause was
+# found. This check compares the plain (non-secret) env vars currently live on
+# the service against NEW_ENV_VARS above, BEFORE deploying, and aborts if this
+# deploy would drop anything the operator hasn't accounted for. See
+# documents/architecture/phase-glossary-2026-09-08.md (Phase 2 entry) for the
+# full incident writeup.
+echo "--- Checking for env var drift before deploy..."
+CURRENT_ENV_JSON=$(gcloud run services describe cortex-gateway \
+    --region "${REGION}" --project "${PROJECT_ID}" \
+    --format="json(spec.template.spec.containers[0].env)" 2>/dev/null || echo '{}')
+
+DROPPED_VARS=$(echo "$CURRENT_ENV_JSON" | "${REPO}/.venv/bin/python" -c '
+import json, sys
+current = json.loads(sys.stdin.read() or "{}")
+env_list = (current.get("spec", {}).get("template", {}).get("spec", {})
+            .get("containers", [{}])[0].get("env", []) or [])
+live_plain_names = {e["name"] for e in env_list if "value" in e}  # excludes secrets (valueFrom)
+new_names = {kv.split("=", 1)[0] for kv in sys.argv[1].split(",") if kv}
+print("\n".join(sorted(live_plain_names - new_names)))
+' "$NEW_ENV_VARS")
+
+if [ -n "$DROPPED_VARS" ]; then
+    echo "❌ ABORTING: this deploy would silently drop the following env var(s) —"
+    echo "   currently live on cortex-gateway, but missing from this script's"
+    echo "   NEW_ENV_VARS list (gcloud run deploy --set-env-vars replaces the full"
+    echo "   set, it does not merge):"
+    echo "$DROPPED_VARS" | sed 's/^/     - /'
+    echo ""
+    echo "   Add the missing var(s) to NEW_ENV_VARS above, or if dropping them is"
+    echo "   intentional, remove them from the live service directly so this"
+    echo "   check stops flagging them. To deploy anyway (not recommended):"
+    echo "   ALLOW_ENV_VAR_DROP=true bash scripts/build-deploy-gateway.sh"
+    if [ "${ALLOW_ENV_VAR_DROP:-false}" != "true" ]; then
+        exit 1
+    fi
+    echo "   ALLOW_ENV_VAR_DROP=true set — proceeding despite the drop above."
+else
+    echo "✓ No env var drift — every live plain env var is accounted for."
+fi
+
 gcloud run deploy cortex-gateway \
     --image "${REGISTRY}/cortex-gateway:latest" \
     --region "${REGION}" \
@@ -77,10 +131,7 @@ gcloud run deploy cortex-gateway \
     --min-instances 0 \
     --max-instances 5 \
     --add-cloudsql-instances "${CLOUD_SQL_CONN}" \
-    --set-env-vars "MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
-CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
-PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
-CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0" \
+    --set-env-vars "${NEW_ENV_VARS}" \
     --set-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest,CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\
 TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
 GATEWAY_SHARE_SECRET=GATEWAY_SHARE_SECRET:latest,\

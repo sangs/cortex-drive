@@ -56,6 +56,54 @@ gcloud builds submit \
     "$BCTX"
 
 # Deploy
+# This string is the full, authoritative plain-env-var set for cortex-ui —
+# gcloud run deploy --set-env-vars REPLACES the live set rather than merging with
+# it, so anything live but missing from this string is silently dropped on deploy.
+NEW_ENV_VARS="NEXT_PUBLIC_GATEWAY_URL=${API_DOMAIN},NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PK}"
+
+# --- Env-var drift guard --------------------------------------------------
+# Same incident class as cortex-gateway's build-deploy-gateway.sh (2026-09-08):
+# a manually-set env var not in this script's hardcoded --set-env-vars list
+# gets silently dropped on the next deploy, no error, no warning. This check
+# compares the plain (non-secret) env vars currently live on the service
+# against NEW_ENV_VARS above, BEFORE deploying, and aborts if this deploy
+# would drop anything the operator hasn't accounted for. See
+# documents/architecture/phase-glossary-2026-09-08.md (Phase 2 entry) for the
+# full incident writeup.
+echo "--- Checking for env var drift before deploy..."
+CURRENT_ENV_JSON=$(gcloud run services describe cortex-ui \
+    --region "${REGION}" --project "${PROJECT_ID}" \
+    --format="json(spec.template.spec.containers[0].env)" 2>/dev/null || echo '{}')
+
+DROPPED_VARS=$(echo "$CURRENT_ENV_JSON" | "${REPO}/.venv/bin/python" -c '
+import json, sys
+current = json.loads(sys.stdin.read() or "{}")
+env_list = (current.get("spec", {}).get("template", {}).get("spec", {})
+            .get("containers", [{}])[0].get("env", []) or [])
+live_plain_names = {e["name"] for e in env_list if "value" in e}  # excludes secrets (valueFrom)
+new_names = {kv.split("=", 1)[0] for kv in sys.argv[1].split(",") if kv}
+print("\n".join(sorted(live_plain_names - new_names)))
+' "$NEW_ENV_VARS")
+
+if [ -n "$DROPPED_VARS" ]; then
+    echo "❌ ABORTING: this deploy would silently drop the following env var(s) —"
+    echo "   currently live on cortex-ui, but missing from this script's"
+    echo "   NEW_ENV_VARS list (gcloud run deploy --set-env-vars replaces the full"
+    echo "   set, it does not merge):"
+    echo "$DROPPED_VARS" | sed 's/^/     - /'
+    echo ""
+    echo "   Add the missing var(s) to NEW_ENV_VARS above, or if dropping them is"
+    echo "   intentional, remove them from the live service directly so this"
+    echo "   check stops flagging them. To deploy anyway (not recommended):"
+    echo "   ALLOW_ENV_VAR_DROP=true bash scripts/build-deploy-ui.sh"
+    if [ "${ALLOW_ENV_VAR_DROP:-false}" != "true" ]; then
+        exit 1
+    fi
+    echo "   ALLOW_ENV_VAR_DROP=true set — proceeding despite the drop above."
+else
+    echo "✓ No env var drift — every live plain env var is accounted for."
+fi
+
 gcloud run deploy cortex-ui \
     --image "${REGISTRY}/cortex-ui:latest" \
     --region "${REGION}" \
@@ -65,7 +113,7 @@ gcloud run deploy cortex-ui \
     --memory 1Gi \
     --min-instances 0 \
     --max-instances 3 \
-    --set-env-vars "NEXT_PUBLIC_GATEWAY_URL=${API_DOMAIN},NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PK}" \
+    --set-env-vars "${NEW_ENV_VARS}" \
     --set-secrets "CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest"
 
 echo ""
