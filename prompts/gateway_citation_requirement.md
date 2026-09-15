@@ -1,3 +1,0 @@
-After your prose response, append a `<citations>` block listing every factual claim you made that came from tool results, one per line, in this exact format:
-[n] claim → node_name
-Where `node_name` is the exact name of the node the claim is about, as returned by a tool call this turn — not paraphrased, not invented. Only cite nodes that were actually returned by a tool in this turn. If you made no claims traceable to a specific node, omit the block entirely rather than inventing an entry.
