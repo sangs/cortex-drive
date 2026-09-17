@@ -287,6 +287,91 @@ export function collapseToGroupers(
 }
 
 /**
+ * Sets isBentoEligible/isExpandable on every node in place, based on type. Hoisted out of
+ * dashboard/page.tsx's parseDataToGraph (2026-09-15) — it's a pure function of (node, linkList),
+ * with no dependency on any of parseDataToGraph's closure state, and was previously redefined
+ * inline on every call.
+ */
+export function applyAffordanceFlags(nodeList: GraphNode[], linkList: GraphLink[]): void {
+    nodeList.forEach(node => {
+        if (TAG_LEAF_TYPES.has(node.type ?? '')) {
+            node.isBentoEligible = false;
+            node.isExpandable = false;
+            return;
+        }
+        if (node.type === 'Topic') {
+            node.isBentoEligible = false;
+            const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
+            node.isExpandable = hasLinks;
+            return;
+        }
+        // Category nodes are structural groupers — expand-only, no bento detail panel.
+        if (node.type === 'Category') {
+            node.isBentoEligible = false;
+            node.isExpandable = true;
+            return;
+        }
+        node.isBentoEligible = isBentoEligible(node);
+        const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
+        node.isExpandable = Boolean(node.isGrouper) || ALWAYS_EXPANDABLE.has(node.type ?? '') || (HUB_TYPES.has(node.type ?? '') && hasLinks);
+    });
+}
+
+/**
+ * Single grouper-collapse decision, used by every parseDataToGraph code path that produces a
+ * renderable node/link set. Hoisted out of dashboard/page.tsx (2026-09-15) — that function
+ * previously called collapseToGroupers from four separate branches (two parsing paths x two
+ * near-duplicate backboneSet checks), which made it hard to know which branch actually produced
+ * a given render and was the direct cause of a 2026-09-15 investigation into a stale grouper
+ * node taking far longer to trace than it should have (see
+ * documents/daily_logs/daily_log-2026-09-15.md for the full investigation). Also fixes a real
+ * inconsistency found while unifying: the old "Direct Graph Fragment" branch's
+ * CAREER_BACKBONE-with-no-Category-nodes
+ * case fell through with NO collapsing at all, while the old "legacy rawResults" branch's
+ * equivalent case explicitly fell back to collapseToGroupers. This function adopts the more
+ * complete (rawResults) behavior as authoritative for both callers.
+ *
+ * Three cases, in order:
+ *  1. backboneOnly + CAREER_BACKBONE + real Category nodes present: hide individual instances,
+ *     Category nodes ARE the top-level groupers (revealed by double-clicking).
+ *  2. backboneOnly + CAREER_BACKBONE + no Category nodes: fall back to virtual (type-based)
+ *     groupers via collapseToGroupers.
+ *  3. Everything else (non-career backboneOnly, or backboneOnly=false entirely): always
+ *     collapseToGroupers — safe to call unconditionally, it only collapses types actually
+ *     present at >= GROUPER_MIN_COUNT and passes everything else through unchanged.
+ */
+export function finalizeGraphForRender(
+    nodes: GraphNode[],
+    links: GraphLink[],
+    backboneOnly: boolean,
+    backboneSet: Set<string> | undefined
+): { nodes: GraphNode[]; links: GraphLink[] } {
+    let processedNodes = nodes;
+    let processedLinks = links;
+
+    const isCareerBackbone = backboneOnly && backboneSet === CAREER_BACKBONE;
+    const hasCategoryNodes = isCareerBackbone && nodes.some(n => n.type === 'Category');
+
+    if (isCareerBackbone && hasCategoryNodes) {
+        processedNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type ?? '') || n.highlighted);
+        processedLinks = links.filter(l =>
+            processedNodes.some(n => n.id === l.source) &&
+            processedNodes.some(n => n.id === l.target)
+        );
+    } else {
+        // Covers: CAREER_BACKBONE with no Category nodes, any other backboneOnly set, and
+        // backboneOnly=false entirely — collapseToGroupers is a safe no-op when nothing
+        // qualifies for grouping.
+        const collapsed = collapseToGroupers(nodes, links);
+        processedNodes = collapsed.nodes;
+        processedLinks = collapsed.links;
+    }
+
+    applyAffordanceFlags(processedNodes, processedLinks);
+    return { nodes: processedNodes, links: processedLinks };
+}
+
+/**
  * From a depth-2 get_cluster_context expansion result for "Professional Experience",
  * extracts Company/Startup nodes enriched with their child Projects/Roles.
  *

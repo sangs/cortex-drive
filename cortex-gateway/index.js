@@ -3016,8 +3016,20 @@ function checkBridgeCompletion(domainSignal, bridgeContext, bridgeDomainsSearche
 // is config (domain_registry.py), not a literal keyword — see
 // auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §4. Mutates `messages`
 // directly, matching this file's existing push/continue convention for injected turns.
-async function injectBridgeSourceCandidates(domainSignal, tenantId, userId, question, messages) {
+async function injectBridgeSourceCandidates(domainSignal, bridgeContext, tenantId, userId, question, messages) {
     if (domainSignal !== 'cross_domain') return;
+    // domainSignal === 'cross_domain' covers TWO unrelated mechanisms, distinguished by
+    // bridgeContext: (1) the career/ThoughtLeadership bridge flow this function serves (Tier 7,
+    // connect_knowledge_on_demand), where bridgeContext is null, and (2) the separate
+    // website<->podcast entity-bridge flow (resolveBridgeContext/getBridgeContext, triggered by
+    // a registered bridge_entity like "apache iceberg"), where bridgeContext is set. Found live
+    // 2026-09-15: this function fired unconditionally, injecting an irrelevant "verified
+    // ThoughtLeadership candidates" message into an Apache Iceberg entity-bridge query that has
+    // nothing to do with career bridging — wasteful (an unneeded Cypher call every turn) and a
+    // latent risk (a future LLM could act on the irrelevant injected context). Skip entirely when
+    // bridgeContext is already set — that path never calls connect_knowledge_on_demand, so this
+    // function has nothing to contribute there.
+    if (bridgeContext) return;
     try {
         const enumMcp = await callMcpTool(tenantId, 'enumerate_bridge_sources', { domain: 'professional' }, userId, false, {});
         const enumText = enumMcp?.result?.content?.[0]?.text;
@@ -3100,7 +3112,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         // Deterministic bridge-source enumeration — before the LLM's first turn, so it never
         // gets a chance to search for or fabricate a source name itself. See
         // injectBridgeSourceCandidates above.
-        await injectBridgeSourceCandidates(domainSignal, tenantId, userId, question, messages);
+        await injectBridgeSourceCandidates(domainSignal, bridgeContext, tenantId, userId, question, messages);
 
         let loopCount = 0;
         const MAX_LOOPS = 5;

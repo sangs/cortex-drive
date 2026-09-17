@@ -115,6 +115,23 @@ class ExpertTools:
         // With $semantic_seed_ids=[], every admitted anchor is keyword-matched by construction
         // and this CASE always evaluates true — byte-identical to the prior unconditional
         // collect(DISTINCT elementId(anchor)).
+        // Order expandedNode rows by topical relevance (keyword match on name/description)
+        // before the $expansion_limit slice below — found live 2026-09-15: the prior unordered
+        // collect()[0..limit] kept whichever rows Neo4j's traversal happened to visit first, not
+        // the most relevant ones. The same-day scoped-limit fix (forcing SEARCH_EXPANSION_LIMIT_
+        // SCOPED whenever a semantic anchor is admitted) reduced blast radius but couldn't
+        // guarantee an irrelevant node wouldn't still win one of the surviving slots — confirmed
+        // live: "Federated Knowledge Silos" still appeared for a query about "AI ethics and
+        // governance" even after the 62-node explosion was cut to 33. $keywords is already a
+        // bound parameter (used above and in _fragment_ranking_and_return's range_boost) — no
+        // new parameter. Same principle as the existing content-bearing-neighbor ordering in
+        // _fragment_neighbor_aggregation just below.
+        WITH anchor, expandedNode, parentEpisode,
+             CASE WHEN expandedNode IS NOT NULL
+                       AND any(word IN $keywords WHERE toLower(coalesce(expandedNode.name, '') + ' ' + coalesce(expandedNode.description, '')) CONTAINS word)
+                  THEN 0 ELSE 1 END AS expandedRelevance
+        ORDER BY expandedRelevance ASC
+
         WITH collect(DISTINCT CASE
                         WHEN any(word IN $keywords WHERE toLower(anchor.name) CONTAINS word)
                              OR expandedNode IS NOT NULL
@@ -1472,9 +1489,6 @@ class ExpertTools:
                 SEARCH_NEIGHBOR_LIMIT_DEFAULT, SEARCH_NEIGHBOR_LIMIT_SCOPED,
                 SEARCH_EXPANSION_LIMIT_DEFAULT, SEARCH_EXPANSION_LIMIT_SCOPED,
             )
-            neighbor_limit = SEARCH_NEIGHBOR_LIMIT_SCOPED if scoped_expansion else SEARCH_NEIGHBOR_LIMIT_DEFAULT
-            expansion_limit = SEARCH_EXPANSION_LIMIT_SCOPED if scoped_expansion else SEARCH_EXPANSION_LIMIT_DEFAULT
-
             # Phase 3 (2026-09-09): search_enterprise_graph semantic widening — see
             # documents/architecture/node-metadata-embedding-hybrid-retrieval-2026-09-04.md §2.7.
             # Dedicated flag (independent of Phase 2's ENABLE_SEMANTIC_CANDIDATE_SEARCH — this
@@ -1540,7 +1554,27 @@ class ExpertTools:
                     print(f"Warning: Phase 3 semantic widening failed, continuing without it: {e}")
                     semantic_seed_ids = []
 
-            print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id} (scoped_expansion={scoped_expansion})")
+            # Bug found live 2026-09-15: a semantic-only anchor can be low-degree itself (e.g.
+            # "Governance", degree 3) yet still explode via [*0..2] expansion if that anchor
+            # happens to sit within 2 hops of a structural hub (e.g. the central Person node) —
+            # the 2026-09-12 fix only excluded a semantic candidate ALREADY found via strict
+            # matching, it never bounded a semantic-only anchor's own expansion *reach*. Career
+            # queries never set scoped_expansion (that's only forced for cross_domain, AP-20), so
+            # they got the effectively-uncapped DEFAULT limit — confirmed live: "AI ethics and
+            # governance" returned 62 nodes (nearly the whole professional graph), including an
+            # unrelated "Federated Knowledge Silos" Category. A semantic match is inherently less
+            # certain than a literal one and should never get the generous default, regardless of
+            # domain_signal — so any call where Phase 3 actually admitted a semantic anchor now
+            # gets the same SCOPED caps cross_domain queries already use. This bounds the blast
+            # radius of a single semantic trigger; it does not itself guarantee the surviving
+            # nodes are the most topically relevant ones (the Cypher slice isn't relevance-
+            # ordered) — see auth-derived-identity-and-bridge-source-config-design-2026-09-12.md-
+            # adjacent daily log for the fuller discussion of that limitation.
+            use_scoped_limits = scoped_expansion or bool(semantic_seed_ids)
+            neighbor_limit = SEARCH_NEIGHBOR_LIMIT_SCOPED if use_scoped_limits else SEARCH_NEIGHBOR_LIMIT_DEFAULT
+            expansion_limit = SEARCH_EXPANSION_LIMIT_SCOPED if use_scoped_limits else SEARCH_EXPANSION_LIMIT_DEFAULT
+
+            print(f"[SEARCH] Running '{domain_intent}' enterprise search for user: {requesting_user_id} (scoped_expansion={scoped_expansion}, semantic_anchor_admitted={bool(semantic_seed_ids)})")
             result = self._exec_query(
                 query,
                 **self._security_params(),
@@ -2305,6 +2339,31 @@ class ExpertTools:
             nodes_by_id: dict = {}
             virtual_links = []
 
+            # Bug found live 2026-09-15: the source node was never included in this method's own
+            # `nodes` output (the loop below skipped it deliberately), while `virtual_links`
+            # above unconditionally includes edges FROM the source for its direct 1-hop
+            # "structural" context (e.g. Technology nodes via USES_TOOL). Any node reachable only
+            # via such a direct source edge then had a link whose `source` endpoint never existed
+            # in the graph's own node set — the frontend can't render an edge to a missing
+            # endpoint, so those nodes appeared to float disconnected. This was previously masked
+            # because the old Tier-7 prompt flow always called search_enterprise_graph first,
+            # which incidentally merged the source node into the gateway's accumulated graph
+            # before this tool ran. The deterministic enumerate_bridge_sources replacement
+            # (2026-09-14) returns names only, never graph data, removing that incidental cover.
+            # Fix: include the source node here too, tagged "confirmed" since it's definitionally
+            # the anchor of whatever bridge was found — self-consistent regardless of what tool
+            # ran before this one.
+            source_info = node_info.get(source_eid, {})
+            nodes_by_id[source_eid] = {
+                "id": source_eid,
+                "element_id": source_eid,
+                "node_id": source_info.get("node_id"),
+                "name": source_name,
+                "type": source_info.get("type", "Unknown"),
+                "has_federated_bridge": True,
+                "relevance_tier": "confirmed",
+            }
+
             for target_eid, (weight, path, rels) in ranked:
                 rel_chain = " → ".join(rels)
                 tier = "confirmed" if target_eid in confirmed_ids else "structural"
@@ -2325,7 +2384,8 @@ class ExpertTools:
                     })
 
                 for node_id in path:
-                    if node_id == source_eid or node_id in nodes_by_id:
+                    # source_eid is pre-populated above; this also naturally skips it.
+                    if node_id in nodes_by_id:
                         continue
                     info = node_info[node_id]
                     entry = {

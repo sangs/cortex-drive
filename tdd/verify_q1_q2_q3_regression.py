@@ -148,6 +148,42 @@ class TestQ1Q2Q3Regression(unittest.TestCase):
         self.assertEqual(result.get("nodes", []), [])
         print(f"✓ Fabricated source name correctly failed: {result.get('bridge_summary')!r}")
 
+    def test_08_semantic_anchor_expansion_stays_relevant(self):
+        """Regression: a semantic-only anchor (no literal keyword match) could still explode via
+        [*0..2] expansion if it sat within 2 hops of a structural hub, even after the 2026-09-15
+        scoped-limit fix bounded the volume — because the underlying Cypher collect()[0..limit]
+        slice wasn't relevance-ordered, an irrelevant node could still win one of the surviving
+        slots by sheer traversal order. Confirmed live: "AI ethics and governance" (zero literal
+        matches, triggering Phase 3 semantic widening on "Governance") kept surfacing the
+        unrelated "Federated Knowledge Silos" Category even after node count dropped 62->33.
+        Fixed by ordering expandedNode rows by keyword relevance before the limit slice. Assert
+        both the specific known-bad node's absence AND that the result stays bounded (not just
+        one or the other) — and run it twice to catch a return to non-deterministic ordering.
+
+        Note: ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH is read as a domain_registry module-level
+        constant at first import, so it must be set in the shell environment BEFORE this test
+        process starts (setUpClass is too late) — e.g.
+        ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH=true PYTHONPATH=... python -m unittest ...
+        Without it, Phase 3 never triggers and this test still passes, but doesn't meaningfully
+        exercise the bug path — flagged explicitly below rather than passing silently."""
+        from domain_registry import ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH
+        if not ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH:
+            print("\n[TDD] Bug #1 — SKIPPED meaningful coverage: ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH "
+                  "is off in this process, so Phase 3 never triggers. Assertions below will pass "
+                  "trivially. Re-run with the env var set to actually exercise this regression.")
+        print("\n[TDD] Bug #1 — semantic-anchor expansion relevance ordering...")
+        for i in range(2):
+            result = json.loads(self.expert.search_enterprise_graph(
+                keyword="AI ethics and governance", domain_intent="professional"))
+            self.assertNotIn("error", result)
+            names = {n.get("name") for n in result.get("nodes", [])}
+            node_count = len(names)
+            self.assertNotIn("Federated Knowledge Silos", names,
+                              f"Run {i+1}: irrelevant node resurfaced despite relevance ordering.")
+            self.assertLess(node_count, 45,
+                             f"Run {i+1}: got {node_count} nodes — scoped-limit fix may have regressed.")
+        print(f"✓ No 'Federated Knowledge Silos' contamination across 2 runs; bounded node counts.")
+
     @classmethod
     def tearDownClass(cls):
         if hasattr(cls, 'expert'):
