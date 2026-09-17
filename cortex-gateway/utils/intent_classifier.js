@@ -35,24 +35,55 @@ const path = require('path');
 
 // ─── Phase R: Regex patterns ──────────────────────────────────────────────────
 // Order matters: cross_domain is checked before career so "how did my career influence..."
-// routes to cross_domain, not career.
+// routes to cross_domain, not career. Pattern DATA lives in ../config/intent_keywords.js — that
+// is the only file a developer edits to add a new Phase R shortcut; this file only builds the
+// actual RegExp objects from it. See that file's doc comment for the patternSource/keywords
+// distinction and the keyword-selection discipline for new entries.
 
-const INTENT_PATTERNS = [
-    {
-        domain_signal: 'podcast',
-        pattern: /\bepisode|podcast|guest|interview|transcript|talks?\s+about|discuss/i
-    },
-    {
-        domain_signal: 'cross_domain',
-        pattern: /influenc|how\s+did.*affect|how\s+did.*shape|bridge|connects?\s+.*to|relation.*between|impact.*on.*design|decision\s+trace|trace.*from|from.*to.*(?:architecture|security|design|system|platform)|led\s+to|drove.*(?:architecture|design|security)|shaped.*(?:architecture|design|security)/i
-    },
-    {
-        domain_signal: 'career',
-        // Covers core career vocabulary + thought leadership (publish/write/author/infoq/conference/blog)
-        // + project/startup/hackathon vocabulary + person-centric action queries.
-        pattern: /career|resume|background|experience|worked\s+at|compan(y|ies)|my\s+role|education|certification|professional|publish|wrote|written|article|infoq|conference|hackathon|startup|project|thought\s+leader|blog|speaking\s+at|presentation|authored|what.*\bdid.*\bdo\b|what.*\bhas.*\bbuilt\b|founded|built\b|created\b/i
-    }
-];
+const INTENT_KEYWORDS_CONFIG = require('../config/intent_keywords.js');
+
+// Allowlist for a genuinely unambiguous single-word `keywords` entry, should one ever be
+// needed — empty today; every current entry is a multi-word phrase (see _buildIntentPatterns).
+const SINGLE_WORD_KEYWORD_ALLOWLIST = new Set();
+
+function _escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Wraps an escaped literal keyword/phrase with word boundaries so e.g. "map" doesn't match
+// inside "sitemap" — \b anchors correctly around interior spaces too, so this is safe for
+// multi-word phrases as a single unit, not just single words.
+function _wrapPhrase(escapedLiteral) {
+    return `\\b${escapedLiteral}\\b`;
+}
+
+// Builds the real RegExp per domain from config: `patternSource` is used as raw regex source
+// (preserves pre-externalization behavior exactly, unaudited — see the config file's doc
+// comment), `keywords` entries are escaped + boundary-wrapped literals. Rejects bare
+// single-word `keywords` entries (loud, not silent) unless explicitly allow-listed — this is
+// where the "no ambiguous single-word Phase R triggers" discipline is actually enforced, not
+// just documented.
+function _buildIntentPatterns(config) {
+    return config.domains.map(({ domain_signal, patternSource, keywords }) => {
+        const parts = [];
+        if (patternSource) parts.push(patternSource);
+        for (const kw of (keywords || [])) {
+            if (!kw.includes(' ') && !SINGLE_WORD_KEYWORD_ALLOWLIST.has(kw)) {
+                console.warn(`[CLASSIFY] intent_keywords.js: rejecting bare single-word keyword "${kw}" for domain=${domain_signal} — keywords must be multi-word phrases (or an allow-listed proper noun). Skipped, not applied.`);
+                continue;
+            }
+            parts.push(_wrapPhrase(_escapeRegex(kw)));
+        }
+        try {
+            return { domain_signal, pattern: new RegExp(parts.join('|'), 'i') };
+        } catch (e) {
+            console.error(`[CLASSIFY] intent_keywords.js: malformed pattern for domain=${domain_signal}, this domain's Phase R entry is disabled:`, e.message);
+            return null;
+        }
+    }).filter(Boolean);
+}
+
+const INTENT_PATTERNS = _buildIntentPatterns(INTENT_KEYWORDS_CONFIG);
 
 function _regexClassify(q) {
     for (const { domain_signal, pattern } of INTENT_PATTERNS) {

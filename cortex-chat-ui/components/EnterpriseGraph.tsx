@@ -17,6 +17,23 @@ const PODCAST_REL_FAMILIES = new Set([
     'HAS_SOURCE', 'MENTIONED', 'LISTENS_TO', 'SUBSCRIBES_TO', 'HAS_CHUNK'
 ]);
 
+// True when a manually-dragged (pinned) node is part of the currently visible graph. The
+// bloom-driven auto-fit effect below must not rescale zoom while this holds — rescaling moves
+// every node relative to the focal center, which silently drags a pinned node's on-screen
+// position out from under the user even though its data {x,y} is untouched. Naturally resets
+// once the pinned node's id is no longer present (e.g. a new question), so callers don't need to
+// clear anything explicitly.
+function hasVisiblePin(nodes: { id: string }[], pinned: Map<string, { x: number, y: number }>): boolean {
+    if (pinned.size === 0) return false;
+    return nodes.some(n => pinned.has(n.id));
+}
+
+// Zoom scales inversely with node count so a freshly-bloomed graph keeps all nodes on screen.
+// Isolated from the effect below so the formula can be read/changed on its own.
+function computeAutoFitZoom(nodeCount: number): number {
+    return Math.max(0.35, 1 / Math.sqrt(Math.max(nodeCount, 1) / 3));
+}
+
 interface EnterpriseGraphProps {
     data: { nodes: any[], links: any[] };
     onNodeClick?: (node: any) => void;
@@ -27,10 +44,15 @@ interface EnterpriseGraphProps {
     selectedNodeId?: string | null;
     focusedNodeIds?: Set<string> | null;
     expandedNodeKeys?: Set<string>;
+    // id of the one node a live server-backed expand is currently in flight for, or null.
+    // Renders a local loading affordance on that node — see the isLoadingExpand usage below.
+    // Distinct from a page-level spinner: this is what tells the user, on the canvas itself,
+    // which specific action they took is still running.
+    expandingNodeKey?: string | null;
 }
 
 const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
-    data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId, focusedNodeIds, expandedNodeKeys
+    data, onNodeClick, onNodeDoubleClick, onTimelineChange, viewMode = 'brain', focusYear, selectedNodeId, focusedNodeIds, expandedNodeKeys, expandingNodeKey
 }) => {
     const chartRef = useRef<any>(null);
     const [pinnedPositions, setPinnedPositions] = React.useState<Map<string, {x: number, y: number}>>(new Map());
@@ -239,6 +261,13 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 padding: [2, 4],
                 formatter: (params: any) => {
                     const baseLabel = params.data.name || params.data.title || params.data.topic || params.data.role || String(params.data.id || '');
+                    // Loading takes priority over every other badge — it's the most temporally
+                    // urgent state and supersedes "expandable"/"grouper" while the live
+                    // get_cluster_context call this click triggered is still in flight. See
+                    // dashboard/page.tsx's expandingNodeKey — this is the fix for the
+                    // "stuck-looking" graph during a slow server-backed expand (2026-09-16):
+                    // there was previously no loading indicator anywhere on the canvas itself.
+                    if (expandingNodeKey && params.data.id === expandingNodeKey) return `{loading|⋯}  ${baseLabel}`;
                     if (params.data.isIdentityAnchor) return `{anchor|★}  ${baseLabel}`;
                     if (params.data.isExpanded && params.data.isBentoEligible) return `{collapse|⊖} {bento|ⓘ}  ${baseLabel}`;
                     if (params.data.isExpanded) return `{collapse|⊖}  ${baseLabel}`;
@@ -252,7 +281,8 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                     expand:   { backgroundColor: '#6366f1', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
                     collapse: { backgroundColor: '#f97316', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
                     bento:    { backgroundColor: '#0d9488', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
-                    anchor:   { backgroundColor: '#4f46e5', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 }
+                    anchor:   { backgroundColor: '#4f46e5', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 },
+                    loading:  { backgroundColor: '#06b6d4', color: '#fff', borderRadius: 8, padding: [1, 5], fontSize: 9, fontWeight: 'bold', lineHeight: 16 }
                 }
             },
             data: visibleNodes.map(node => {
@@ -298,9 +328,10 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                 const isFocusYear = node.name === focusYear;
                 const isAnchor = node.isIdentityAnchor;
                 const isGrouper = node.isGrouper;
+                const isLoadingExpand = !!expandingNodeKey && node.id === expandingNodeKey;
 
                 // Leaf nodes (no badges) show label only on hover to reduce clutter
-                const showLabelAtRest = !!(isExpandable || isBentoEligible || isAnchor || isGrouper);
+                const showLabelAtRest = !!(isExpandable || isBentoEligible || isAnchor || isGrouper || isLoadingExpand);
 
                 const isDimmed = !!(focusedNodeIds && focusedNodeIds.size > 0 && !focusedNodeIds.has(node.id));
                 const isExpanded = !!(expandedNodeKeys && expandedNodeKeys.has(node.id));
@@ -311,16 +342,31 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
                     label: { show: showLabelAtRest && !isDimmed },
                     emphasis: { label: { show: true } },
                     itemStyle: {
-                        color: isAnchor ? '#4f46e5' : (isGrouper ? '#6366f1' : theme.hsl),
-                        shadowBlur: isDimmed ? 0 : (isAnchor ? 40 : isGrouper ? 28 : isExpandable ? 22 : isBridge || isFocusYear ? 30 : isBentoEligible ? 14 : 4),
-                        shadowColor: isAnchor    ? 'rgba(79,70,229,0.7)'
+                        // Grouper fill restored to theme.hsl (2026-09-16) — was previously a
+                        // fixed indigo regardless of type, which made every grouper (most of
+                        // what's visible in a typical view, since collapsing to groupers is the
+                        // default) visually indistinguishable from every other grouper. The
+                        // borderColor/shadowColor below still signal "this is a group" via the
+                        // existing indigo ring/glow, layered on top of the now-restored type
+                        // color, so both signals are visible at once. See
+                        // documents/architecture/graph-legend-node-color-redesign-2026-09-16.md.
+                        color: isAnchor ? '#4f46e5' : theme.hsl,
+                        // isLoadingExpand checked first in shadow/border — a live server-backed
+                        // expand in flight for this exact node is the most temporally urgent
+                        // state, and should visually dominate over its static grouper/expandable
+                        // styling while active (2026-09-16 — see the label formatter above).
+                        shadowBlur: isDimmed ? 0 : (isLoadingExpand ? 36 : isAnchor ? 40 : isGrouper ? 28 : isExpandable ? 22 : isBridge || isFocusYear ? 30 : isBentoEligible ? 14 : 4),
+                        shadowColor: isLoadingExpand ? 'rgba(6,182,212,0.75)'
+                                   : isAnchor    ? 'rgba(79,70,229,0.7)'
                                    : isGrouper   ? 'rgba(99,102,241,0.65)'
                                    : isExpandable? 'rgba(99,102,241,0.55)'
                                    : isBridge    ? '#FFD700'
                                    : isBentoEligible ? 'rgba(13,148,136,0.45)'
                                    : theme.hsl,
-                        borderWidth: isAnchor ? 4 : isGrouper ? 3 : isExpanded ? 4 : isExpandable ? 3 : isBentoEligible ? 2 : 1,
-                        borderColor: isExpanded ? '#f97316'
+                        borderWidth: isLoadingExpand ? 4 : isAnchor ? 4 : isGrouper ? 3 : isExpanded ? 4 : isExpandable ? 3 : isBentoEligible ? 2 : 1,
+                        borderType: isLoadingExpand ? 'dashed' : 'solid',
+                        borderColor: isLoadingExpand ? '#06b6d4'
+                                   : isExpanded ? '#f97316'
                                    : isAnchor ? '#fff'
                                    : isGrouper ? 'rgba(99,102,241,0.8)'
                                    : isExpandable ? 'rgba(99,102,241,0.8)'
@@ -384,24 +430,25 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         e.setOption({ series: [{ type: 'graph', zoom: 1, center: ['50%', '50%'] }] });
     };
 
-    // Auto-fit: after each bloom (node count changes), wait for force to settle then re-center
+    // Auto-fit: after each bloom (node count changes), wait for force to settle then re-fit zoom —
+    // skipped entirely while a manually-dragged node is visible, see hasVisiblePin() above.
     const prevNodeCountRef = useRef(0);
     useEffect(() => {
         if (viewMode !== 'brain') return;
+        if (hasVisiblePin(visibleNodes, pinnedRef.current)) return;
         const currentCount = data.nodes.length;
         if (currentCount > 0 && currentCount !== prevNodeCountRef.current) {
             prevNodeCountRef.current = currentCount;
             const timer = setTimeout(() => {
                 const e = chartRef.current?.getEchartsInstance();
                 if (!e || e.isDisposed()) return;
-                // Scale zoom inversely with node count so all nodes remain visible after bloom
-                const targetZoom = Math.max(0.35, 1 / Math.sqrt(Math.max(currentCount, 1) / 3));
+                const targetZoom = computeAutoFitZoom(currentCount);
                 graphZoomRef.current = targetZoom;
                 e.setOption({ series: [{ type: 'graph', zoom: targetZoom }] }, false);
             }, 900);
             return () => clearTimeout(timer);
         }
-    }, [data.nodes.length, viewMode]);
+    }, [data.nodes.length, viewMode, visibleNodes]);
 
     useEffect(() => {
         if (!chartRef.current) return;

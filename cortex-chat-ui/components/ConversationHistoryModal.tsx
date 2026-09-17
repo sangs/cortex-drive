@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, History, Trash2, Loader2, MessageSquare, ChevronRight } from 'lucide-react';
+import { X, History, Trash2, Loader2, MessageSquare, ChevronRight, RefreshCw } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
@@ -25,7 +25,9 @@ interface ConversationDetail extends ConversationListItem {
 interface ConversationHistoryModalProps {
     open: boolean;
     onClose: () => void;
-    onOpenConversation: (conversation: ConversationDetail) => void;
+    // forceRefresh: true when opened via the per-item refresh icon — re-run the conversation's
+    // last question live instead of rendering the cached answer/graph.
+    onOpenConversation: (conversation: ConversationDetail, forceRefresh?: boolean) => void;
 }
 
 function formatRelativeDate(iso: string) {
@@ -73,14 +75,14 @@ export default function ConversationHistoryModal({ open, onClose, onOpenConversa
 
     if (!open) return null;
 
-    async function openConversation(conversationId: string) {
+    async function openConversation(conversationId: string, forceRefresh: boolean = false) {
         setOpening(conversationId);
         try {
             const headers = await authHeaders();
             const resp = await fetch(`${GATEWAY}/api/conversations/${encodeURIComponent(conversationId)}`, { headers });
             if (resp.ok) {
                 const data: ConversationDetail = await resp.json();
-                onOpenConversation(data);
+                onOpenConversation(data, forceRefresh);
                 onClose();
             }
         } catch { /* non-fatal */ } finally {
@@ -168,6 +170,14 @@ export default function ConversationHistoryModal({ open, onClose, onOpenConversa
                                         </div>
                                     </div>
                                     <ChevronRight className="w-3.5 h-3.5 text-slate-600 ml-1 shrink-0" />
+                                    <button
+                                        onClick={e => { e.stopPropagation(); openConversation(c.conversation_id, true); }}
+                                        disabled={opening === c.conversation_id}
+                                        className="p-1.5 ml-2 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 transition-all shrink-0"
+                                        title="Force refresh — re-run this question live instead of the cached answer"
+                                    >
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                    </button>
                                     <button
                                         onClick={e => deleteConversation(c.conversation_id, e)}
                                         disabled={deleting === c.conversation_id}

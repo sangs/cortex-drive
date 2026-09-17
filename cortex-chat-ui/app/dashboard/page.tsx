@@ -46,19 +46,15 @@ import {
     CAREER_BACKBONE,
     PODCAST_BACKBONE,
     GRAPH_VISUAL_EXCLUDE,
-    TAG_LEAF_TYPES,
-    ALWAYS_EXPANDABLE,
-    HUB_TYPES,
-    CATEGORY_CHILD_TYPES,
     GROUPER_LABELS,
-    GROUPER_MIN_COUNT,
     PROFESSIONAL_EXPERIENCE_CATEGORY,
-    collapseToGroupers,
     buildCompanyGroupers,
     deduplicateNodes,
     isBentoEligible,
     inferBackbone,
     domainToBackbone,
+    applyAffordanceFlags,
+    finalizeGraphForRender,
 } from "@/utils/graphConstants";
 
 export default function DashboardPage() {
@@ -69,6 +65,12 @@ export default function DashboardPage() {
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [input, setInput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    // Which specific node a live server-backed expand is in flight for (get_cluster_context via
+    // MCP) — separate from isProcessing, which is shared with the chat panel's own loading state
+    // and gives no indication of WHICH node on the canvas is doing something. Only set for the
+    // branches of handleNodeDoubleClick that actually make a network call — the pure client-side
+    // grouper-bloom and cache-hit branches resolve synchronously and never touch this.
+    const [expandingNodeKey, setExpandingNodeKey] = useState<string | null>(null);
     const [forceRefreshNext, setForceRefreshNext] = useState(false);
     
     // Layout State
@@ -247,31 +249,8 @@ export default function DashboardPage() {
                 return allowedSet.has(nodeType) || (nodeId ? virtualBridgeNodeIds.has(nodeId) : false);
             };
 
-            // Affordance constants are imported from graphConstants — not re-declared here.
-            const applyAffordanceFlags = (nodeList: any[], linkList: any[]) => {
-                nodeList.forEach(node => {
-                    if (TAG_LEAF_TYPES.has(node.type)) {
-                        node.isBentoEligible = false;
-                        node.isExpandable = false;
-                        return;
-                    }
-                    if (node.type === 'Topic') {
-                        node.isBentoEligible = false;
-                        const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
-                        node.isExpandable = hasLinks;
-                        return;
-                    }
-                    // Category nodes are structural groupers — expand-only, no bento detail panel.
-                    if (node.type === 'Category') {
-                        node.isBentoEligible = false;
-                        node.isExpandable = true;
-                        return;
-                    }
-                    node.isBentoEligible = isBentoEligible(node);
-                    const hasLinks = linkList.some(l => l.source === node.id || l.target === node.id);
-                    node.isExpandable = node.isGrouper || ALWAYS_EXPANDABLE.has(node.type) || (HUB_TYPES.has(node.type) && hasLinks);
-                });
-            };
+            // applyAffordanceFlags is imported from graphConstants (hoisted 2026-09-15 — pure
+            // function of (nodeList, linkList), no dependency on this closure's state).
 
             // Direct Graph Fragment Handling (e.g. from get_cluster_context / expand_node_topology)
             if (parsedRaw.nodes && Array.isArray(parsedRaw.nodes)) {
@@ -336,31 +315,11 @@ export default function DashboardPage() {
                         if (anchor) anchor.isIdentityAnchor = true;
                     }
                 }
-                // Career backbone: hide individual instances — only Category groupers visible initially (Fix Q2).
-                // Exception: highlighted nodes (targeted career query answer) always render regardless of type.
-                if (backboneOnly && backboneSet === CAREER_BACKBONE) {
-                    const hasCategoryNodes = nodes.some(n => n.type === 'Category');
-                    if (hasCategoryNodes) {
-                        const filteredNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type) || n.highlighted);
-                        const filteredLinks = links.filter(l =>
-                            filteredNodes.some(n => n.id === l.source) &&
-                            filteredNodes.some(n => n.id === l.target)
-                        );
-                        applyAffordanceFlags(filteredNodes, filteredLinks);
-                        return { nodes: filteredNodes, links: filteredLinks };
-                    }
-                } else if (backboneOnly && backboneSet !== CAREER_BACKBONE) {
-                    // Podcast (Q1) and cross-domain/bridge backbone mode (2026-08-28, moved here
-                    // 2026-08-29 — this {nodes,links}-shaped branch is the one search_enterprise_graph
-                    // and get_cluster_context actually hit; the identical addition made to the
-                    // rawResults/addNode branch below never ran for those tools, since this branch
-                    // returns unconditionally at the bottom before that code is ever reached).
-                    const collapsed = collapseToGroupers(nodes, links);
-                    applyAffordanceFlags(collapsed.nodes, collapsed.links);
-                    return { nodes: collapsed.nodes, links: collapsed.links };
-                }
-                applyAffordanceFlags(nodes, links);
-                return { nodes, links };
+                // Grouper/affordance finalization unified into finalizeGraphForRender (2026-09-15)
+                // — see graphConstants.ts for the three-case behavior this replaces (previously
+                // duplicated, with a real behavioral inconsistency, across four call sites in
+                // this function).
+                return finalizeGraphForRender(nodes, links, backboneOnly, backboneSet);
             }
 
             const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [parsedRaw];
@@ -543,74 +502,37 @@ export default function DashboardPage() {
                 }
             }
 
-            // Grouper logic — three cases:
-            let processedNodes = nodes;
-            let processedLinks = finalLinks;
-
-            if (backboneOnly && backboneSet === CAREER_BACKBONE) {
-                // Q2: Career backbone mode.
-                // If real Career Category nodes came back from the DB (e.g. "Education & Continuous Learning"),
-                // they ARE the top-level groupers. Hide individual instances — they're revealed by double-clicking.
-                const hasCategoryNodes = nodes.some(n => n.type === 'Category');
-                if (hasCategoryNodes) {
-                    // CATEGORY_CHILD_TYPES imported from graphConstants — single source of truth.
-                    processedNodes = nodes.filter(n => !CATEGORY_CHILD_TYPES.has(n.type));
-                    processedLinks = finalLinks.filter(l =>
-                        processedNodes.some(n => n.id === l.source) &&
-                        processedNodes.some(n => n.id === l.target)
-                    );
-                } else {
-                    // No Category nodes — fall back to virtual groupers from collapseToGroupers
-                    const collapsed = collapseToGroupers(nodes, finalLinks);
-                    processedNodes = collapsed.nodes;
-                    processedLinks = collapsed.links;
-                }
-            } else if (backboneOnly && backboneSet !== CAREER_BACKBONE) {
-                // Q1 (podcast) and cross-domain/bridge backbone mode (2026-08-28) — no Category-
-                // node special case like career (podcast/bridge results don't have Category
-                // groupers), so always collapse via collapseToGroupers. Safe to call
-                // unconditionally: it only collapses unprotected types present at >=
-                // GROUPER_MIN_COUNT, everything else passes through unchanged.
-                const collapsed = collapseToGroupers(nodes, finalLinks);
-                processedNodes = collapsed.nodes;
-                processedLinks = collapsed.links;
-            } else if (!backboneOnly) {
-                // Fallback path (domain_signal absent/unrecognized, backboneOnly stays false) —
-                // always attempt grouping (2026-08-29): collapseToGroupers is safe to call
-                // unconditionally, it only collapses types actually present at >=
-                // GROUPER_MIN_COUNT and passes everything else through unchanged, so a type-based
-                // pre-check here was a redundant optimization, not a correctness requirement.
-                const collapsed = collapseToGroupers(nodes, finalLinks);
-                processedNodes = collapsed.nodes;
-                processedLinks = collapsed.links;
-            }
-
-            applyAffordanceFlags(processedNodes, processedLinks);
-            return { nodes: processedNodes, links: processedLinks };
+            // Grouper/affordance finalization unified into finalizeGraphForRender (2026-09-15) —
+            // same function as the Direct Graph Fragment branch above. Also fixes a second
+            // inconsistency found while unifying: this branch's Category-child filter was
+            // missing the `|| n.highlighted` exception the other branch had, which the
+            // "targeted career query answer" feature (gateway sets highlighted:true on the
+            // answer node) depends on to survive the filter.
+            return finalizeGraphForRender(nodes, finalLinks, backboneOnly, backboneSet);
         } catch (e) {
             console.error("Failed to parse graph data", e);
             return existingData || { nodes: [], links: [] };
         }
     };
 
-    const handleSend = async () => {
-        if (!input.trim() || !isConnected || isProcessing || isActivating) return;
-
-        const userMsg = input;
-        const currentMessages = [...messages];
+    // Core ask-and-render pipeline — appends the user message, runs the query, and renders the
+    // answer + graph. Shared by handleSend (regular chat input) and openHistoricalConversation's
+    // force-refresh path (re-asking a stored question live) so there is exactly one place that
+    // knows how to turn a question into a rendered result.
+    const executeQuery = async (
+        userMsg: string,
+        historyMessages: { role: string; content: any }[],
+        forceRefresh: boolean,
+        convId: string
+    ) => {
         setMessages(prev => [...prev, { role: "user", content: userMsg }]);
-        setInput("");
         setIsProcessing(true);
 
         try {
             // Filter out system messages or complex components for history
-            const history = currentMessages
+            const history = historyMessages
                 .filter(m => typeof m.content === 'string')
                 .map(m => ({ role: m.role, content: m.content }));
-
-            // Check for force-refresh flag (per-message) — set by button toggle or inline text command
-            const forceRefresh = forceRefreshNext || userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
-            setForceRefreshNext(false);
 
             // Focus Mode: clear graph immediately on submit so the user sees a blank canvas
             // while the query is in-flight, regardless of whether raw_data comes back.
@@ -618,7 +540,7 @@ export default function DashboardPage() {
             // the previous query's graph frozen on screen even though the toggle is ON.
             if (autoClear) setGraphData({ nodes: [], links: [] });
 
-            const result = await query(userMsg, history, forceRefresh, conversationId);
+            const result = await query(userMsg, history, forceRefresh, convId);
 
             if (result.access_scope) setAccessScope(result.access_scope);
 
@@ -643,15 +565,15 @@ export default function DashboardPage() {
                 expansionContributions.current = new Map();
                 setFocusedNodeIds(null);
                 setGraphData(newGraph);
-                
+
                 // 3. Auto-Shift Timeline: Scan for the most relevant year in the results
                 try {
                     const data = JSON.parse(result.raw_data);
                     const items = Array.isArray(data) ? data : [data];
-                    
+
                     const dateKeys = ['date', 'air_date', 'startDate', 'published_at', 'year'];
                     let detectedYear = null;
-                    
+
                     for (const item of items) {
                         for (const key of dateKeys) {
                             const val = item[key] || item.Details?.[key] || item.properties?.[key];
@@ -663,7 +585,7 @@ export default function DashboardPage() {
                         }
                         if (detectedYear) break;
                     }
-                    
+
                     if (detectedYear) setFocusYear(detectedYear);
                 } catch (e) {
                     console.warn("Auto-shift: raw_data is not valid JSON or missing timeline markers", e);
@@ -680,6 +602,20 @@ export default function DashboardPage() {
         } finally {
             setIsProcessing(false);
         }
+    };
+
+    const handleSend = async () => {
+        if (!input.trim() || !isConnected || isProcessing || isActivating) return;
+
+        const userMsg = input;
+        const currentMessages = [...messages];
+        setInput("");
+
+        // Check for force-refresh flag (per-message) — set by button toggle or inline text command
+        const forceRefresh = forceRefreshNext || userMsg.toLowerCase().includes('--refresh') || userMsg.toLowerCase().includes('!v');
+        setForceRefreshNext(false);
+
+        await executeQuery(userMsg, currentMessages, forceRefresh, conversationId);
     };
 
     const startNewAnalysis = () => {
@@ -699,34 +635,61 @@ export default function DashboardPage() {
         setConversationId(crypto.randomUUID());
     };
 
-    // Hydrate the live dashboard state from a conversation loaded via ConversationHistoryModal —
-    // mirrors what startNewAnalysis() resets, just with loaded data instead of empty state.
-    const openHistoricalConversation = (conversation: {
+    type HistoricalConversation = {
         conversation_id: string;
         domain_signal: string | null;
         latest_graph_snapshot: { nodes: any[]; links: any[] } | null;
         messages: { role: 'user' | 'assistant'; content: string }[];
-    }) => {
-        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
+    };
+
+    // Renders a conversation exactly as stored — the default, instant, no-network path.
+    // latest_graph_snapshot is the RAW, unenriched accumulatedGraph (same shape as the live
+    // query path's raw_data) — it must go through the same parseDataToGraph/domainToBackbone
+    // transform the live path always applies (affordance flags, category-child hiding,
+    // identity-anchor detection, dedup, virtual_links merged into links with styling), or the
+    // graph renders using none of that and looks broken/incoherent (2026-08-04 bug fix).
+    const hydrateFromCachedConversation = (conversation: HistoricalConversation) => {
         setMessages(conversation.messages.map(m => ({ role: m.role, content: m.content })));
-        // latest_graph_snapshot is the RAW, unenriched accumulatedGraph (same shape as the live
-        // query path's raw_data) — it must go through the same parseDataToGraph/domainToBackbone
-        // transform the live path always applies (affordance flags, category-child hiding,
-        // identity-anchor detection, dedup, virtual_links merged into links with styling), or the
-        // graph renders using none of that and looks broken/incoherent (2026-08-04 bug fix).
         if (conversation.latest_graph_snapshot) {
             const { backbone, backboneOnly } = domainToBackbone(conversation.domain_signal ?? undefined, conversation.latest_graph_snapshot);
             setGraphData(parseDataToGraph(conversation.latest_graph_snapshot, undefined, backboneOnly, backbone));
         } else {
             setGraphData({ nodes: [], links: [] });
         }
-        if (conversation.domain_signal) setDomainSignal(conversation.domain_signal);
+    };
+
+    // Hydrate the live dashboard state from a conversation loaded via ConversationHistoryModal —
+    // mirrors what startNewAnalysis() resets, just with loaded data instead of empty state.
+    // forceRefresh: skip the cached snapshot for the conversation's last question and re-run it
+    // live instead (reusing executeQuery, the same pipeline handleSend uses) — everything before
+    // that last question is still restored from cache as history context.
+    const openHistoricalConversation = (conversation: HistoricalConversation, forceRefresh: boolean = false) => {
+        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
         expansionCache.current = new Map();
         expandedNodes.current = new Set();
         expansionContributions.current = new Map();
         setConversationId(conversation.conversation_id);
+        if (conversation.domain_signal) setDomainSignal(conversation.domain_signal);
+
+        if (forceRefresh) {
+            const allMessages = conversation.messages.map(m => ({ role: m.role, content: m.content }));
+            const lastUserIdx = allMessages.reduce((acc, m, i) => m.role === 'user' ? i : acc, -1);
+            if (lastUserIdx === -1) {
+                // Nothing to re-run — fall back to the cached rendering.
+                hydrateFromCachedConversation(conversation);
+                return;
+            }
+            const priorHistory = allMessages.slice(0, lastUserIdx);
+            const lastQuestion = allMessages[lastUserIdx].content;
+            setMessages(priorHistory);
+            setGraphData({ nodes: [], links: [] });
+            executeQuery(lastQuestion, priorHistory, true, conversation.conversation_id);
+            return;
+        }
+
+        hydrateFromCachedConversation(conversation);
     };
 
     const handleNodeClick = (node: any) => {
@@ -923,6 +886,7 @@ export default function DashboardPage() {
             console.log("[DIAG] Professional Experience branch entered. nodeKey:", nodeKey);
             try {
                 setIsProcessing(true);
+                setExpandingNodeKey(nodeKey);
                 const toolResponse = await callTool("get_cluster_context", {
                     node_name: PROFESSIONAL_EXPERIENCE_CATEGORY,
                     depth: 2,
@@ -970,6 +934,7 @@ export default function DashboardPage() {
                 console.error("[DIAG] Professional Experience expansion failed:", e);
             } finally {
                 setIsProcessing(false);
+                setExpandingNodeKey(null);
             }
             return;
         }
@@ -978,6 +943,7 @@ export default function DashboardPage() {
         try {
             console.log("Expanding topology for:", nodeKey);
             setIsProcessing(true);
+            setExpandingNodeKey(nodeKey);
             const toolResponse = await callTool("get_cluster_context", {
                 node_name: freshNode.name,
                 depth: 1,
@@ -1006,6 +972,7 @@ export default function DashboardPage() {
             console.error("Node expansion failed:", e);
         } finally {
             setIsProcessing(false);
+            setExpandingNodeKey(null);
         }
     };
 
@@ -1440,6 +1407,7 @@ export default function DashboardPage() {
                                 selectedNodeId={selectedNode?.id}
                                 focusedNodeIds={focusedNodeIds}
                                 expandedNodeKeys={expandedNodes.current}
+                                expandingNodeKey={expandingNodeKey}
                                 onNodeClick={handleNodeClick}
                                 onNodeDoubleClick={handleNodeDoubleClick}
                                 onTimelineChange={(year) => setFocusYear(year)}
@@ -1491,7 +1459,17 @@ export default function DashboardPage() {
                                                 const theme = getThemeForType(type);
                                                 return (
                                                     <div key={type} className="flex items-center gap-2.5">
-                                                        <div className={`w-3 h-3 rounded-full ${theme.tailwind} ring-2 ring-white shadow-lg`} />
+                                                        {/* Swatch bumped 12px->14px (2026-09-16) — pairs with the now fully-spread
+                                                            GraphTheme.ts palette. Color applied via inline style, not a Tailwind
+                                                            class — GRAPH_THEME's hsl values are generated at runtime, and a
+                                                            Tailwind arbitrary-value class built from a runtime string is never
+                                                            discovered by Tailwind's static content scanner (confirmed: the
+                                                            compiled CSS contained none of them). See
+                                                            graph-legend-node-color-redesign-2026-09-16.md. */}
+                                                        <div
+                                                            className="w-3.5 h-3.5 rounded-full ring-2 ring-white shadow-lg"
+                                                            style={{ backgroundColor: theme.hsl, boxShadow: `0 0 8px ${theme.hsl}` }}
+                                                        />
                                                         <span className="text-[11px] text-slate-700 font-bold capitalize tracking-tight">{type}</span>
                                                     </div>
                                                 );
