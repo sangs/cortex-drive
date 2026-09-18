@@ -3089,14 +3089,31 @@ app.post('/query', authMiddleware, async (req, res) => {
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
         console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
 
-        const domainSignal = await classifyDomain(question, openai);
-        console.log(`[QUERY] domain_signal=${domainSignal}`);
+        // confident=false means domain_signal is AP-21's safe-default fallback, not a genuine
+        // match — used only to pick the LLM's tool-calling instruction below (universal
+        // discovery vs. the strict per-domain requirement). domain_signal itself is still the
+        // real, bounded value used everywhere else (graph-rendering domain guard, bridge
+        // context, response payload) — unchanged. See
+        // documents/architecture/universal-discovery-fallback-design-2026-09-18.md.
+        const { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai);
+        console.log(`[QUERY] domain_signal=${domainSignal} confident=${domainConfident}`);
 
         const bridgeContext = resolveBridgeContext(domainSignal, question);
         const crossDomainInstruction = buildCrossDomainInstruction(bridgeContext);
 
+        // Low-confidence override (2026-09-18): when nothing actually matched and domain_signal
+        // is just the safe default, the strict per-domain instruction below (e.g. "career" ->
+        // domain_intent="professional" only) directly contradicts the system prompt's own Tier 3
+        // (UNIVERSAL DISCOVERY) guidance for exactly this class of query — a broad topic with no
+        // clear single domain. Explicitly tell the LLM to disregard the per-domain branch and
+        // search everywhere instead, preserving the same grounding requirement (still must call
+        // a tool) without wrongly narrowing the search scope.
+        const lowConfidenceOverride = domainConfident ? '' :
+            `NOTE: The domain classification above is a low-confidence safe default, not a genuine match for this query's topic — disregard the per-domain instruction below and instead treat this as universal discovery: you MUST call search_enterprise_graph(domain_intent="all", keyword=<specific topic from user query>) before answering. Early stop is NOT allowed here either — grounding is still required, just not restricted to one domain.\n`;
+
         const domainInstruction = gatewayDomainInstructionPrompt
             .replace('{domain_signal}', domainSignal)
+            .replace('{low_confidence_override}', lowConfidenceOverride)
             .replace('{cross_domain_instruction}', crossDomainInstruction);
 
         const restrictionNote = accessScope === 'restricted'

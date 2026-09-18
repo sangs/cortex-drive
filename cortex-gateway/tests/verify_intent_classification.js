@@ -1,15 +1,17 @@
 'use strict';
 
 /**
- * Regression check for cortex-gateway/utils/intent_classifier.js's Phase R (regex) matching.
+ * Regression check for cortex-gateway/utils/intent_classifier.js's Phase R (regex) matching,
+ * and the confident/safe-default distinction added 2026-09-18.
  *
  * No test framework — plain Node `assert`, matching this repo's existing lightweight,
  * framework-free testing style (see tdd/). Run: `node tests/verify_intent_classification.js`
  * or `npm test` from cortex-gateway/.
  *
  * Only exercises Phase B/R/E (no OpenAI client is passed to classifyDomain, so Phase S never
- * fires) — this suite is specifically about the deterministic, free phases, not the embedding
- * fallback.
+ * fires — every case here is either a confident free-phase hit, or falls all the way through
+ * to the safe default with confident=false) — this suite is specifically about the
+ * deterministic, free phases, not the embedding fallback itself.
  */
 
 const assert = require('assert');
@@ -23,11 +25,13 @@ const CASES = [
     {
         query: 'What have experts discussed about graph-native AI architectures and knowledge graphs in the podcast episodes?',
         expected: 'podcast',
+        expectedConfident: true,
         why: 'Q1 canonical phrasing (user_queries.md)'
     },
     {
         query: "Show the institutional memory map of Sangeetha Ramadurai—her career, what she built, and what she published.",
         expected: 'career',
+        expectedConfident: true,
         why: 'Q3 canonical phrasing (user_queries.md) — contains "career" literally, must keep matching patternSource directly'
     },
 
@@ -37,11 +41,13 @@ const CASES = [
     {
         query: 'institutional memory map of Sangeetha Ramadurai',
         expected: 'career',
+        expectedConfident: true,
         why: 'New keyword: short Q3 paraphrase with no career-vocabulary word — must now hit Phase R deterministically'
     },
     {
         query: 'Show career map of Sangeetha',
         expected: 'career',
+        expectedConfident: true,
         why: 'New keyword: "career map" phrase — also present as a Phase S prototype in intent_registry.json, now additionally deterministic via Phase R'
     },
 
@@ -52,6 +58,7 @@ const CASES = [
     {
         query: 'How did my career influence the zero-trust security architecture of Cortex-Drive?',
         expected: 'cross_domain',
+        expectedConfident: true,
         why: 'Pre-existing Phase R order guarantee (podcast, cross_domain, career) — must survive the externalization unchanged'
     },
 
@@ -60,7 +67,24 @@ const CASES = [
     {
         query: 'Featuring a guest interview about the episode transcript',
         expected: 'podcast',
+        expectedConfident: true,
         why: 'Unrelated domain sanity check — confirms the career `keywords` addition has zero effect on podcast matching'
+    },
+
+    // 2026-09-18 fix: a broad topic query with no named entity and no domain-specific vocabulary
+    // must fall through to the safe default with confident=false, NOT be treated as a genuine
+    // career match. This is the actual live bug — "AI ethics and governance work from known
+    // sources" returned a clarifying question instead of an answer, because domain_signal=career
+    // (safe-default) triggered the strict career-only tool-calling instruction, contradicting the
+    // system prompt's own Tier 3 (UNIVERSAL DISCOVERY) guidance. Phase S is skipped in this suite
+    // (no OpenAI client), so this exercises the B/R/E-all-miss -> confident:false path directly;
+    // the live query additionally misses Phase S's 0.75 threshold (scored 0.378), covered by the
+    // live-verification step in the design doc, not by this offline suite.
+    {
+        query: 'AI ethics and governance work from known sources',
+        expected: 'career',
+        expectedConfident: false,
+        why: 'The actual live bug (2026-09-17) — nothing matches B/R/E, must resolve to safe-default career with confident=false, not a real career match'
     }
 ];
 
@@ -81,10 +105,11 @@ async function main() {
     let failures = 0;
 
     console.log(`Running ${CASES.length} intent classification regression cases...\n`);
-    for (const { query, expected, why } of CASES) {
-        const got = await classifyDomain(query);
+    for (const { query, expected, expectedConfident, why } of CASES) {
+        const { domain, confident } = await classifyDomain(query);
         try {
-            assert.strictEqual(got, expected, `expected "${expected}", got "${got}"`);
+            assert.strictEqual(domain, expected, `expected domain "${expected}", got "${domain}"`);
+            assert.strictEqual(confident, expectedConfident, `expected confident=${expectedConfident}, got ${confident}`);
             console.log(`  OK   ${JSON.stringify(query).slice(0, 70)}`);
         } catch (e) {
             failures++;
@@ -96,9 +121,9 @@ async function main() {
 
     console.log(`\nKnown gaps (documented, not asserted — ${KNOWN_GAPS.length}):`);
     for (const gap of KNOWN_GAPS) {
-        const got = await classifyDomain(gap.query);
-        const stillPresent = got === gap.currentlyClassifiesAs;
-        console.log(`  ${stillPresent ? '(unchanged)' : '(!! changed, update this note)'} ${JSON.stringify(gap.query).slice(0, 60)} -> ${got}`);
+        const { domain } = await classifyDomain(gap.query);
+        const stillPresent = domain === gap.currentlyClassifiesAs;
+        console.log(`  ${stillPresent ? '(unchanged)' : '(!! changed, update this note)'} ${JSON.stringify(gap.query).slice(0, 60)} -> ${domain}`);
         console.log(`       ${gap.why}`);
     }
 

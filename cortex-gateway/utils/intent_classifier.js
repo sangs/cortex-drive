@@ -359,7 +359,14 @@ const SAFE_DEFAULT = 'career';
  *
  * @param {string} question
  * @param {import('openai').OpenAI} [openaiClient]  required for Phase S
- * @returns {Promise<'podcast' | 'career' | 'website' | 'cross_domain'>}
+ * @returns {Promise<{domain: 'podcast' | 'career' | 'website' | 'cross_domain', confident: boolean}>}
+ *   confident=true for any genuine Phase B/R/E hit, or Phase S at/above threshold.
+ *   confident=false only for the safe-default fallback (2026-09-18) — nothing actually
+ *   matched, `domain` is just AP-21's safe default, not a real classification. Callers that
+ *   only need the domain string (graph-rendering domain guard, etc.) can keep using
+ *   `.domain`; the LLM's tool-calling instruction is the one consumer that needs to tell
+ *   these apart — see resolveDomainInstruction() in index.js and
+ *   documents/architecture/universal-discovery-fallback-design-2026-09-18.md.
  */
 async function classifyDomain(question, openaiClient) {
     const q = question || '';
@@ -372,21 +379,21 @@ async function classifyDomain(question, openaiClient) {
     const bridgeMatch = _bridgeClassify(q);
     if (bridgeMatch) {
         console.log(`[CLASSIFY] phase=B(bridge) domain=cross_domain matched="${bridgeMatch.matched}" candidate_domains=${bridgeMatch.domains}`);
-        return 'cross_domain';
+        return { domain: 'cross_domain', confident: true };
     }
 
     // Phase R: Regex — free, <1ms
     const rxDomain = _regexClassify(q);
     if (rxDomain) {
         console.log(`[CLASSIFY] phase=R(regex) domain=${rxDomain}`);
-        return rxDomain;
+        return { domain: rxDomain, confident: true };
     }
 
     // Phase E: Entity catalog — free, <1ms
     const entityMatch = _entityClassify(q);
     if (entityMatch) {
         console.log(`[CLASSIFY] phase=E(entity) domain=${entityMatch.domain} matched="${entityMatch.matched}"`);
-        return entityMatch.domain;
+        return { domain: entityMatch.domain, confident: true };
     }
 
     // Phase S: Embedding similarity — paid, ~50ms
@@ -396,7 +403,7 @@ async function classifyDomain(question, openaiClient) {
             const result = await _embeddingClassify(q, openaiClient);
             if (result.confidence >= EMBEDDING_CONFIDENCE_THRESHOLD) {
                 console.log(`[CLASSIFY] phase=S(embedding) domain=${result.domain} confidence=${result.confidence.toFixed(3)} cost=~$${result.costEstimate}`);
-                return result.domain;
+                return { domain: result.domain, confident: true };
             }
             // Embedding confidence too low — log Phase L status
             const conf = result.confidence.toFixed(3);
@@ -418,9 +425,11 @@ async function classifyDomain(question, openaiClient) {
         }
     }
 
-    // Safe default — AP-21: never return 'unknown'
+    // Safe default — AP-21: never return 'unknown'. confident=false: no phase actually
+    // matched, so the LLM's tool-calling instruction should treat this as universal
+    // discovery (domain_intent="all"), not a real career-domain classification.
     console.log(`[CLASSIFY] safe_default=${SAFE_DEFAULT} applied`);
-    return SAFE_DEFAULT;
+    return { domain: SAFE_DEFAULT, confident: false };
 }
 
 // ─── Module init ──────────────────────────────────────────────────────────────
