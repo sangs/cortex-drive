@@ -274,7 +274,13 @@ async def list_viewable_node_ids(user_id: str) -> list[str] | None:
 
     Uses LookupEntity with PERMIFY_MAX_DEPTH — traverses live parent tuples at
     query time, so new children added after a share are automatically covered.
-    Returns None when Permify is not configured — callers fall back to tenant_id mode.
+    Returns None when Permify is not configured, OR when the call fails (network error,
+    non-2xx response, timeout) — both callers (cortex_os_mentalmodel_server_sse.py,
+    cortex_os_mentalmodel_http_server.py) already treat None as "fall back to tenant_id
+    mode," so a transient Permify outage degrades a query instead of failing it outright.
+    Mirrors cortex-gateway/index.js's getAllowedNodeIds(), which does the same thing one
+    layer up (2026-09-17 — a Permify Cloud SQL connection-pool exhaustion crashed this
+    call uncaught, taking down the whole SSE request instead of degrading).
     user_id is the raw Clerk sub (no "user:" prefix — added here).
     """
     if not _configured():
@@ -287,12 +293,16 @@ async def list_viewable_node_ids(user_id: str) -> list[str] | None:
         "subject":     {"type": "user", "id": user_id},
         "context":     {"tuples": [], "attributes": [], "data": {}},
     }
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(url, json=payload, headers=await _get_headers())
-        resp.raise_for_status()
-        data = resp.json()
-        entity_ids = data.get("entity_ids") or []
-        return entity_ids
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload, headers=await _get_headers())
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("entity_ids") or []
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("[PERMIFY] list_viewable_node_ids failed (non-fatal): %s", e)
+        return None
 
 
 async def check_permission(node_id: str, user_id: str, permission: str = "can_view") -> bool:
