@@ -1,7 +1,7 @@
 import asyncio
 import os
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from openai import OpenAI
 from neo4j import GraphDatabase
@@ -459,7 +459,7 @@ class IngestionEngine:
         print(f"Triggering GDS enrichment for tenant {self.tenant_id}...")
         pass
 
-    def process_web_source(self, url: str, content: str, content_hash: str, owner_id: str):
+    def process_web_source(self, url: str, content: str, content_hash: str, owner_id: str, image_urls: Optional[List[str]] = None):
         """
         Main entry point for processing a single web-URL source (Phase A —
         documents/architecture/phase-a-web-url-adapter-design-2026-08-19.md).
@@ -490,7 +490,7 @@ class IngestionEngine:
         validated_source = validate_upsert('WebsiteSource', source_data)
 
         # 3. Upsert WebsiteSource + create new SourceSnapshot (flip old is_current)
-        source_node_id = self._upsert_website_source(validated_source, url, content_hash)
+        source_node_id = self._upsert_website_source(validated_source, url, content_hash, image_urls or [])
 
         # 4. Upsert extracted entities + relationships, linked to the WebsiteSource
         entity_ids = self._upsert_web_entities(source_node_id, extraction)
@@ -502,7 +502,7 @@ class IngestionEngine:
         print(f"Web-source ingestion complete for {url}.")
         return source_node_id
 
-    def _upsert_website_source(self, source, url: str, content_hash: str) -> str | None:
+    def _upsert_website_source(self, source, url: str, content_hash: str, image_urls: List[str]) -> str | None:
         """Upsert the WebsiteSource node (stable identity across snapshots — matched by
         tenant_id + base_url, node_id set only ON CREATE so it never changes across
         re-fetches), create a new SourceSnapshot, and flip any prior current snapshot to
@@ -528,7 +528,8 @@ class IngestionEngine:
             content_hash: $content_hash,
             metadata_schema_version: $metadata_schema_version,
             fetched_at: $now,
-            is_current: true
+            is_current: true,
+            image_urls: $image_urls
         })
         SET snap.node_id = randomUUID()
         MERGE (s)-[:HAS_SNAPSHOT]->(snap)
@@ -545,6 +546,7 @@ class IngestionEngine:
                 now=now,
                 content_hash=content_hash,
                 metadata_schema_version=source.metadata_schema_version,
+                image_urls=image_urls,
             )
             record = result.single()
             return record["node_id"] if record else None

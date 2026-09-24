@@ -11,6 +11,7 @@ pypdf
 pandas
 neo4j
 trafilatura
+beautifulsoup4
 google-adk>=1.0.0
 litellm
 uv

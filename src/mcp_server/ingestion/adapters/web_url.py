@@ -2,14 +2,59 @@ import hashlib
 import os
 import sys
 from typing import List, Optional
+from urllib.parse import urljoin
 
 import trafilatura
+from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 from .base import BaseAdapter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ingestion_engine import IngestionEngine
+
+# Cap on captured <img> URLs per fetch — A2 is a cheap, additive capture, not a
+# canonical image inventory; keeps nav/footer icon noise from growing unbounded.
+MAX_CAPTURED_IMAGE_URLS = 10
+
+
+def fetch_and_extract(url: str) -> tuple[str, str, List[str]]:
+    """Fetch a URL and return (extracted_text, content_hash, image_urls) — the exact
+    trafilatura.fetch_url() -> trafilatura.extract() call has_changed()/WebUrlAdapter.fetch()
+    already make, plus A2's <img> URL capture from the raw HTML before extract() discards
+    structure. Takes no Neo4j driver — this is a pure external fetch, usable synchronously
+    from the on-demand view_source_live tool without paying for a driver connection that
+    tool has no other use for."""
+    downloaded = trafilatura.fetch_url(url)
+    if downloaded is None:
+        raise RuntimeError(f"Failed to fetch URL: {url}")
+    extracted = trafilatura.extract(
+        downloaded, include_comments=False, include_tables=True, favor_recall=True
+    )
+    if not extracted:
+        raise RuntimeError(f"trafilatura could not extract readable content from: {url}")
+    content_hash = hashlib.sha256(extracted.encode("utf-8")).hexdigest()
+
+    image_urls: List[str] = []
+    seen = set()
+    try:
+        soup = BeautifulSoup(downloaded, "html.parser")
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if not src or src.startswith("data:"):
+                continue
+            absolute = urljoin(url, src)
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+            image_urls.append(absolute)
+            if len(image_urls) >= MAX_CAPTURED_IMAGE_URLS:
+                break
+    except Exception as e:
+        # Non-fatal — image capture is additive; text extraction above already succeeded.
+        print(f"[fetch_and_extract] image-URL capture failed for {url} (non-fatal): {e}")
+
+    return extracted, content_hash, image_urls
 
 
 class WebUrlAdapter(BaseAdapter):
@@ -29,6 +74,7 @@ class WebUrlAdapter(BaseAdapter):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self._last_fetch_content: Optional[str] = None
         self._last_fetch_hash: Optional[str] = None
+        self._last_fetch_image_urls: List[str] = []
 
     def __del__(self):
         self.driver.close()
@@ -37,16 +83,10 @@ class WebUrlAdapter(BaseAdapter):
         """Fetch and extract clean content from a URL via trafilatura. Caches the result
         on self so a has_changed() call immediately followed by process_item() within the
         same adapter instance doesn't re-fetch over the network."""
-        downloaded = trafilatura.fetch_url(source_ref)
-        if downloaded is None:
-            raise RuntimeError(f"Failed to fetch URL: {source_ref}")
-        extracted = trafilatura.extract(
-            downloaded, include_comments=False, include_tables=True, favor_recall=True
-        )
-        if not extracted:
-            raise RuntimeError(f"trafilatura could not extract readable content from: {source_ref}")
+        extracted, content_hash, image_urls = fetch_and_extract(source_ref)
         self._last_fetch_content = extracted
-        self._last_fetch_hash = hashlib.sha256(extracted.encode("utf-8")).hexdigest()
+        self._last_fetch_hash = content_hash
+        self._last_fetch_image_urls = image_urls
         return extracted
 
     def has_changed(self, source_ref: str, last_known_hash: Optional[str]) -> bool:
@@ -86,4 +126,5 @@ class WebUrlAdapter(BaseAdapter):
             content=content,
             content_hash=content_hash,
             owner_id=self.owner_id,
+            image_urls=self._last_fetch_image_urls,
         )

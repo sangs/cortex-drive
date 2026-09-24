@@ -402,6 +402,7 @@ class SourceSnapshot(Neo4jBaseModel):
     fetched_at: str = Field(..., description="ISO datetime of this fetch.")
     is_current: bool = Field(..., description="Exactly one True per source at any time.")
     change_summary: Optional[str] = Field(None, description="Optional human-readable note on what changed.")
+    image_urls: Optional[List[str]] = Field(None, description="<img> URLs captured from this fetch's raw HTML, for direct display without re-fetching. Hotlinked to the original host — Cortex-Drive stores the reference only, never the binary content.")
 
 def validate_upsert(label: str, data: Dict[str, Any]):
     """

@@ -3712,6 +3712,7 @@ app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluste
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
+app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 
 // Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because
 // app.use() strips the full mount path before the middleware sees req.url, so

@@ -404,6 +404,29 @@ async def get_node_details(
         expert.close()
 
 @mcp.tool()
+async def view_source_live(
+    url: str = Field(description="The website URL to re-fetch live content for. Must already be a registered WebsiteSource for this tenant.")
+) -> str:
+    """
+    On-demand live re-fetch of a website source's current content and captured diagram
+    image URLs — shows what's on the page right now, not the ingestion-time snapshot.
+    Only works for URLs already registered as a WebsiteSource; any other URL returns an
+    error rather than being fetched.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return expert.view_source_live(url=url)
+    except Exception as e:
+        print(f"Error in view_source_live: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
 async def search_enterprise_graph(
     keyword: str = Field(description="The search term to find across the graph (e.g., 'startup', 'BAML', 'Iceberg', 'Kafka')."),
     domain_intent: str = Field("all", description="The domain sandbox to search within. Allowed values: 'professional' (Resume), 'podcast' (Episodes/Chunks), 'federated' (External Silos), or 'all'."),

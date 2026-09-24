@@ -1185,12 +1185,14 @@ class ExpertTools:
         OPTIONAL MATCH (n)-[:HAS_PRIVATE_NOTE|CONTAINS|CONTRIBUTED_TO*1..2]-(note:PreparatoryNote)
         WHERE (""" + self._get_security_clause("note") + """) AND NOT 'Category' IN labels(n)
         OPTIONAL MATCH (person:Person)-[gRel:GUEST_ON|HOSTS|FEATURE_GUEST|INTERVIEWED_BY]->(n)
+        OPTIONAL MATCH (n)-[:HAS_SNAPSHOT]->(snap:SourceSnapshot {is_current: true})
 
         WITH n, labels(n) AS labels,
              collect(DISTINCT coalesce(ref.url, ref.link)) AS ref_urls,
              collect(DISTINCT tech.name) AS technologies,
              collect(DISTINCT note.text) AS narratives,
-             collect(DISTINCT CASE WHEN person IS NOT NULL THEN {name: person.name, role: type(gRel)} END) AS guests
+             collect(DISTINCT CASE WHEN person IS NOT NULL THEN {name: person.name, role: type(gRel)} END) AS guests,
+             collect(DISTINCT snap.image_urls)[0] AS image_urls
 
         RETURN properties(n) AS properties,
                labels,
@@ -1198,6 +1200,7 @@ class ExpertTools:
                technologies,
                narratives,
                guests,
+               image_urls,
                n.node_id AS node_id,
                elementId(n) AS element_id,
                COUNT { (n)--(m) WHERE NOT m:""" + bridge_labels + """ AND (""" + sec_m + """) } AS degree,
@@ -1249,6 +1252,43 @@ class ExpertTools:
                 print(f"[get_node_details] inferred context collection failed (non-fatal): {e}")
 
         return neo4j_json_dumps([data], indent=2)
+
+    def view_source_live(self, url: str) -> str:
+        """On-demand live re-fetch of a website source's current content (design doc
+        documents/architecture/source-content-surfacing-design-2026-09-24.md, A1).
+
+        Deliberately restricted to URLs already registered as a WebsiteSource.base_url for
+        this tenant — this tool fetches server-side from a Cloud Run service, so accepting
+        an arbitrary caller-supplied URL would make it an open fetch proxy (SSRF surface,
+        including cloud metadata endpoints). Registration + the standard security clause
+        double as the access check: an unregistered or inaccessible URL is indistinguishable
+        from an unregistered one to the caller.
+        """
+        query = """
+        MATCH (s:WebsiteSource {base_url: $url})
+        WHERE (""" + self._get_security_clause("s") + """)
+        RETURN count(s) > 0 AS registered
+        """
+        try:
+            result = self._exec_query(query, **self._security_params(), url=url)
+            record = result.records[0].data() if result.records else None
+            if not record or not record.get("registered"):
+                return json.dumps({"error": "URL not found or access denied."})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+        from ingestion.adapters.web_url import fetch_and_extract
+        try:
+            content, _content_hash, image_urls = fetch_and_extract(url)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+        from datetime import datetime
+        return json.dumps({
+            "content": content,
+            "image_urls": image_urls,
+            "fetched_at": datetime.now().isoformat(),
+        })
 
     def expand_node_topology(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """

@@ -2,8 +2,11 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash } from 'lucide-react';
+import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash, Radio, Loader2 } from 'lucide-react';
+import { useAuth } from '@clerk/nextjs';
 import ShareModal from './ShareModal';
+
+const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
 // Node types that belong to the podcast domain — bento layout differs from career domain.
 const PODCAST_DOMAIN_TYPES = new Set(['Episode', 'Podcast']);
@@ -26,6 +29,40 @@ interface BentoDetailPanelProps {
 
 const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal, isBentoHydrating = false }) => {
     const [shareModalOpen, setShareModalOpen] = React.useState(false);
+    const { getToken } = useAuth();
+
+    // --- A1: on-demand live re-fetch for WebsiteSource nodes ---
+    const [liveContent, setLiveContent] = React.useState<{ content: string; image_urls: string[] } | null>(null);
+    const [liveLoading, setLiveLoading] = React.useState(false);
+    const [liveError, setLiveError] = React.useState('');
+
+    const handleViewLive = React.useCallback(async () => {
+        if (!node?.base_url) return;
+        setLiveLoading(true);
+        setLiveError('');
+        try {
+            const token = await getToken();
+            const resp = await fetch(`${GATEWAY}/api/view_source_live`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ url: node.base_url }),
+            });
+            const data = await resp.json();
+            const payload = data.content?.[0]?.text ? JSON.parse(data.content[0].text) : data;
+            if (payload.error) {
+                setLiveError(payload.error);
+            } else {
+                setLiveContent({ content: payload.content, image_urls: payload.image_urls || [] });
+            }
+        } catch (e: any) {
+            setLiveError(e?.message || 'Failed to fetch live content.');
+        } finally {
+            setLiveLoading(false);
+        }
+    }, [node, getToken]);
 
     // --- Shared derived data ---
     const displayLinks = React.useMemo(() => {
@@ -185,6 +222,51 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                     </a>
                 ))}
             </div>
+        </div>
+    );
+
+    // --- A1/A2: live re-fetch + captured diagram images, WebsiteSource nodes only ---
+    const websiteSourceCard = node.type === 'WebsiteSource' && (
+        <div className="p-6 rounded-2xl bg-teal-500/5 border border-teal-500/10 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 text-teal-400">
+                    <Radio className="w-4 h-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-teal-300">Live Source</span>
+                </div>
+                <button
+                    onClick={handleViewLive}
+                    disabled={liveLoading}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/20 text-teal-300 text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50"
+                >
+                    {liveLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {liveLoading ? 'Fetching…' : 'View Live'}
+                </button>
+            </div>
+
+            {Array.isArray(node.image_urls) && node.image_urls.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                    {node.image_urls.map((src: string, i: number) => (
+                        <img key={i} src={src} alt="" className="h-16 w-16 object-cover rounded-lg border border-white/10 shrink-0" />
+                    ))}
+                </div>
+            )}
+
+            {liveError && <p className="text-[10px] text-rose-400 italic">{liveError}</p>}
+
+            {liveContent && (
+                <div className="flex flex-col gap-3">
+                    {liveContent.image_urls.length > 0 && (
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                            {liveContent.image_urls.map((src, i) => (
+                                <img key={i} src={src} alt="" className="h-16 w-16 object-cover rounded-lg border border-white/10 shrink-0" />
+                            ))}
+                        </div>
+                    )}
+                    <p className="text-xs text-slate-300 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
+                        {liveContent.content}
+                    </p>
+                </div>
+            )}
         </div>
     );
 
@@ -352,6 +434,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                             )}
 
                             {resourceGallery}
+                            {websiteSourceCard}
                             {knowledgeBridge}
                         </>
                     ) : (
@@ -425,6 +508,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                             </div>
 
                             {resourceGallery}
+                            {websiteSourceCard}
 
                             {/* Narrative — authored content and inferred structural context are merged
                                 server-side into one string with inline "Authored:"/"Inferred from graph:"
