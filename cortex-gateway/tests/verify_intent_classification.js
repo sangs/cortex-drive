@@ -85,19 +85,56 @@ const CASES = [
         expected: 'career',
         expectedConfident: false,
         why: 'The actual live bug (2026-09-17) — nothing matches B/R/E, must resolve to safe-default career with confident=false, not a real career match'
-    }
-];
+    },
 
-// Known, pre-existing gap — NOT fixed by this pass, deliberately out of scope (see the "Phase R
-// keyword precision audit" task referenced in cortex-gateway/config/intent_keywords.js). Printed
-// for visibility, not asserted — a failing assertion here would incorrectly imply this pass was
-// supposed to fix it.
-const KNOWN_GAPS = [
+    // 2026-09-21 Phase R keyword-precision audit cases below.
+
+    // Promoted from KNOWN_GAPS (was tracked as an unfixed, documented gap since 2026-09-16).
+    // Removing the zero-evidence bare "background" keyword directly fixes this: nothing in B/R/E
+    // matches anymore, so it now correctly falls through to safe-default with confident=false
+    // (honest "don't know" instead of a misleadingly-confident false-positive career match). The
+    // domain string itself is unchanged (still the AP-21 safe-default 'career') — confident is
+    // what flips, and confident=false is what drives the universal-discovery LLM instruction
+    // (2026-09-18 fix) instead of the strict career-only one. Empirically confirmed via a
+    // 40-query real-historical-traffic replay during the audit: this was the ONLY query out of 40
+    // whose classification changed between the old and new intent_keywords.js.
     {
         query: 'Tell me what was said about the speaker background in that segment',
-        currentlyClassifiesAs: 'career',
-        arguablyShouldBe: 'podcast',
-        why: 'No podcast-signal word (guest/interview/podcast/episode/discuss) present, so the bare "background" keyword in patternSource wins — exactly the ambiguity discussed 2026-09-16. Tracked for the future keyword-precision-audit task, not fixed here.'
+        expected: 'career',
+        expectedConfident: false,
+        why: '2026-09-21 audit fix: bare "background" (zero evidence anywhere) removed, so this no longer false-positives to a confident career match'
+    },
+
+    // New evidence-backed phrase (2026-09-21 audit): replaces the old unanchored "thought leader"
+    // fragment, which relied on "leadership" containing "leader" as a substring prefix. Real
+    // evidence uses "leadership" (live Category "Thought Leadership & Community"), not the agent
+    // noun "leader" — the literal phrase is both safer and directly evidenced.
+    {
+        query: 'Summarize her thought leadership work',
+        expected: 'career',
+        expectedConfident: true,
+        why: '2026-09-21 audit: "thought leadership" keyword phrase must match deterministically via Phase R'
+    },
+
+    // Plural-form singleWordAllowlist coverage (2026-09-21 audit): both singular and plural forms
+    // are separately evidence-backed (live "RSNA conferences", "Global Hackathons @ JPMorgan
+    // Chase") and both must independently match via the allowlist + keywords combination, not
+    // just the singular.
+    {
+        query: 'What conferences and hackathons has she participated in',
+        expected: 'career',
+        expectedConfident: true,
+        why: '2026-09-21 audit: plural forms "conferences"/"hackathons" must match via singleWordAllowlist, not just the singular'
+    },
+
+    // Zero-evidence removed word (2026-09-21 audit) — locks in that a query built entirely around
+    // a removed word, with no other career signal present, honestly falls through to
+    // confident=false rather than silently still matching something.
+    {
+        query: 'Can you show me her resume',
+        expected: 'career',
+        expectedConfident: false,
+        why: '2026-09-21 audit: "resume" removed (zero evidence found) — must no longer produce a confident Phase R match on its own'
     }
 ];
 
@@ -117,14 +154,6 @@ async function main() {
             console.error(`       ${e.message}`);
             console.error(`       why this case exists: ${why}`);
         }
-    }
-
-    console.log(`\nKnown gaps (documented, not asserted — ${KNOWN_GAPS.length}):`);
-    for (const gap of KNOWN_GAPS) {
-        const { domain } = await classifyDomain(gap.query);
-        const stillPresent = domain === gap.currentlyClassifiesAs;
-        console.log(`  ${stillPresent ? '(unchanged)' : '(!! changed, update this note)'} ${JSON.stringify(gap.query).slice(0, 60)} -> ${domain}`);
-        console.log(`       ${gap.why}`);
     }
 
     console.log(`\n${CASES.length - failures}/${CASES.length} passed.`);

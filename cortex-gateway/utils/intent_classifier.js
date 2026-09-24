@@ -42,9 +42,11 @@ const path = require('path');
 
 const INTENT_KEYWORDS_CONFIG = require('../config/intent_keywords.js');
 
-// Allowlist for a genuinely unambiguous single-word `keywords` entry, should one ever be
-// needed — empty today; every current entry is a multi-word phrase (see _buildIntentPatterns).
-const SINGLE_WORD_KEYWORD_ALLOWLIST = new Set();
+// Evidence-backed single-word `keywords` entries — data lives in intent_keywords.js's
+// singleWordAllowlist (the file a developer actually edits), not hardcoded here. Populated by
+// the Phase R keyword-precision audit, 2026-09-21 — see that file's doc comment for the
+// evidence rule every entry must satisfy.
+const SINGLE_WORD_KEYWORD_ALLOWLIST = new Set(INTENT_KEYWORDS_CONFIG.singleWordAllowlist || []);
 
 function _escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

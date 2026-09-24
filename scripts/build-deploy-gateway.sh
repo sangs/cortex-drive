@@ -11,6 +11,29 @@ fi
 
 echo "=== cortex-gateway: build + deploy ==="
 
+# --- Intent classification regression gate --------------------------------
+# First automated pre-deploy test gate in this pipeline (2026-09-21) — nothing
+# previously ran cortex-gateway/tests/verify_intent_classification.js before a
+# deploy; a broken classifier could ship straight to Cloud Run with nothing
+# catching it. Runs before the entity-catalog regen / build steps so a failure
+# is caught as cheaply and early as possible. Exercises only the free phases
+# (Phase B/R/E) — no OpenAI client passed, so Phase S/embedding behavior isn't
+# covered by this gate; that gets validated separately (historical-query
+# replay) when intent_keywords.js changes — see
+# documents/daily_logs/daily_log-2026-09-21.md.
+echo "--- Running intent classification regression suite..."
+if ! (cd "${REPO}/cortex-gateway" && npm test); then
+    echo "❌ ABORTING: cortex-gateway/tests/verify_intent_classification.js failed."
+    echo "   Fix the failing case(s) above before deploying — a broken classifier"
+    echo "   should never ship. To deploy anyway (not recommended):"
+    echo "   SKIP_INTENT_TESTS=true bash scripts/build-deploy-gateway.sh"
+    if [ "${SKIP_INTENT_TESTS:-false}" != "true" ]; then
+        exit 1
+    fi
+    echo "   SKIP_INTENT_TESTS=true set — proceeding despite the failure above."
+fi
+echo "✓ Intent classification regression suite passed"
+
 # Regenerate entity catalog from Neo4j before building the image.
 # The catalog is bundled into the Docker image and loaded at gateway startup for
 # Phase E (entity name lookup) of the intent classifier. Non-blocking: if Neo4j

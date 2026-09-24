@@ -101,6 +101,27 @@ Enforcement is three-layer:
 3. **This invariant** — code review gate; any PR weakening layers 1 or 2 must be
    rejected.
 
+### 12. IcePanel Model Is a Pre-Change Check for High-Risk Paths, Not Optional Reading
+
+Before proposing or implementing a change that touches any of the following, read the
+corresponding Flow in `documents/architecture/icepanel-diagrams.md` and the relevant
+objects/connections in `documents/architecture/icepanel/landscape-2026-09-21.yaml` first:
+
+- Query round-trip (tool-calling loop, `search_enterprise_graph`, the `buildLlmToolContent()`/
+  `mergeGraphData()` split) → Flow 1. Check before touching Invariant 6/AP-4.
+- `connect_knowledge_on_demand` / bridge-relationship code → Flow 2. Check before touching
+  Invariant 5 (zero-write).
+- Conversation history reopen (`openHistoricalConversation`, `executeQuery`) → Flow 3a/3b.
+- `classifyDomain()`'s `confident` branch or `domainInstruction` construction → Flow 4.
+- `/api/get_node_details` or any Gateway→Bento call site → Flow 5a/5b. Check before touching
+  AP-18.
+
+This doesn't replace the invariants above — those stay the enforced rule. The diagrams are the
+fastest way to see whether a proposed change is about to cross one of those lines *before*
+writing code. If a change alters one of these paths, update the corresponding YAML
+objects/connections and Flow step table in the same change — an unsynced diagram is worse than
+no diagram.
+
 ---
 
 ## File Ownership Map
@@ -117,6 +138,7 @@ Enforcement is three-layer:
 | Anti-pattern full narratives | `documents/architecture/anti-pattern-catalog.md` | This file (one-liners only here) |
 | Security / GACL decisions | `documents/security/` | Code comments |
 | Sprint / pending work | `documents/daily_logs/daily_log-<date>.md` | This file |
+| IcePanel diagram index (C4 model + Flows) | `documents/architecture/icepanel-diagrams.md` | IcePanel UI (Flows only — model is YAML-sourced from `documents/architecture/icepanel/landscape-2026-09-21.yaml`) |
 
 ---
 
