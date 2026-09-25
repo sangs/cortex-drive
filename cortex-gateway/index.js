@@ -3141,6 +3141,17 @@ app.post('/query', authMiddleware, async (req, res) => {
         let loopCount = 0;
         const MAX_LOOPS = 5;
 
+        // Set when any tool call in this turn fails/times out (see the catch around
+        // callMcpTool below). A tool failure still lets the LLM produce a natural-language
+        // apology as finalAnswer — that text is non-empty, so without this flag it would be
+        // cached identically to a real grounded answer and replayed to the same question for
+        // up to semanticCache's 24h TTL even after the underlying failure (e.g. Neo4j Aura
+        // paused) recovers. Found live 2026-09-25: a Neo4j-pause-induced timeout answer kept
+        // being served long after Neo4j resumed, until the gateway process was restarted to
+        // clear the in-memory cache. Guards the cache write below instead of pattern-matching
+        // the answer text, which would be fragile against prompt wording changes.
+        let hadToolFailure = false;
+
         // Accumulate graph data from ALL tool calls so every tool's nodes/links reach the UI.
         // Previously only the last tool's result was forwarded (Gap #1 fix).
         const accumulatedGraph = { nodes: [], links: [], virtual_links: [] };
@@ -3334,6 +3345,7 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                     } catch (err) {
                         console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
+                        hadToolFailure = true;
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -3655,9 +3667,16 @@ app.post('/query', authMiddleware, async (req, res) => {
                     access_scope: accessScope
                 };
                 // Cache the response for repeated identical questions (per-tenant, 24h TTL).
-                if (auditedAnswer) {
+                // Skip caching when any tool call in this turn failed (hadToolFailure) — the
+                // LLM's apology text is a non-empty auditedAnswer like any real answer, so
+                // without this guard a transient failure (e.g. Neo4j Aura paused) gets replayed
+                // verbatim to the same question for up to 24h after the underlying system
+                // recovers. See hadToolFailure's declaration above for the incident this fixes.
+                if (auditedAnswer && !hadToolFailure) {
                     semanticCache.set(cacheKey, responsePayload);
                     console.log(`[QUERY] Response cached — key ${cacheKey.slice(0, 8)}…`);
+                } else if (hadToolFailure) {
+                    console.log(`[QUERY] Response NOT cached — a tool call failed this turn (key ${cacheKey.slice(0, 8)}…)`);
                 }
                 // Best-effort conversation history persistence — never blocks the response.
                 persistConversationTurn({
