@@ -12,7 +12,7 @@ mcp==1.14.0
 starlette
 uvicorn
 sse-starlette
-baml-py
+baml-py==0.220.0
 httpx
 redis>=5.0.0
 trafilatura
