@@ -3244,13 +3244,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                         // Accumulate graph data from every tool that returns nodes/links
                         try {
                             const parsed = JSON.parse(toolContent);
-                            mergeGraphData(parsed, toolName === 'search_enterprise_graph' ? toolArgs.domain_intent : undefined);
-                            // Accumulate tool-result URLs for grounding audit (AP-15).
-                            extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
+
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
                             // AP-3: manifest-driven, not exclusion lists. cross_domain passes all through.
                             //
-                            // Keyed off the ACTUAL domain_intent this search_enterprise_graph call used,
+                            // Keyed off the ACTUAL domain_intent THIS search_enterprise_graph call used,
                             // not the outer domainSignal — found live 2026-09-25: a low-confidence/
                             // universal-discovery turn (confident=false, safe_default domainSignal=
                             // 'career') can still have the LLM correctly search domain_intent='website'
@@ -3260,20 +3258,28 @@ app.post('/query', authMiddleware, async (req, res) => {
                             // "backstop, not primary logic" violated by accident, not design. domain_intent
                             // 'all' (or a tool other than search_enterprise_graph) falls back to the
                             // existing domainSignal-keyed behavior, unchanged.
+                            //
+                            // Applied to THIS call's parsed.nodes only, BEFORE merging — never re-filter
+                            // the already-accumulated array by the current call's domain. Found live in
+                            // the same pass: a Phase-B bridge turn makes two calls with DIFFERENT
+                            // domain_intent values (website, then podcast); re-filtering the whole
+                            // accumulated set on the second call by 'podcast' alone silently erased the
+                            // first call's correctly-kept WebsiteSource/SourceSnapshot nodes.
+                            // mergeGraphData() is purely additive (dedups by id, never removes), so
+                            // filtering each call's own fresh nodes before it runs is sufficient and
+                            // correctly generalizes to N-way multi-domain accumulation.
                             const _domainIntentKey = (toolName === 'search_enterprise_graph' && toolArgs.domain_intent && toolArgs.domain_intent !== 'all')
                                 ? (DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY[toolArgs.domain_intent] || toolArgs.domain_intent)
                                 : domainSignal;
                             const _allowedForDomain = DOMAIN_ALLOWED_TYPES[_domainIntentKey];
-                            if (_allowedForDomain) {
-                                accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => _allowedForDomain.has(n.type));
-                                // Also filter out-of-domain nodes from the LLM-facing summary.
-                                // buildLlmToolContent reads parsed.nodes — without this, the LLM sees
-                                // e.g. "Data Engineering Podcast (Podcast)" in a career-domain query.
-                                if (parsed.nodes) {
-                                    parsed.nodes = parsed.nodes.filter(n => _allowedForDomain.has(n.type));
-                                    toolContent = JSON.stringify(parsed);
-                                }
+                            if (_allowedForDomain && parsed.nodes) {
+                                parsed.nodes = parsed.nodes.filter(n => _allowedForDomain.has(n.type));
+                                toolContent = JSON.stringify(parsed);
                             }
+
+                            mergeGraphData(parsed, toolName === 'search_enterprise_graph' ? toolArgs.domain_intent : undefined);
+                            // Accumulate tool-result URLs for grounding audit (AP-15).
+                            extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
                             // Orphaned-Person filter (career domain only).
                             // Person is a shared label — podcast guests/hosts and career people both use it.
                             // Podcast guests reach career search results via [*0..2] taxonomy expansion
