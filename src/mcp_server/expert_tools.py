@@ -1175,9 +1175,20 @@ class ExpertTools:
         bridge_labels = get_bridge_label_string()
         sec_m = self._get_security_clause("m")
 
+        # node_id, when supplied, is authoritative — never OR'd with the name match. An
+        # unconditional OR let two DIFFERENT real nodes sharing a display name (e.g. a
+        # WebsiteSource page about a technology and the Technology concept node itself)
+        # produce an ambiguous match set; with no ORDER BY, Neo4j's LIMIT 1 could return
+        # either one non-deterministically — confirmed live 2026-09-25: passing the correct
+        # node_id for one node still sometimes returned the other, name-colliding node.
         query = """
         MATCH (n)
-        WHERE (n.node_id = $node_id OR toLower(n.name) = toLower($node_name))
+        WHERE (
+                CASE WHEN $node_id IS NOT NULL AND $node_id <> ''
+                     THEN n.node_id = $node_id
+                     ELSE toLower(n.name) = toLower($node_name)
+                END
+              )
           AND (""" + self._get_security_clause("n") + """)
 
         OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:ReferenceLink)

@@ -186,24 +186,44 @@ export interface GraphLink {
 }
 
 /**
- * Deduplicates a node array by id, then by name.
- * ECharts graph series rejects arrays that contain duplicate id OR duplicate name.
- * Filters accompanying links to only those whose source and target survive deduplication.
+ * Deduplicates a node array by id; disambiguates (never drops) a second node sharing an
+ * already-seen name. Filters accompanying links to only those whose source and target survive.
+ *
+ * ECharts graph series requires every node's `name` to be unique. Two genuinely different real
+ * things can share a display name in this graph — e.g. a WebsiteSource page *about* a
+ * technology and the Technology concept node itself — so the fix is to disambiguate the
+ * colliding node's `name` (append its type, or its id if even that collides), not to silently
+ * drop it. Dropping erased real nodes from the graph entirely (found live 2026-09-25: an
+ * ingested "Apache Iceberg" WebsiteSource was unreachable by click because the pre-existing
+ * "Apache Iceberg" Technology node won the name collision and the WebsiteSource was dropped).
+ * Mirrors buildLlmToolContent()'s existing name::type composite-key dedup on the backend
+ * (AP-14) — same principle, applied where the frontend's own constraint (ECharts) requires it.
+ *
+ * Mutates the surviving colliding node's `name` in place — safe: node identity elsewhere
+ * (click-to-detail-panel hydration, link source/target) keys off `id`/`node_id`, never `name`.
  *
  * Generic so callers that pass `any[]` get `any[]` back — no unintended type narrowing.
  */
-export function deduplicateNodes<N extends { id?: any; name?: any }, L extends { source?: any; target?: any }>(
+export function deduplicateNodes<N extends { id?: any; name?: any; type?: any }, L extends { source?: any; target?: any }>(
     nodes: N[],
     links: L[]
 ): { nodes: N[]; links: L[] } {
     const seenIds = new Set<string>();
     const seenNames = new Set<string>();
-    const dedupedNodes = nodes.filter(n => {
-        if (!n.id || seenIds.has(String(n.id))) return false;
-        if (n.name && seenNames.has(String(n.name))) return false;
+    const dedupedNodes: N[] = [];
+    nodes.forEach(n => {
+        if (!n.id || seenIds.has(String(n.id))) return;
         seenIds.add(String(n.id));
-        if (n.name) seenNames.add(String(n.name));
-        return true;
+        if (n.name) {
+            let nameKey = String(n.name);
+            if (seenNames.has(nameKey)) {
+                const withType = n.type ? `${n.name} (${n.type})` : null;
+                nameKey = (withType && !seenNames.has(withType)) ? withType : `${n.name} (${n.id})`;
+                (n as { name?: any }).name = nameKey;
+            }
+            seenNames.add(nameKey);
+        }
+        dedupedNodes.push(n);
     });
     const dedupedLinks = links.filter(l => seenIds.has(String(l.source)) && seenIds.has(String(l.target)));
     return { nodes: dedupedNodes, links: dedupedLinks };
