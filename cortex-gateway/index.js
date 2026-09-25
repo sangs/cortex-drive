@@ -12,6 +12,13 @@ const DOMAIN_ALLOWED_TYPES = {
     website: new Set(_domainManifestsRaw.website.node_types),
 };
 
+// search_enterprise_graph's own domain_intent enum uses Python/domain_registry.py naming
+// ("professional"), which differs from classifyDomain()'s domainSignal ("career") — the
+// pre-existing mismatch website-domain-cross-domain-routing-design-2026-08-24.md §2.1 flagged
+// as "out of scope to fix". Needed here specifically to key DOMAIN_ALLOWED_TYPES (JS-side,
+// "career") off a tool call's actual domain_intent argument (Python-side, "professional").
+const DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY = { professional: 'career', podcast: 'podcast', website: 'website' };
+
 // Tools that return large graph payloads — LLM only needs a compact summary.
 // Full graph data is already accumulated in accumulatedGraph before truncation.
 const GRAPH_HEAVY_TOOLS = new Set(['search_enterprise_graph', 'get_cluster_context', 'connect_knowledge_on_demand']);
@@ -3242,7 +3249,21 @@ app.post('/query', authMiddleware, async (req, res) => {
                             extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
                             // AP-3: manifest-driven, not exclusion lists. cross_domain passes all through.
-                            const _allowedForDomain = DOMAIN_ALLOWED_TYPES[domainSignal];
+                            //
+                            // Keyed off the ACTUAL domain_intent this search_enterprise_graph call used,
+                            // not the outer domainSignal — found live 2026-09-25: a low-confidence/
+                            // universal-discovery turn (confident=false, safe_default domainSignal=
+                            // 'career') can still have the LLM correctly search domain_intent='website'
+                            // per Flow 4's own instruction; keying the guard off domainSignal='career'
+                            // silently stripped the correctly-Cypher-scoped WebsiteSource/SourceSnapshot
+                            // results before they ever reached the LLM's compact summary — Invariant 7's
+                            // "backstop, not primary logic" violated by accident, not design. domain_intent
+                            // 'all' (or a tool other than search_enterprise_graph) falls back to the
+                            // existing domainSignal-keyed behavior, unchanged.
+                            const _domainIntentKey = (toolName === 'search_enterprise_graph' && toolArgs.domain_intent && toolArgs.domain_intent !== 'all')
+                                ? (DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY[toolArgs.domain_intent] || toolArgs.domain_intent)
+                                : domainSignal;
+                            const _allowedForDomain = DOMAIN_ALLOWED_TYPES[_domainIntentKey];
                             if (_allowedForDomain) {
                                 accumulatedGraph.nodes = accumulatedGraph.nodes.filter(n => _allowedForDomain.has(n.type));
                                 // Also filter out-of-domain nodes from the LLM-facing summary.
@@ -3713,6 +3734,7 @@ app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_no
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
+app.post('/api/register_website_source', authMiddleware, mcpToolEndpoint('register_website_source'));
 
 // Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because
 // app.use() strips the full mount path before the middleware sees req.url, so
