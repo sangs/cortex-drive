@@ -19,9 +19,8 @@ export class MCPClient {
         console.log("Verifying gateway connection via:", healthUrl);
 
         const token = await this.getToken();
-        const headers: Record<string, string> = {
-            "x-api-key": "cortex_trial_key_2024"
-        };
+        // No x-api-key: the dashboard is sign-in only, so the Clerk token is the sole credential.
+        const headers: Record<string, string> = {};
         if (token) {
             headers["Authorization"] = `Bearer ${token}`;
         }
@@ -41,7 +40,6 @@ export class MCPClient {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             "x-tenant-id": this.tenantId,
-            "x-api-key": "cortex_trial_key_2024"
         };
         if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -75,7 +73,6 @@ export class MCPClient {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             "x-tenant-id": this.tenantId,
-            "x-api-key": "cortex_trial_key_2024" // Fallback trial key for local dev
         };
         if (token) {
             headers["Authorization"] = `Bearer ${token}`;

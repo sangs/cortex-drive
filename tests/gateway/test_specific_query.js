@@ -5,7 +5,7 @@ const gatewayUrl = "http://localhost:3000/query";
 
 async function run() {
     console.log(`Sending query: "${question}"`);
-    console.log(`Using API Key: cortex_trial_key_2024`);
+    console.log("Using API Key from PUBLIC_TRIAL_API_KEY");
     console.log(`Gateway should map this to TENANT_ID: ${process.env.TENANT_ID}`);
 
     try {
@@ -13,7 +13,7 @@ async function run() {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "x-api-key": "cortex_trial_key_2024"
+                "x-api-key": process.env.PUBLIC_TRIAL_API_KEY
             },
             body: JSON.stringify({ question })
         });

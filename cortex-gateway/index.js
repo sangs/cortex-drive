@@ -433,11 +433,55 @@ const { createClerkClient, verifyToken } = require('@clerk/backend');
 const { Webhook: SvixWebhook } = require('svix');
 const cors = require('cors');
 const OpenAI = require('openai');
-const NodeCache = require('node-cache');
 require('dotenv').config();
 
-// Initialize Semantic Cache (24h default TTL, check every 1h)
-const semanticCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 });
+// /query response cache — stored in Redis (shared by every gateway instance, so an invalidation
+// or flush takes effect fleet-wide). Keys: qcache:{tenantId}:{sha256(tenant:user:question)}.
+// The tenant is kept in clear text so an admin flush can SCAN just its own tenant's entries.
+// Conservative defaults: while the cache shares REDIS_URL with perm:* and guest_link:* (see
+// QUERY_CACHE_REDIS_URL below), its footprint must stay small and self-expiring.
+const QUERY_CACHE_TTL_SECONDS = Number(process.env.QUERY_CACHE_TTL_SECONDS || 6 * 3600);
+// Largest single payload worth caching, so one huge graph can't crowd out the permission cache
+// and guest-link registrations. Measured 2026-09-29: 10-240 KB typical.
+const QUERY_CACHE_MAX_ENTRY_BYTES = Number(process.env.QUERY_CACHE_MAX_ENTRY_BYTES || 256 * 1024);
+const QUERY_CACHE_KEY_PREFIX = 'qcache';
+const QUERY_CACHE_SCAN_BATCH = 500;
+const LOG_QUERY_CACHE = '[QUERY-CACHE]';
+
+/** Cache key for a /query response — per tenant AND user, so permission-scoped answers are never shared. */
+function buildQueryCacheKey(tenantId, userId, question) {
+    const digest = crypto.createHash('sha256')
+        .update(`${tenantId}:${userId}:${String(question).toLowerCase().trim()}`)
+        .digest('hex');
+    return `${QUERY_CACHE_KEY_PREFIX}:${tenantId}:${digest}`;
+}
+
+/** Short, log-safe form of a cache key (tail of the digest). */
+function shortCacheKey(key) {
+    return key.slice(-8);
+}
+
+/**
+ * True when an MCP tool reported a failure in-band. Most MCP tools catch their own exceptions
+ * and return {"error": "..."} as a normal result rather than raising, so callMcpTool() resolves
+ * successfully and its catch block never runs. Found live 2026-09-29: an OpenAI 429 inside
+ * connect_knowledge_on_demand came back this way, the LLM wrote "No strong cross-domain bridge
+ * was found", and that answer was cached for 24h. Both forms (thrown and in-band) must count.
+ */
+function isToolErrorResult(parsed) {
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        && typeof parsed.error === 'string';
+}
+
+/**
+ * Allowlist, not denylist: cache only a positively confirmed, grounded success. A turn with any
+ * tool failure, or with no graph data at all, is never cached — "no data found" / "no bridge"
+ * is exactly what a transient outage looks like, and replaying it for the TTL is far worse than
+ * recomputing a genuinely empty answer. See documents/architecture/anti-pattern-catalog.md AP-22.
+ */
+function isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph }) {
+    return Boolean(auditedAnswer) && !hadToolFailure && hasGraph;
+}
 
 // Log prefix for all permission cache operations (Redis hit/miss/error)
 const LOG_PERM_CACHE = '[PERM-CACHE]';
@@ -450,6 +494,76 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
     enableOfflineQueue: false,
 });
 redis.on('error', (err) => console.warn('[REDIS] connection error (non-fatal):', err.message));
+// Connect eagerly. With lazyConnect + enableOfflineQueue:false, the first command after startup
+// otherwise fails with "Stream isn't writeable" — every cold instance's first cache/permission
+// lookup was a guaranteed miss. Non-fatal: ioredis keeps retrying in the background.
+redis.connect().catch(err => console.warn('[REDIS] initial connect failed (non-fatal):', err.message));
+
+// Optional dedicated Redis for the /query response cache. When QUERY_CACHE_REDIS_URL is set, cached
+// answers live in their own database, which can safely have eviction enabled (losing a cached
+// answer only costs a recompute) without any risk of evicting perm:* or guest_link:* keys — a
+// missing guest_link key reads as "link revoked". Unset → falls back to the shared REDIS_URL client.
+const queryCacheRedis = process.env.QUERY_CACHE_REDIS_URL
+    ? new Redis(process.env.QUERY_CACHE_REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false })
+    : redis;
+if (queryCacheRedis !== redis) {
+    queryCacheRedis.on('error', (err) => console.warn('[REDIS] query-cache connection error (non-fatal):', err.message));
+    queryCacheRedis.connect().catch(err => console.warn('[REDIS] query-cache initial connect failed (non-fatal):', err.message));
+}
+console.log(`${LOG_QUERY_CACHE} store: ${queryCacheRedis === redis ? 'shared REDIS_URL' : 'dedicated QUERY_CACHE_REDIS_URL'}, TTL ${QUERY_CACHE_TTL_SECONDS}s, max entry ${QUERY_CACHE_MAX_ENTRY_BYTES} bytes`);
+
+// --- /query response cache operations (Redis). Reads/writes never fail the request: a Redis
+// problem degrades to "no caching", logged. Invalidation surfaces errors so the caller knows. ---
+
+async function getCachedQueryResponse(key) {
+    try {
+        const raw = await queryCacheRedis.get(key);
+        return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+        console.warn(`${LOG_QUERY_CACHE} read failed, treating as miss (key …${shortCacheKey(key)}):`, err.message);
+        return null;
+    }
+}
+
+async function setCachedQueryResponse(key, payload) {
+    const serialized = JSON.stringify(payload);
+    const bytes = Buffer.byteLength(serialized);
+    if (bytes > QUERY_CACHE_MAX_ENTRY_BYTES) {
+        console.log(`${LOG_QUERY_CACHE} NOT stored — ${bytes} bytes exceeds QUERY_CACHE_MAX_ENTRY_BYTES (key …${shortCacheKey(key)})`);
+        return false;
+    }
+    try {
+        await queryCacheRedis.set(key, serialized, 'EX', QUERY_CACHE_TTL_SECONDS);
+        console.log(`${LOG_QUERY_CACHE} stored — ${bytes} bytes (key …${shortCacheKey(key)})`);
+        return true;
+    } catch (err) {
+        console.warn(`${LOG_QUERY_CACHE} write failed (non-fatal, key …${shortCacheKey(key)}):`, err.message);
+        return false;
+    }
+}
+
+/** Deletes one entry. Returns the number removed (0 or 1). Throws on Redis failure. */
+async function deleteCachedQueryResponse(key) {
+    return queryCacheRedis.del(key);
+}
+
+/** Glob-escapes a value used inside a SCAN MATCH pattern. */
+function escapeRedisGlob(value) {
+    return String(value).replace(/[*?[\]\\]/g, '\\$&');
+}
+
+/** Removes every cached /query response for one tenant, across all gateway instances. Throws on Redis failure. */
+async function flushTenantQueryCache(tenantId) {
+    const pattern = `${QUERY_CACHE_KEY_PREFIX}:${escapeRedisGlob(tenantId)}:*`;
+    let cursor = '0';
+    let removed = 0;
+    do {
+        const [next, keys] = await queryCacheRedis.scan(cursor, 'MATCH', pattern, 'COUNT', QUERY_CACHE_SCAN_BATCH);
+        cursor = next;
+        if (keys.length) removed += await queryCacheRedis.unlink(...keys);
+    } while (cursor !== '0');
+    return removed;
+}
 
 // Ensure fetch is available globally (for orchestration)
 if (!global.fetch) {
@@ -620,10 +734,27 @@ const _corsOrigin = process.env.ALLOWED_ORIGIN || '*';
 app.use(cors({ origin: _corsOrigin }));
 
 /**
+ * Identity/authorization headers that only the gateway's own middleware may set. Downstream code
+ * (route handlers, callMcpTool, the /api MCP proxy) trusts these as verified identity, so any
+ * value a client sends must be discarded before authentication runs. Found 2026-09-29: none were
+ * stripped — a client could send x-schema-readable: true to pass admin gates, or
+ * x-user-id: guest-auth (+ any x-tenant-id) to skip authentication entirely on every
+ * authMiddleware route. The frontend's own x-tenant-id is safe to drop: every auth path sets it.
+ */
+const GATEWAY_ASSIGNED_HEADERS = ['x-user-id', 'x-tenant-id', 'x-raw-user-id', 'x-schema-readable', 'x-guest-share-anchor'];
+
+function stripClientIdentityHeaders(req) {
+    for (const h of GATEWAY_ASSIGNED_HEADERS) delete req.headers[h];
+}
+
+/**
  * Interceptor for Stateless Guest Share Tokens
  * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke).
+ * A verified token is recorded as req.guestAuth (a server-side property no client can set) —
+ * authMiddleware keys its guest bypass off that, never off the x-user-id header value.
  */
 const guestTokenMiddleware = async (req, res, next) => {
+    stripClientIdentityHeaders(req);
     const token = req.query.share || req.headers['x-share-token'];
 
     if (token) {
@@ -641,6 +772,7 @@ const guestTokenMiddleware = async (req, res, next) => {
                 console.warn('[GUEST-AUTH] Redis check failed, falling back to HMAC-only:', redisErr.message);
             }
             console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
+            req.guestAuth = true;
             req.headers['x-tenant-id'] = verified.tenantId;
             req.headers['x-user-id'] = 'guest-auth';
             req.headers['x-guest-share-anchor'] = verified.nodeId;
@@ -678,13 +810,48 @@ app.get('/api/system-status', async (req, res) => {
     }
 });
 
+/**
+ * Trial API key (x-api-key) — disabled unless explicitly configured. Before 2026-09-29 the gateway
+ * had a built-in default key that was also hard-coded in the frontend bundle, and it mapped to
+ * OWNER_USER_ID in the owner's tenant — i.e. anyone who read the bundle could query the whole graph.
+ *
+ * Now all three must be set, with no fallbacks: PUBLIC_TRIAL_API_KEY, PUBLIC_TRIAL_USER_ID,
+ * PUBLIC_TRIAL_TENANT_ID. The tenant matters more than the user: for signed-in (non-guest) users
+ * ExpertTools' security clause is `node_id IN allowed_ids OR tenant_id = $tenant_id`, so a
+ * separate user in the owner's tenant would still see the whole tenant. In production the trial
+ * identity may therefore never be the owner's user or tenant. Runbook:
+ * documents/security/trial-key-and-query-cache-redis-rollout-2026-09-29.md
+ */
+function trialKeyAccess(apiKey) {
+    const key = process.env.PUBLIC_TRIAL_API_KEY;
+    const userId = process.env.PUBLIC_TRIAL_USER_ID;
+    const tenantId = process.env.PUBLIC_TRIAL_TENANT_ID;
+    if (!key || !userId || !tenantId) {
+        return { ok: false, reason: 'API key access is not enabled on this server' };
+    }
+    const given = Buffer.from(String(apiKey));
+    const expected = Buffer.from(key);
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+        return { ok: false, reason: 'Invalid API Key' };
+    }
+    if (process.env.NODE_ENV === 'production'
+        && (userId === process.env.OWNER_USER_ID || tenantId === process.env.TENANT_ID)) {
+        console.error('[AUTH] Trial key refused — PUBLIC_TRIAL_USER_ID/TENANT_ID must not be the owner\'s in production');
+        return { ok: false, reason: 'API key access is misconfigured on this server' };
+    }
+    return { ok: true, userId, tenantId };
+}
+
 // Auth Middleware
 const authMiddleware = async (req, res, next) => {
-    // 0. Guest Share Token Bypass (Signature-validated by guestTokenMiddleware)
-    if (req.headers['x-user-id'] === 'guest-auth') {
+    // 0. Guest Share Token Bypass — only when guestTokenMiddleware verified a token on THIS
+    // request (req.guestAuth). Never trust the x-user-id header value itself.
+    if (req.guestAuth === true) {
         console.log(`[AUTH] Bypassing Clerk for guest-auth (Anchor: ${req.headers['x-guest-share-anchor']})`);
         return next();
     }
+    // Everything below assigns identity headers itself; discard any client-supplied values first.
+    stripClientIdentityHeaders(req);
 
     const authHeader = req.headers.authorization;
     const apiKey = req.headers['x-api-key'];
@@ -722,21 +889,17 @@ const authMiddleware = async (req, res, next) => {
         }
     }
 
-    // 2. Secondary Auth: Public API Key (For Trials/CURL)
-    // Only reachable if NO Authorization header was provided
+    // 2. Secondary Auth: trial API key (curl / scripted testing). Only reachable if NO
+    // Authorization header was provided. See trialKeyAccess() for why it's off by default.
     if (apiKey) {
-        const PUBLIC_TRIAL_KEY = process.env.PUBLIC_TRIAL_API_KEY || 'cortex_trial_key_2024';
-        const TRIAL_TENANT_ID = process.env.TENANT_ID || process.env.PUBLIC_TRIAL_TENANT_ID || 'org_3AacpFBbt39hPmDKyZyNBQuuM6t';
-
-        if (apiKey === PUBLIC_TRIAL_KEY) {
-            req.headers['x-tenant-id'] = TRIAL_TENANT_ID;
-            // Use OWNER_USER_ID so OpenFGA lookups return the owner's allowed nodes
-            req.headers['x-user-id'] = process.env.OWNER_USER_ID || 'trial-user';
-            console.log('Public Trial Access granted for tenant:', TRIAL_TENANT_ID);
-            return next();
-        } else {
-            return res.status(401).send({ error: 'Unauthorized: Invalid API Key' });
+        const trial = trialKeyAccess(apiKey);
+        if (!trial.ok) {
+            return res.status(401).send({ error: `Unauthorized: ${trial.reason}` });
         }
+        req.headers['x-tenant-id'] = trial.tenantId;
+        req.headers['x-user-id'] = trial.userId;
+        console.log('Trial API key access granted for tenant:', trial.tenantId);
+        return next();
     }
 
     return res.status(401).send({ error: 'Unauthorized: Authentication required (JWT or API Key)' });
@@ -3055,6 +3218,38 @@ async function injectBridgeSourceCandidates(domainSignal, bridgeContext, tenantI
 }
 
 /**
+ * /query response-cache invalidation — manual override for a stale answer.
+ *   { question }      → drop the caller's own cached answer for that question (any signed-in user)
+ *   { scope: 'all' }  → flush every cached answer in the caller's tenant (org admin only; e.g. after an outage)
+ * Per-query bypass without deleting anything already exists: forceRefresh / the UI's ↻ button.
+ * The cache lives in Redis, so both forms take effect on every gateway instance.
+ */
+app.post('/api/cache/invalidate', authMiddleware, async (req, res) => {
+    const { question, scope } = req.body || {};
+    const tenantId = req.headers['x-tenant-id'];
+    try {
+        if (scope === 'all') {
+            if (req.guestAuth === true || req.headers['x-schema-readable'] !== 'true') {
+                return res.status(403).send({ error: 'Flushing the whole cache requires an org admin.' });
+            }
+            const flushed = await flushTenantQueryCache(tenantId);
+            console.log(`${LOG_QUERY_CACHE} tenant flush by admin — ${flushed} entries (tenant ${tenantId})`);
+            return res.send({ flushed });
+        }
+        if (typeof question !== 'string' || !question.trim()) {
+            return res.status(400).send({ error: "Provide 'question' (string) or scope: 'all'." });
+        }
+        const key = buildQueryCacheKey(tenantId, req.headers['x-user-id'] || 'trial-user', question);
+        const deleted = await deleteCachedQueryResponse(key);
+        console.log(`${LOG_QUERY_CACHE} invalidated — key …${shortCacheKey(key)} (deleted=${deleted})`);
+        return res.send({ deleted });
+    } catch (err) {
+        console.error(`${LOG_QUERY_CACHE} invalidation failed:`, err.message);
+        return res.status(503).send({ error: 'Cache store unavailable — nothing was invalidated.' });
+    }
+});
+
+/**
  * Non-streaming Orchestration Endpoint
  * Used by the Dashboard for backward compatibility.
  */
@@ -3080,13 +3275,11 @@ app.post('/query', authMiddleware, async (req, res) => {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
 
         // Cache lookup — keyed per tenant AND user so permission-scoped responses are not shared.
-        const cacheKey = crypto.createHash('sha256')
-            .update(`${tenantId}:${userId}:${question.toLowerCase().trim()}`)
-            .digest('hex');
+        const cacheKey = buildQueryCacheKey(tenantId, userId, question);
         if (!forceRefresh) {
-            const cached = semanticCache.get(cacheKey);
+            const cached = await getCachedQueryResponse(cacheKey);
             if (cached) {
-                console.log(`[QUERY] Cache hit — key ${cacheKey.slice(0, 8)}…`);
+                console.log(`${LOG_QUERY_CACHE} hit — key …${shortCacheKey(cacheKey)}`);
                 return res.send(cached);
             }
         }
@@ -3142,10 +3335,12 @@ app.post('/query', authMiddleware, async (req, res) => {
         const MAX_LOOPS = 5;
 
         // Set when any tool call in this turn fails/times out (see the catch around
-        // callMcpTool below). A tool failure still lets the LLM produce a natural-language
-        // apology as finalAnswer — that text is non-empty, so without this flag it would be
-        // cached identically to a real grounded answer and replayed to the same question for
-        // up to semanticCache's 24h TTL even after the underlying failure (e.g. Neo4j Aura
+        // callMcpTool below) OR returns an in-band {"error": ...} result (isToolErrorResult —
+        // added 2026-09-29, the more common failure shape; see AP-22). A tool failure still
+        // lets the LLM produce a natural-language apology as finalAnswer — that text is
+        // non-empty, so without this flag it would be cached identically to a real grounded
+        // answer and replayed to the same question for up to the query cache's TTL
+        // (QUERY_CACHE_TTL_SECONDS) even after the underlying failure (e.g. Neo4j Aura
         // paused) recovers. Found live 2026-09-25: a Neo4j-pause-induced timeout answer kept
         // being served long after Neo4j resumed, until the gateway process was restarted to
         // clear the in-memory cache. Guards the cache write below instead of pattern-matching
@@ -3255,6 +3450,12 @@ app.post('/query', authMiddleware, async (req, res) => {
                         // Accumulate graph data from every tool that returns nodes/links
                         try {
                             const parsed = JSON.parse(toolContent);
+                            // In-band tool failure ({"error": ...} returned, not thrown) — must
+                            // block the cache write exactly like a thrown failure. See isToolErrorResult().
+                            if (isToolErrorResult(parsed)) {
+                                console.error(`[GATEWAY] Tool returned error — ${toolName}: ${parsed.error}`);
+                                hadToolFailure = true;
+                            }
 
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
                             // AP-3: manifest-driven, not exclusion lists. cross_domain passes all through.
@@ -3392,11 +3593,17 @@ app.post('/query', authMiddleware, async (req, res) => {
                         const backboneText = backboneMcp?.result?.content?.[0]?.text;
                         if (backboneText) {
                             const backboneParsed = JSON.parse(backboneText);
+                            if (isToolErrorResult(backboneParsed)) {
+                                console.warn('[QUERY] Career backbone auto-inject returned error:', backboneParsed.error);
+                                hadToolFailure = true;
+                            }
                             mergeGraphData(backboneParsed);
                             console.log('[QUERY] Auto-injected career backbone nodes:', backboneParsed.nodes?.length);
                         }
                     } catch (e) {
+                        // Non-fatal for the response, but the graph is incomplete — don't cache it.
                         console.warn('[QUERY] Career backbone auto-inject failed (non-fatal):', e.message);
+                        hadToolFailure = true;
                     }
                 }
                 // Targeted career graph curation.
@@ -3666,17 +3873,15 @@ app.post('/query', authMiddleware, async (req, res) => {
                     is_targeted_career: isTargetedCareer,
                     access_scope: accessScope
                 };
-                // Cache the response for repeated identical questions (per-tenant, 24h TTL).
-                // Skip caching when any tool call in this turn failed (hadToolFailure) — the
-                // LLM's apology text is a non-empty auditedAnswer like any real answer, so
-                // without this guard a transient failure (e.g. Neo4j Aura paused) gets replayed
-                // verbatim to the same question for up to 24h after the underlying system
-                // recovers. See hadToolFailure's declaration above for the incident this fixes.
-                if (auditedAnswer && !hadToolFailure) {
-                    semanticCache.set(cacheKey, responsePayload);
-                    console.log(`[QUERY] Response cached — key ${cacheKey.slice(0, 8)}…`);
-                } else if (hadToolFailure) {
-                    console.log(`[QUERY] Response NOT cached — a tool call failed this turn (key ${cacheKey.slice(0, 8)}…)`);
+                // Cache the response for repeated identical questions (per tenant+user,
+                // QUERY_CACHE_TTL_SECONDS). Only a confirmed, grounded success is cached — see
+                // isCacheableResponse(). A tool failure (thrown OR in-band) or an empty graph
+                // means the answer may be an artifact of a transient outage (Neo4j paused,
+                // OpenAI 429) and must be recomputed next time, not replayed for the TTL.
+                if (isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph })) {
+                    await setCachedQueryResponse(cacheKey, responsePayload);
+                } else {
+                    console.log(`${LOG_QUERY_CACHE} NOT stored — toolFailure=${hadToolFailure} hasGraph=${hasGraph} (key …${shortCacheKey(cacheKey)})`);
                 }
                 // Best-effort conversation history persistence — never blocks the response.
                 persistConversationTurn({

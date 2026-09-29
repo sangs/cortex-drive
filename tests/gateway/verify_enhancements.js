@@ -8,7 +8,7 @@ async function testQuery(question, history = []) {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'x-api-key': 'cortex_trial_key_2024'
+            'x-api-key': process.env.PUBLIC_TRIAL_API_KEY
         },
         body: JSON.stringify({ question, history })
     });

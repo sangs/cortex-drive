@@ -1,9 +1,10 @@
+import os
 import requests
 import json
 
 # Configuration
 GATEWAY_URL = "http://localhost:3000/query"
-API_KEY = "cortex_trial_key_2024"
+API_KEY = os.environ["PUBLIC_TRIAL_API_KEY"]  # no default — see trial-key rollout doc
 
 def test_reasoning_fixes():
     print("=== Starting Reasoning Fix Verification ===")

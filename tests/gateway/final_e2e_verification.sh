@@ -4,7 +4,7 @@
 # Tests: Multi-turn, Graph Data Presence, Dynamic Legend Logic compatibility
 
 GATEWAY_URL="http://localhost:3000/query"
-TRIAL_KEY="cortex_trial_key_2024"
+TRIAL_KEY="${PUBLIC_TRIAL_API_KEY:?set PUBLIC_TRIAL_API_KEY — see documents/security/trial-key-and-query-cache-redis-rollout-2026-09-29.md}"
 TENANT_ID="final_e2e_test_user"
 
 # Function to safely parse JSON via python

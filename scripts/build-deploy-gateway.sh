@@ -143,6 +143,27 @@ else
     echo "✓ No env var drift — every live plain env var is accounted for."
 fi
 
+# --- Optional secrets -------------------------------------------------------
+# --set-secrets REPLACES the full secret set (same as --set-env-vars), and deploying a mapping
+# to a secret that doesn't exist fails the deploy. So optional secrets are attached only if they
+# exist in Secret Manager. Runbook:
+# documents/security/trial-key-and-query-cache-redis-rollout-2026-09-29.md
+OPTIONAL_SECRETS=""
+if gcloud secrets describe QUERY_CACHE_REDIS_URL --project "${PROJECT_ID}" >/dev/null 2>&1; then
+    OPTIONAL_SECRETS+=",QUERY_CACHE_REDIS_URL=QUERY_CACHE_REDIS_URL:latest"
+    echo "✓ QUERY_CACHE_REDIS_URL secret found — /query cache will use its dedicated Redis"
+else
+    echo "  QUERY_CACHE_REDIS_URL secret not found — /query cache shares REDIS_URL"
+fi
+# Trial API key access is deliberately NOT wired here (no use case as of 2026-09-29; the
+# gateway rejects x-api-key unless PUBLIC_TRIAL_API_KEY/USER_ID/TENANT_ID are all set).
+# Refuse to deploy if someone set any of them on the live service out-of-band.
+if echo "$CURRENT_ENV_JSON" | grep -q '"PUBLIC_TRIAL_'; then
+    echo "❌ ABORTING: a PUBLIC_TRIAL_* variable is set on the live cortex-gateway service."
+    echo "   Trial key access is meant to be off in production — see the runbook above."
+    exit 1
+fi
+
 gcloud run deploy cortex-gateway \
     --image "${REGISTRY}/cortex-gateway:latest" \
     --region "${REGION}" \
@@ -165,7 +186,7 @@ REDIS_URL=REDIS_URL:latest,\
 PERMIFY_API_URL=PERMIFY_API_URL:latest,\
 DB_PASSWORD=CORTEX_APP_DB_PASSWORD:latest,\
 CLERK_WEBHOOK_SECRET=CLERK_WEBHOOK_SECRET:latest,\
-RESEND_API_KEY=RESEND_API_KEY:latest"
+RESEND_API_KEY=RESEND_API_KEY:latest${OPTIONAL_SECRETS}"
 
 echo ""
 echo "✓ cortex-gateway deployed"

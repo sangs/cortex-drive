@@ -2,7 +2,7 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 
 async function testMultiturn() {
     const gatewayUrl = 'http://localhost:3000/query';
-    const trialKey = 'cortex_trial_key_2024';
+    const trialKey = process.env.PUBLIC_TRIAL_API_KEY;
     const tenantId = 'trial_user_multiturn_test';
 
     console.log('--- TURN 1: Initial Discovery ---');
