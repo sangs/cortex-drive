@@ -38,7 +38,8 @@ def test_standardized_type_resolution():
     label_priority = BACKBONE_LANDMARKS + [l for l in PROJECT_GRAPH_NODES + CORTEX_DRIVE_NODES if l not in BACKBONE_LANDMARKS]
     
     mock_labels = ["Person", "Role"]
-    matches = [l for l in mock_labels if l in label_priority]
+    # Walk the priority list, not the node's own label order — the highest-priority label wins.
+    matches = [l for l in label_priority if l in mock_labels]
     resolved_type = matches[0] if matches else mock_labels[0]
 
     print(f"  -> Resolved Type: {resolved_type}")
