@@ -27,7 +27,8 @@ import {
     Square,
     X,
     RefreshCw,
-    Share2
+    Share2,
+    Globe
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -38,6 +39,7 @@ const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { 
 const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), { ssr: false });
 const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
 const ConversationHistoryModal = dynamic(() => import("@/components/ConversationHistoryModal"), { ssr: false });
+const AddSourceModal = dynamic(() => import("@/components/AddSourceModal"), { ssr: false });
 
 // System Health panel polling — see documents/architecture/neo4j-status-indicator-design-2026-08-27.md
 const SYSTEM_STATUS_POLL_INTERVAL_MS = 30000;
@@ -109,6 +111,7 @@ export default function DashboardPage() {
     const [isActivating, setIsActivating] = useState(true);
     const [conversationId, setConversationId] = useState<string>('');
     const [historyModalOpen, setHistoryModalOpen] = useState(false);
+    const [addSourceModalOpen, setAddSourceModalOpen] = useState(false);
     const [systemStatus, setSystemStatus] = useState<{ mcp: string, neo4j: string }>({ mcp: 'unknown', neo4j: 'unknown' });
 
     // Restore dashboard state from sessionStorage on mount (survives settings navigation).
@@ -759,6 +762,7 @@ export default function DashboardPage() {
                             technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                             links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                             guests: payload.guests || [],
+                            image_urls: payload.image_urls || [],
                             // Inferred structural context (2026-08-03) — complementary to `text` above,
                             // not a replacement. Rendered as a separate labeled block in BentoDetailPanel.
                             ...(payload.context_summary ? {
@@ -1089,6 +1093,13 @@ export default function DashboardPage() {
                          >
                             <History className="w-4 h-4" />
                             Conversation History
+                        </button>
+                        <button
+                            onClick={() => setAddSourceModalOpen(true)}
+                            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white border border-slate-200 text-slate-900 shadow-sm hover:border-indigo-600 hover:text-indigo-600 transition-all font-bold group"
+                         >
+                            <Globe className="w-4 h-4" />
+                            Add Source
                         </button>
                     </div>
 
@@ -1437,6 +1448,11 @@ export default function DashboardPage() {
                                 open={historyModalOpen}
                                 onClose={() => setHistoryModalOpen(false)}
                                 onOpenConversation={openHistoricalConversation}
+                            />
+
+                            <AddSourceModal
+                                open={addSourceModalOpen}
+                                onClose={() => setAddSourceModalOpen(false)}
                             />
                         </div>
 

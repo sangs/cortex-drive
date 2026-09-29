@@ -427,6 +427,74 @@ async def view_source_live(
         expert.close()
 
 @mcp.tool()
+async def register_website_source(
+    url: str = Field(description="The website URL to fetch, extract, and register as a new queryable WebsiteSource.")
+) -> str:
+    """
+    Fetches a website URL, extracts its content via LLM, and registers it as a
+    WebsiteSource node in the graph — the user-facing counterpart to the standalone
+    scripts/ingest_web.py script. Not exposed to the LLM's chat tool-calling loop
+    (omitted from the gateway's mcpToolsDefinitions) — only reachable via a dedicated UI
+    action, since letting the LLM decide to fetch-and-ingest arbitrary URLs from chat text
+    would be a real cost/safety problem. Runs the actual fetch/extraction/write off the
+    event loop (asyncio.to_thread) since it's slow — network fetch + LLM extraction +
+    several Neo4j writes — mirroring the existing _check_neo4j_connectivity precedent for
+    exactly this class of problem, so one slow ingestion doesn't stall concurrent requests
+    on this server.
+    """
+    from ingestion.adapters.web_url import WebUrlAdapter, validate_public_url
+    from ingestion_engine import IngestionEngine
+
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
+    if not user_id:
+        return json.dumps({"error": "No owner_id available for this request."})
+
+    try:
+        validate_public_url(url)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    neo4j_uri = os.environ.get("NEO4J_URI")
+    neo4j_user = os.environ.get("NEO4J_USERNAME")
+    neo4j_password = os.environ.get("NEO4J_PASSWORD")
+    if not neo4j_uri or not neo4j_user or not neo4j_password:
+        return json.dumps({"error": "Server misconfiguration: missing Neo4j credentials."})
+
+    def _ingest() -> dict:
+        adapter = WebUrlAdapter(url, neo4j_uri, neo4j_user, neo4j_password, tenant_id, user_id)
+        unprocessed = adapter.get_unprocessed_items()
+        if not unprocessed:
+            return {"skipped": True, "message": "Content unchanged since last ingestion — already registered."}
+        engine = IngestionEngine(tenant_id=tenant_id)
+        try:
+            node_id = adapter.process_item(url, engine)
+        finally:
+            engine.close()
+        return {"node_id": node_id}
+
+    try:
+        result = await asyncio.to_thread(_ingest)
+    except Exception as e:
+        print(f"Error in register_website_source: {e}")
+        return json.dumps({"error": str(e)})
+
+    if result.get("node_id"):
+        allowed_ids = await _get_current_allowed_ids()
+        expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
+        try:
+            details = json.loads(expert.get_node_details(node_id=result["node_id"]))
+            if details and not details[0].get("error"):
+                result["name"] = details[0].get("properties", {}).get("name")
+                result["description"] = details[0].get("properties", {}).get("description")
+        except Exception as e:
+            print(f"register_website_source: node_id enrichment lookup failed (non-fatal): {e}")
+        finally:
+            expert.close()
+
+    return json.dumps(result)
+
+@mcp.tool()
 async def search_enterprise_graph(
     keyword: str = Field(description="The search term to find across the graph (e.g., 'startup', 'BAML', 'Iceberg', 'Kafka')."),
     domain_intent: str = Field("all", description="The domain sandbox to search within. Allowed values: 'professional' (Resume), 'podcast' (Episodes/Chunks), 'federated' (External Silos), or 'all'."),

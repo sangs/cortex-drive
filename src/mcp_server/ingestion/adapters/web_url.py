@@ -1,8 +1,10 @@
 import hashlib
+import ipaddress
 import os
+import socket
 import sys
 from typing import List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import trafilatura
 from bs4 import BeautifulSoup
@@ -16,6 +18,28 @@ from ingestion_engine import IngestionEngine
 # Cap on captured <img> URLs per fetch — A2 is a cheap, additive capture, not a
 # canonical image inventory; keeps nav/footer icon noise from growing unbounded.
 MAX_CAPTURED_IMAGE_URLS = 10
+
+
+def validate_public_url(url: str) -> None:
+    """Raises ValueError if url isn't safe to fetch server-side. SSRF guard for
+    register_website_source, which — unlike view_source_live's already-registered check —
+    must accept a URL not yet in the graph: rejects non-http(s) schemes and any hostname
+    that resolves to a private/loopback/link-local/reserved address (covers the cloud
+    metadata endpoint, 169.254.169.254, among others)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: '{parsed.scheme or url}'. Only http/https are allowed.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname.")
+    try:
+        addrs = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Could not resolve hostname: {hostname}") from e
+    for _family, _type, _proto, _canonname, sockaddr in addrs:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError(f"URL resolves to a non-public address ({ip}) — not allowed.")
 
 
 def fetch_and_extract(url: str) -> tuple[str, str, List[str]]:
@@ -114,14 +138,15 @@ class WebUrlAdapter(BaseAdapter):
             return [self.url]
         return []
 
-    def process_item(self, item: str, engine: IngestionEngine):
+    def process_item(self, item: str, engine: IngestionEngine) -> str | None:
         """Extracts and writes a WebsiteSource + SourceSnapshot for the fetched URL.
         Reuses self._last_fetch_content populated by the has_changed() call in
-        get_unprocessed_items() — no redundant fetch in the common path."""
+        get_unprocessed_items() — no redundant fetch in the common path. Returns the
+        WebsiteSource's node_id."""
         content = self._last_fetch_content or self.fetch(item)
         content_hash = self._last_fetch_hash
         print(f"WebUrlAdapter passing '{item}' to IngestionEngine (hash={content_hash[:12]}...)")
-        engine.process_web_source(
+        return engine.process_web_source(
             url=item,
             content=content,
             content_hash=content_hash,
