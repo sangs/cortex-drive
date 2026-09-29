@@ -19,6 +19,14 @@ const DOMAIN_ALLOWED_TYPES = {
 // "career") off a tool call's actual domain_intent argument (Python-side, "professional").
 const DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY = { professional: 'career', podcast: 'podcast', website: 'website' };
 
+// The reverse direction (AP-25): a confident single-domain classification → the
+// search_enterprise_graph domain_intent that enforces it at the Cypher level. cross_domain is
+// deliberately absent — cross-domain turns are meant to search more than one domain.
+const DOMAIN_SIGNAL_TO_SEARCH_INTENT = { podcast: 'podcast', career: 'professional', website: 'website' };
+
+// Invariant 11 wording for a turn where data tools ran but none returned anything (AP-25).
+const NO_DATA_FOUND_ANSWER = (question) => `No data found in Cortex-Drive for "${String(question).trim()}".`;
+
 // Tools that return large graph payloads — LLM only needs a compact summary.
 // Full graph data is already accumulated in accumulatedGraph before truncation.
 const GRAPH_HEAVY_TOOLS = new Set(['search_enterprise_graph', 'get_cluster_context', 'connect_knowledge_on_demand']);
@@ -481,6 +489,50 @@ function isToolErrorResult(parsed) {
  */
 function isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph }) {
     return Boolean(auditedAnswer) && !hadToolFailure && hasGraph;
+}
+
+/**
+ * Returns the domain_intent to enforce on a search_enterprise_graph call, or null to leave the
+ * LLM's choice alone (AP-25). Only a confident single-domain classification with no bridge
+ * context, and only when the LLM passed "all" or nothing.
+ */
+function enforcedSearchIntent(toolName, toolArgs, { domainSignal, domainConfident, bridgeContext }) {
+    if (toolName !== 'search_enterprise_graph' || !domainConfident || bridgeContext) return null;
+    const intent = DOMAIN_SIGNAL_TO_SEARCH_INTENT[domainSignal];
+    if (!intent) return null;
+    return (!toolArgs.domain_intent || toolArgs.domain_intent === 'all') ? intent : null;
+}
+
+/** True when a parsed tool payload carries any text data (numbers/booleans alone are metadata, e.g. counts). */
+function hasTextualData(value) {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.some(hasTextualData);
+    if (typeof value === 'object') return Object.values(value).some(hasTextualData);
+    if (typeof value === 'string') return value.trim().length > 0;
+    return false;
+}
+
+/**
+ * Grounding evidence check for one tool result, judged on the content actually sent to the LLM
+ * (i.e. after the per-call domain guard). Graph-heavy tools count only if nodes survived the
+ * guard or virtual bridges exist; other tools count if the result is non-error and non-empty.
+ * Deliberately generous for text tools: a false "has evidence" just leaves the LLM's answer in
+ * place (today's behaviour), while a false "no evidence" would wrongly blank a real answer. AP-25.
+ */
+function toolResultHasEvidence(toolName, toolContent) {
+    let parsed;
+    try {
+        parsed = JSON.parse(toolContent);
+    } catch {
+        const text = String(toolContent || '').trim();
+        return text.length > 0 && !/^error\b/i.test(text);
+    }
+    if (isToolErrorResult(parsed)) return false;
+    if (GRAPH_HEAVY_TOOLS.has(toolName) && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return (Array.isArray(parsed.nodes) && parsed.nodes.length > 0)
+            || (Array.isArray(parsed.virtual_links) && parsed.virtual_links.length > 0);
+    }
+    return hasTextualData(parsed);
 }
 
 // Log prefix for all permission cache operations (Redis hit/miss/error)
@@ -3347,6 +3399,12 @@ app.post('/query', authMiddleware, async (req, res) => {
         // the answer text, which would be fragile against prompt wording changes.
         let hadToolFailure = false;
 
+        // Empty-evidence backstop (AP-25, Invariant 11): how many data-tool calls ran this turn,
+        // and how many returned evidence the LLM could ground an answer in. If calls > 0 and
+        // evidence === 0, the LLM's answer can only have come from training data.
+        let dataToolCalls = 0;
+        let groundingEvidence = 0;
+
         // Accumulate graph data from ALL tool calls so every tool's nodes/links reach the UI.
         // Previously only the last tool's result was forwarded (Gap #1 fix).
         const accumulatedGraph = { nodes: [], links: [], virtual_links: [] };
@@ -3412,6 +3470,19 @@ app.post('/query', authMiddleware, async (req, res) => {
                     if (domainSignal === 'career' && toolName === 'search_enterprise_graph' && toolArgs.wants_visual_map) {
                         toolArgs.wants_visual_map = false;
                         console.log('[QUERY] Career override: wants_visual_map→false for Q2 content fetch');
+                    }
+
+                    // Enforce a confident single-domain classification at the Cypher level (AP-25,
+                    // AP-20 pattern). The domain instruction only *asks* the LLM to pass the matching
+                    // domain_intent; found live 2026-09-29, it passed "all" for a website-classified
+                    // query, and the per-call domain guard then stripped every node — the guard acting
+                    // as primary filter, the reverse of Invariant 7. Only "all"/missing is rewritten:
+                    // an explicit LLM domain choice, low-confidence universal discovery (Flow 4) and
+                    // cross-domain/bridge turns are left alone.
+                    const enforcedIntent = enforcedSearchIntent(toolName, toolArgs, { domainSignal, domainConfident, bridgeContext });
+                    if (enforcedIntent) {
+                        console.log(`[QUERY] Domain-intent override: ${toolArgs.domain_intent || '(none)'}→${enforcedIntent} (confident domain_signal=${domainSignal})`);
+                        toolArgs.domain_intent = enforcedIntent;
                     }
 
                     // Bridge/cross-domain entity queries: cap search_enterprise_graph's anchor-
@@ -3537,6 +3608,10 @@ app.post('/query', authMiddleware, async (req, res) => {
                             }
                         } catch (e) { /* non-graph tool result, skip */ }
 
+                        // toolContent here is post-domain-guard — exactly what the LLM receives.
+                        dataToolCalls++;
+                        if (toolResultHasEvidence(toolName, toolContent)) groundingEvidence++;
+
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -3547,6 +3622,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     } catch (err) {
                         console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         hadToolFailure = true;
+                        dataToolCalls++;
                         messages.push({
                             role: "tool",
                             tool_call_id: toolCall.id,
@@ -3763,6 +3839,14 @@ app.post('/query', authMiddleware, async (req, res) => {
                             if (fallback) finalAnswer = fallback;
                         }
                     }
+                }
+                // Empty-evidence backstop (AP-25, Invariant 11 layer 2): data tools ran but none
+                // returned anything the LLM could ground in, so any substantive answer came from
+                // training data. Deterministic — no prompt instruction can override it. Turns that
+                // called no tool at all (greetings, follow-ups answered from history) are untouched.
+                if (dataToolCalls > 0 && groundingEvidence === 0) {
+                    console.warn(`[GROUNDING] ${dataToolCalls} data tool call(s), 0 with evidence — answer replaced with "No data found"`);
+                    finalAnswer = NO_DATA_FOUND_ANSWER(question);
                 }
                 // Audit response for hallucinated URLs before sending.
                 let auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
