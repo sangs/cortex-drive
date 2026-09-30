@@ -6,19 +6,26 @@ pipeline, and touches no service (no Neo4j, gateway or MCP). Design and decision
 documents/architecture/document-parser-eval-design-2026-09-29.md (local-only docs; the eval set
 lives under documents/eval/, which is git-ignored).
 
-This first version runs only the free, local, deterministic candidates (PyMuPDF, Docling). Paid
-candidates (Document AI, LlamaParse, Claude/Gemini as L2 describers) get their own adapters in a
-separate, separately-approved change. Supersedes the method of
-scripts/compare_document_ingestion_vendors.py (open chat prompt, graded by eye).
+Candidates:
+  local, free    : pymupdf, docling
+  paid, L1       : documentai (Layout Parser, deterministic), llamaparse (parse_page_without_llm)
+  paid, L2 (VLM) : claude, gemini. Same prompt and JSON schema, one page per call, 3 runs each.
+Paid calls go through CostMeter: every call is priced from actual usage, and a call is refused if
+spent + that vendor's worst-case per-call reserve would pass --budget-usd (default 15).
+Supersedes the method of scripts/compare_document_ingestion_vendors.py (open prompt, graded by eye).
 
 Usage:
-    .venv/bin/python scripts/eval_document_parsers.py                      # all local parsers
-    .venv/bin/python scripts/eval_document_parsers.py --parsers pymupdf
+    .venv/bin/python scripts/eval_document_parsers.py                               # local parsers
+    .venv/bin/python scripts/eval_document_parsers.py --parsers documentai llamaparse claude gemini
 """
 import argparse
+import base64
 import difflib
 import json
+import os
 import re
+import statistics
+import subprocess
 import time
 import unicodedata
 import zipfile
@@ -29,6 +36,7 @@ from pathlib import Path
 import pymupdf
 
 DEFAULT_EVAL_DIR = Path("documents/eval/parser-eval-2026-09-30")
+LOCAL_PARSERS = ["pymupdf", "docling"]
 SOURCE_SUBDIR = "source_docs"
 ANSWER_KEY_PATH = "answer_key/answer_key.json"
 RESULTS_SUBDIR = "results"
@@ -41,8 +49,8 @@ NOT_A_TABLE_TRAPS = {"chart_not_table", "cards_not_table", "diagram_not_table"}
 
 # An image smaller than this share of the page is treated as an icon/logo, not a figure.
 MIN_FIGURE_AREA_FRACTION = 0.02
-# Max chars of per-page parser text kept in the raw-output file (full text is used for scoring).
-RAW_TEXT_PREVIEW_CHARS = 1500
+# Sliding-window step for line_accuracy = expected-line length // this.
+LINE_WINDOW_STEP_DIVISOR = 4
 NUMBER_PATTERN = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # Expected table cells this long may match as a substring of a predicted cell (cells often hold
 # several bullets); shorter ones (e.g. a quantity "2") must match exactly, or "2" would match "$290.00".
@@ -55,6 +63,65 @@ SCORE_WEIGHTS = {"elements": 0.40, "table_cells": 0.30, "text": 0.20, "structure
 DOCLING_FIGURE_LABELS = {"picture", "chart"}
 DOCLING_HEADING_LABELS = {"title", "section_header"}
 DOCLING_CHECKBOX_LABELS = {"checkbox_selected": True, "checkbox_unselected": False}
+
+# --- Paid vendors. Prices checked 2026-09-30 (vendor price pages); USD. ------------------------
+DEFAULT_BUDGET_USD = 15.0
+RUNS_PER_PARSER = {"documentai": 2, "claude": 3, "gemini": 3}   # 2 = determinism check; 3 = VLM variance
+PRICE_PER_MTOK = {"claude": (4.00, 20.00), "gemini": (2.00, 12.00)}   # (input, output incl. thinking)
+PRICE_PER_PAGE = {"documentai": 0.010, "llamaparse": 0.0}            # llamaparse: within free monthly credits
+# Worst-case cost of ONE call, reserved before calling so the budget can't be overshot.
+CALL_RESERVE_USD = {"claude": 0.40, "gemini": 0.25, "documentai": 0.15, "llamaparse": 0.0}
+VLM_MAX_OUTPUT_TOKENS = 16000
+
+GCP_PROJECT = "cortex-drive-496915"
+DOCUMENTAI_LOCATION = "us"
+DOCUMENTAI_PROCESSOR = "projects/377406326936/locations/us/processors/4add215827cc526e"  # Layout Parser, created 2026-09-30
+DOCUMENTAI_HEADING_PREFIXES = ("heading", "title")
+LLAMAPARSE_MODE = "parse_page_without_llm"   # L1 rule: no generative step (chart->table fabrication, 2026-09-28)
+
+CLAUDE_MODEL = "claude-opus-5-5"
+CLAUDE_EFFORT = "medium"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
+GEMINI_LOCATION = "global"                   # the only region that served this model (2026-09-28)
+# Anthropic Workload Identity Federation (no static key), as verified 2026-09-28.
+ANTHROPIC_WIF = {
+    "impersonate": "cortex-mcp-worker@cortex-drive-496915.iam.gserviceaccount.com",
+    "federation_rule_id": "fdrl_01N1X4hshN918sM4c612aiys",
+    "organization_id": "dadbadf4-d114-46f7-aeda-7df9ffe82a40",
+    "service_account_id": "svac_01CZuaCMKodSs6C83o8R5MUX",
+    "workspace_id": "wrkspc_01BWWNZfUikYXfLwu3uCec43",
+}
+
+VLM_PROMPT = """You are a document parser. Extract the content of this single page as JSON matching the schema.
+Rules:
+- text: transcribe ALL visible text exactly as printed, in natural reading order (finish a column before the next). Do not correct spelling, grammar or numbering. Omit struck-through (crossed-out) text.
+- headings: the page's titles and section headings, exactly as printed.
+- tables: only real tables (a grid of rows and columns). Cards, bullet lists, flow diagrams and charts are NOT tables. Never convert a chart into a table.
+- figures: every chart, diagram or photo. Skip logos, small icons and decorative backgrounds. kind is chart, diagram, photo or other. title and visible_text: only words and numbers literally printed in the figure. Never estimate or infer values that are not printed. description: what the figure shows, in one or two sentences.
+- checkboxes: every checkbox or radio button with its label and whether it is checked.
+If something is not present, return an empty list."""
+
+VLM_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["text", "headings", "tables", "figures", "checkboxes"],
+    "properties": {
+        "text": {"type": "string"},
+        "headings": {"type": "array", "items": {"type": "string"}},
+        "tables": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["rows"],
+            "properties": {"rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}},
+        "figures": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["kind", "title", "visible_text", "description"],
+            "properties": {"kind": {"type": "string", "enum": ["chart", "diagram", "photo", "other"]},
+                           "title": {"type": "string"},
+                           "visible_text": {"type": "array", "items": {"type": "string"}},
+                           "description": {"type": "string"}}}},
+        "checkboxes": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["label", "checked"],
+            "properties": {"label": {"type": "string"}, "checked": {"type": "boolean"}}}},
+    },
+}
 
 
 @dataclass
@@ -157,7 +224,237 @@ class DoclingParser:
         return prov[0].bbox.area() >= MIN_FIGURE_AREA_FRACTION * page_area
 
 
-PARSERS = {"pymupdf": PyMuPDFParser, "docling": DoclingParser}
+# ---------------------------------------------------------------------------------------------
+# Paid vendors: cost guard + adapters
+# ---------------------------------------------------------------------------------------------
+
+class BudgetExceeded(Exception):
+    pass
+
+
+class CostMeter:
+    """Actual spend from reported usage. reserve() is called before every paid call and refuses it
+    if the vendor's worst-case cost for that call could push the total past the budget."""
+
+    def __init__(self, budget_usd: float):
+        self.budget = budget_usd
+        self.spent = 0.0
+        self.by_vendor = {}
+
+    def reserve(self, vendor: str):
+        if self.spent + CALL_RESERVE_USD[vendor] > self.budget:
+            raise BudgetExceeded(f"{vendor}: spent ${self.spent:.2f}; next call could exceed the ${self.budget:.2f} cap")
+
+    def add(self, vendor: str, usd: float):
+        self.spent += usd
+        self.by_vendor[vendor] = self.by_vendor.get(vendor, 0.0) + usd
+
+    def add_tokens(self, vendor: str, input_tokens: int, output_tokens: int):
+        price_in, price_out = PRICE_PER_MTOK[vendor]
+        self.add(vendor, (input_tokens * price_in + output_tokens * price_out) / 1_000_000)
+
+
+def single_page_pdfs(path: Path) -> list:
+    """Each page of a sample PDF as its own PDF (bytes): VLMs get one page per call."""
+    src = pymupdf.open(path)
+    out = []
+    for i in range(src.page_count):
+        one = pymupdf.open()
+        one.insert_pdf(src, from_page=i, to_page=i)
+        out.append(one.tobytes())
+    return out
+
+
+class DocumentAIParser:
+    name = "documentai"
+    formats = {"pdf"}
+
+    def __init__(self, meter: CostMeter):
+        from google.api_core.client_options import ClientOptions
+        from google.cloud import documentai_v1 as dai
+        self.dai, self.meter = dai, meter
+        self.client = dai.DocumentProcessorServiceClient(
+            client_options=ClientOptions(api_endpoint=f"{DOCUMENTAI_LOCATION}-documentai.googleapis.com"))
+
+    def parse(self, path: Path, fmt: str, pages: list) -> dict:
+        dai = self.dai
+        self.meter.reserve(self.name)
+        request = dai.ProcessRequest(
+            name=DOCUMENTAI_PROCESSOR,
+            raw_document=dai.RawDocument(content=path.read_bytes(), mime_type="application/pdf"),
+            process_options=dai.ProcessOptions(layout_config=dai.ProcessOptions.LayoutConfig(return_images=True)))
+        document = self.client.process_document(request=request).document
+        self.meter.add(self.name, PRICE_PER_PAGE[self.name] * len(pages))
+        out = {}
+
+        def page_of(block, inherited):
+            # A child's own page wins: section headings contain paragraphs that run onto later pages.
+            if block.page_span.page_start:
+                return pages[block.page_span.page_start - 1]
+            return inherited if inherited is not None else pages[0]
+
+        def walk(blocks, inherited=None):
+            for block in blocks:
+                page = page_of(block, inherited)
+                target = out.setdefault(page, PageOutput())
+                kind = block._pb.WhichOneof("block")
+                if kind == "text_block":
+                    tb = block.text_block
+                    target.text += "\n" + tb.text
+                    if tb.type_.startswith(DOCUMENTAI_HEADING_PREFIXES):
+                        target.headings.append(tb.text)
+                    walk(tb.blocks, page)
+                elif kind == "table_block":
+                    rows = list(block.table_block.header_rows) + list(block.table_block.body_rows)
+                    grid = [[" ".join(b.text_block.text for b in cell.blocks) for cell in row.cells] for row in rows]
+                    target.tables.append(grid)
+                    target.text += "\n" + "\n".join(" | ".join(r) for r in grid)
+                elif kind == "list_block":
+                    for entry in block.list_block.list_entries:
+                        walk(entry.blocks, page)
+                elif kind == "image_block":
+                    target.figures += 1
+        walk(document.document_layout.blocks)
+        return out
+
+
+class LlamaParseParser:
+    name = "llamaparse"
+    formats = {"pdf", "docx", "pptx"}
+
+    def __init__(self, meter: CostMeter):
+        from dotenv import load_dotenv
+        from llama_cloud_services import LlamaParse
+        load_dotenv(".env")
+        self.meter = meter
+        self.parser = LlamaParse(api_key=os.environ["LLAMA_CLOUD_API_KEY"], parse_mode=LLAMAPARSE_MODE,
+                                 extract_charts=False, verbose=False)
+
+    def parse(self, path: Path, fmt: str, pages: list) -> dict:
+        self.meter.reserve(self.name)
+        result = self.parser.parse(str(path))
+        out = {}
+        for page in result.pages:
+            key = WHOLE_DOC_KEY if fmt == "docx" else (pages[page.page - 1] if fmt == "pdf" else page.page)
+            target = out.setdefault(key, PageOutput())
+            page_area = (page.width or 0) * (page.height or 0)
+            for item in page.items or []:
+                if item.type == "table" and item.rows:
+                    grid = [[str(c) for c in row] for row in item.rows]
+                    target.tables.append(grid)
+                    target.text += "\n" + "\n".join(" | ".join(r) for r in grid)
+                    continue
+                value = getattr(item, "value", "") or ""
+                if item.type == "heading":
+                    target.headings.append(value)
+                target.text += "\n" + value
+            for image in page.images or []:
+                area = (getattr(image, "width", 0) or 0) * (getattr(image, "height", 0) or 0)
+                if not page_area or area >= MIN_FIGURE_AREA_FRACTION * page_area:
+                    target.figures += 1
+        self.meter.add(self.name, PRICE_PER_PAGE[self.name] * len(result.pages))
+        return out
+
+
+class VisionLLMParser:
+    """One page per call, identical prompt and JSON schema for every VLM. A refusal or unparseable
+    reply scores that page as empty; nothing falls back to another model."""
+    formats = {"pdf"}
+
+    def parse(self, path: Path, fmt: str, pages: list) -> dict:
+        out = {}
+        for original_page, pdf_bytes in zip(pages, single_page_pdfs(path)):
+            self.meter.reserve(self.name)
+            data = self.call(pdf_bytes)
+            out[original_page] = self.to_page_output(data)
+        return out
+
+    @staticmethod
+    def to_page_output(data: dict) -> PageOutput:
+        if not data:
+            return PageOutput()
+        figures = [f for f in data.get("figures", []) if f.get("kind") != "other"]
+        figure_text = "\n".join(
+            "\n".join([f.get("title", "")] + list(f.get("visible_text", [])) + [f.get("description", "")]) for f in figures)
+        return PageOutput(
+            text=(data.get("text", "") or "") + "\n" + figure_text,
+            tables=[t.get("rows", []) for t in data.get("tables", [])],
+            figures=len(figures),
+            headings=list(data.get("headings", [])),
+            checkboxes={c["label"]: bool(c["checked"]) for c in data.get("checkboxes", []) if "label" in c},
+        )
+
+
+class ClaudeParser(VisionLLMParser):
+    name = "claude"
+
+    def __init__(self, meter: CostMeter):
+        from anthropic import Anthropic, WorkloadIdentityCredentials
+        self.meter = meter
+        self.client = Anthropic(credentials=WorkloadIdentityCredentials(
+            identity_token_provider=self._identity_token,
+            federation_rule_id=ANTHROPIC_WIF["federation_rule_id"],
+            organization_id=ANTHROPIC_WIF["organization_id"],
+            service_account_id=ANTHROPIC_WIF["service_account_id"],
+            workspace_id=ANTHROPIC_WIF["workspace_id"],
+        ))
+
+    @staticmethod
+    def _identity_token() -> str:
+        return subprocess.run(
+            ["gcloud", "auth", "print-identity-token", f"--impersonate-service-account={ANTHROPIC_WIF['impersonate']}",
+             "--audiences=https://api.anthropic.com", "--include-email"],
+            capture_output=True, text=True, check=True).stdout.strip()
+
+    def call(self, pdf_bytes: bytes) -> dict:
+        message = self.client.messages.create(
+            model=CLAUDE_MODEL, max_tokens=VLM_MAX_OUTPUT_TOKENS,
+            output_config={"effort": CLAUDE_EFFORT, "format": {"type": "json_schema", "schema": VLM_SCHEMA}},
+            messages=[{"role": "user", "content": [
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                "data": base64.standard_b64encode(pdf_bytes).decode()}},
+                {"type": "text", "text": VLM_PROMPT}]}],
+        )
+        self.meter.add_tokens(self.name, message.usage.input_tokens, message.usage.output_tokens)
+        if message.stop_reason == "refusal":
+            return {}
+        text = "".join(b.text for b in message.content if b.type == "text")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+
+
+class GeminiParser(VisionLLMParser):
+    name = "gemini"
+
+    def __init__(self, meter: CostMeter):
+        from google import genai
+        from google.genai import types
+        self.meter, self.types = meter, types
+        self.client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GEMINI_LOCATION)
+
+    def call(self, pdf_bytes: bytes) -> dict:
+        types = self.types
+        response = self.client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), VLM_PROMPT],
+            config=types.GenerateContentConfig(response_mime_type="application/json",
+                                               response_json_schema=VLM_SCHEMA,
+                                               max_output_tokens=VLM_MAX_OUTPUT_TOKENS),
+        )
+        usage = response.usage_metadata
+        self.meter.add_tokens(self.name, usage.prompt_token_count or 0,
+                              (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0))
+        try:
+            return json.loads(response.text or "")
+        except json.JSONDecodeError:
+            return {}
+
+
+PARSERS = {"pymupdf": PyMuPDFParser, "docling": DoclingParser, "documentai": DocumentAIParser,
+           "llamaparse": LlamaParseParser, "claude": ClaudeParser, "gemini": GeminiParser}
+PAID_PARSERS = {"documentai", "llamaparse", "claude", "gemini"}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -168,17 +465,25 @@ def in_range(value: int, bounds) -> bool:
     return bounds is None or bounds[0] <= value <= bounds[1]
 
 
+def best_window_ratio(expected: str, haystack: str) -> float:
+    """Best similarity of `expected` against any same-length window of `haystack`, so the score
+    doesn't depend on how a parser broke lines (one VLM returns a whole page as a single line)."""
+    if not haystack:
+        return 0.0
+    size = len(expected)
+    if len(haystack) <= size:
+        return difflib.SequenceMatcher(None, expected, haystack).ratio()
+    step = max(1, size // LINE_WINDOW_STEP_DIVISOR)
+    return max(difflib.SequenceMatcher(None, expected, haystack[i:i + size]).ratio()
+               for i in range(0, len(haystack) - size + 1, step))
+
+
 def line_accuracy(expected_lines: list, text: str) -> float:
-    """Mean best-match similarity of each expected line against the output's lines (and pairs of
-    adjacent lines, since OCR often splits one written line in two)."""
-    lines = [normalize(l) for l in (text or "").splitlines() if normalize(l)]
-    candidates = lines + [f"{a} {b}" for a, b in zip(lines, lines[1:])]
+    """Mean best-window similarity of each expected line against the whole normalized output."""
     if not expected_lines:
         return None
-    if not candidates:
-        return 0.0
-    scores = [max(difflib.SequenceMatcher(None, normalize(e), c).ratio() for c in candidates)
-              for e in expected_lines]
+    haystack = normalize(text)
+    scores = [best_window_ratio(normalize(e), haystack) for e in expected_lines]
     return sum(scores) / len(scores)
 
 
@@ -315,55 +620,108 @@ def build_sample_pdf(source: Path, pages: list, work_dir: Path) -> Path:
     return out_path
 
 
-def run(eval_dir: Path, parser_names: list) -> dict:
+def run(eval_dir: Path, parser_names: list, budget_usd: float = DEFAULT_BUDGET_USD) -> dict:
     key = json.loads((eval_dir / ANSWER_KEY_PATH).read_text())["docs"]
     results_dir = eval_dir / RESULTS_SUBDIR
     results_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    summary = {"run": stamp, "parsers": {}}
+    meter = CostMeter(budget_usd)
+    summary = {"run": stamp, "budget_usd": budget_usd, "parsers": {}}
 
     for name in parser_names:
-        parser = PARSERS[name]()
-        raw, page_scores, timings = {}, {SCOPE_PHASE_B: [], SCOPE_PHASE_C: []}, {}
+        parser = PARSERS[name](meter) if name in PAID_PARSERS else PARSERS[name]()
+        runs = RUNS_PER_PARSER.get(name, 1)
+        per_run, raw_runs, stopped = [], [], None
+        for run_no in range(1, runs + 1):
+            raw, page_scores, timings = {}, {SCOPE_PHASE_B: [], SCOPE_PHASE_C: []}, {}
+            for filename, spec in key.items():
+                fmt, scope = spec["format"], spec["scope"]
+                source = eval_dir / SOURCE_SUBDIR / filename
+                expected_pages = {WHOLE_DOC_KEY: spec["whole_doc"]} if "whole_doc" in spec else \
+                    {int(p): e for p, e in spec["pages"].items()}
+                if fmt not in parser.formats:
+                    raw[filename] = {"unsupported": True}
+                    for page_key, expect in expected_pages.items():
+                        page_scores[scope].append({**unsupported_score(expect), "doc": filename, "page": page_key, "unsupported": True})
+                    continue
+                pages = sorted(p for p in expected_pages if p != WHOLE_DOC_KEY)
+                parse_input = build_sample_pdf(source, pages, eval_dir / WORK_SUBDIR) if fmt == "pdf" else source
+                started = time.time()
+                try:
+                    outputs = parser.parse(parse_input, fmt, pages)
+                    error = None
+                except BudgetExceeded as e:
+                    stopped = str(e)
+                    break
+                except Exception as e:                      # a crash scores 0 for that document, never aborts the run
+                    outputs, error = {}, f"{type(e).__name__}: {e}"
+                timings[filename] = round(time.time() - started, 2)
+                raw[filename] = {"error": error, "seconds": timings[filename], "pages": {}}
+                for page_key, expect in expected_pages.items():
+                    got = outputs.get(page_key, PageOutput())
+                    s = score_page(expect, got, reference_numbers_for(fmt, source, expect))
+                    page_scores[scope].append({**s, "doc": filename, "page": page_key})
+                    raw[filename]["pages"][str(page_key)] = asdict(got)   # full text: re-scoring never needs a paid re-run
+                print(f"[{name} run {run_no}] {filename}: {timings[filename]}s  spent ${meter.spent:.2f}"
+                      f"{' ERROR ' + error if error else ''}")
+            if stopped:
+                print(f"[{name}] STOPPED: {stopped}")
+                break                                       # an incomplete run is discarded, never scored
+            raw_runs.append(raw)
+            per_run.append({"phase_b": weighted(page_scores[SCOPE_PHASE_B]),
+                            "phase_c_preview": weighted(page_scores[SCOPE_PHASE_C]),
+                            "seconds_total": round(sum(timings.values()), 1), "pages": page_scores})
+
+        (results_dir / f"{stamp}_{name}_raw.json").write_text(json.dumps(raw_runs, indent=1, default=str))
+        if not per_run:
+            summary["parsers"][name] = {"stopped": stopped, "runs_completed": 0}
+            continue
+        overall = [r["phase_b"]["overall"] for r in per_run if r["phase_b"]["overall"] is not None]
+        summary["parsers"][name] = {
+            **per_run[0],                                   # run 1 in full; others summarized below
+            "runs_completed": len(per_run), "stopped": stopped,
+            "phase_b_overall_by_run": overall,
+            "phase_b_overall_stdev": round(statistics.pstdev(overall), 4) if len(overall) > 1 else None,
+            "cost_usd": round(meter.by_vendor.get(name, 0.0), 4),
+            "other_runs": [{k: r[k] for k in ("phase_b", "phase_c_preview", "seconds_total")} for r in per_run[1:]],
+        }
+
+    summary["cost_usd_total"] = round(meter.spent, 4)
+    (results_dir / f"{stamp}_scores.json").write_text(json.dumps(summary, indent=1, default=str))
+    return summary
+
+
+# Raw files written before full text was kept (2026-09-30 17:49 and earlier) cut page text here.
+LEGACY_RAW_TEXT_CHARS = 1500
+
+
+def rescore(eval_dir: Path, raw_path: Path) -> dict:
+    """Re-score a saved <stamp>_<parser>_raw.json with the current scoring code, with no vendor
+    calls. Pages whose saved text was cut at LEGACY_RAW_TEXT_CHARS are flagged, because their
+    text metrics may be understated."""
+    key = json.loads((eval_dir / ANSWER_KEY_PATH).read_text())["docs"]
+    runs = json.loads(raw_path.read_text())
+    per_run = []
+    for raw in runs:
+        page_scores = {SCOPE_PHASE_B: [], SCOPE_PHASE_C: []}
         for filename, spec in key.items():
             fmt, scope = spec["format"], spec["scope"]
             source = eval_dir / SOURCE_SUBDIR / filename
             expected_pages = {WHOLE_DOC_KEY: spec["whole_doc"]} if "whole_doc" in spec else \
                 {int(p): e for p, e in spec["pages"].items()}
-            if fmt not in parser.formats:
-                raw[filename] = {"unsupported": True}
-                for page_key, expect in expected_pages.items():
-                    page_scores[scope].append({**unsupported_score(expect), "doc": filename, "page": page_key, "unsupported": True})
-                continue
-            pages = sorted(p for p in expected_pages if p != WHOLE_DOC_KEY)
-            parse_input = build_sample_pdf(source, pages, eval_dir / WORK_SUBDIR) if fmt == "pdf" else source
-            started = time.time()
-            try:
-                outputs = parser.parse(parse_input, fmt, pages)
-                error = None
-            except Exception as e:                      # a crash scores 0 for that document, never aborts the run
-                outputs, error = {}, f"{type(e).__name__}: {e}"
-            timings[filename] = round(time.time() - started, 2)
-            raw[filename] = {"error": error, "seconds": timings[filename], "pages": {}}
+            doc_raw = raw.get(filename, {})
             for page_key, expect in expected_pages.items():
-                got = outputs.get(page_key, PageOutput())
+                if doc_raw.get("unsupported"):
+                    page_scores[scope].append({**unsupported_score(expect), "doc": filename, "page": page_key, "unsupported": True})
+                    continue
+                saved = doc_raw.get("pages", {}).get(str(page_key))
+                got = PageOutput(**saved) if saved else PageOutput()
                 s = score_page(expect, got, reference_numbers_for(fmt, source, expect))
+                s["text_possibly_truncated"] = len(got.text) == LEGACY_RAW_TEXT_CHARS
                 page_scores[scope].append({**s, "doc": filename, "page": page_key})
-                preview = asdict(got)
-                preview["text"] = got.text[:RAW_TEXT_PREVIEW_CHARS]
-                raw[filename]["pages"][str(page_key)] = preview
-            print(f"[{name}] {filename}: {timings[filename]}s{' ERROR ' + error if error else ''}")
-
-        (results_dir / f"{stamp}_{name}_raw.json").write_text(json.dumps(raw, indent=1, default=str))
-        summary["parsers"][name] = {
-            "phase_b": weighted(page_scores[SCOPE_PHASE_B]),
-            "phase_c_preview": weighted(page_scores[SCOPE_PHASE_C]),
-            "seconds_total": round(sum(timings.values()), 1),
-            "pages": page_scores,
-        }
-
-    (results_dir / f"{stamp}_scores.json").write_text(json.dumps(summary, indent=1, default=str))
-    return summary
+        per_run.append({"phase_b": weighted(page_scores[SCOPE_PHASE_B]),
+                        "phase_c_preview": weighted(page_scores[SCOPE_PHASE_C]), "pages": page_scores})
+    return {"rescored_from": str(raw_path), "runs": per_run}
 
 
 def print_summary(summary: dict) -> None:
@@ -371,16 +729,32 @@ def print_summary(summary: dict) -> None:
         return "—" if v is None else (f"{v:.2f}" if isinstance(v, float) else str(v))
     print("\nparser    scope     overall elements tbl_cells text  struct traps  unverified#  secs")
     for name, r in summary["parsers"].items():
+        if not r.get("runs_completed"):
+            print(f"{name:<9} no complete run ({r.get('stopped')})")
+            continue
         for scope in ("phase_b", "phase_c_preview"):
             w = r[scope]
             print(f"{name:<9} {scope:<9} {fmt(w['overall']):>7} {fmt(w['elements']):>8} {fmt(w['table_cells']):>9} "
                   f"{fmt(w['text']):>5} {fmt(w['structure']):>6} {w['traps_passed']:>6} {w['unverified_numbers_total']:>11} "
                   f"{r['seconds_total'] if scope == 'phase_b' else '':>5}")
+        print(f"{'':<9} runs={r['runs_completed']} overall_by_run={r['phase_b_overall_by_run']} "
+              f"stdev={r['phase_b_overall_stdev']} cost=${r['cost_usd']}")
+    print(f"TOTAL COST: ${summary['cost_usd_total']:.2f} of ${summary['budget_usd']:.2f} budget")
 
 
 if __name__ == "__main__":
     cli = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     cli.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR)
-    cli.add_argument("--parsers", nargs="+", default=list(PARSERS), choices=list(PARSERS))
+    cli.add_argument("--parsers", nargs="+", default=LOCAL_PARSERS, choices=list(PARSERS))
+    cli.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD)
+    cli.add_argument("--rescore", type=Path, help="re-score a saved *_raw.json with no vendor calls")
     args = cli.parse_args()
-    print_summary(run(args.eval_dir, args.parsers))
+    if args.rescore:
+        result = rescore(args.eval_dir, args.rescore)
+        out = args.rescore.with_name(args.rescore.stem.replace("_raw", "") + "_rescored.json")
+        out.write_text(json.dumps(result, indent=1, default=str))
+        for i, r in enumerate(result["runs"], 1):
+            print(f"run {i}: phase_b overall={r['phase_b']['overall']:.3f}  phase_c overall={r['phase_c_preview']['overall']:.3f}  "
+                  f"phase_c text={r['phase_c_preview']['text']}")
+    else:
+        print_summary(run(args.eval_dir, args.parsers, args.budget_usd))
