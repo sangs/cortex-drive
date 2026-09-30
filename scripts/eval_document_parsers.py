@@ -133,7 +133,7 @@ class DoclingParser:
                 target.tables.append(grid)
                 target.text += "\n" + "\n".join(" | ".join(r) for r in grid)
                 continue
-            if label in DOCLING_FIGURE_LABELS:
+            if label in DOCLING_FIGURE_LABELS and self._is_figure_sized(document, item):
                 target.figures += 1
             text = getattr(item, "text", "") or ""
             if label in DOCLING_HEADING_LABELS:
@@ -143,6 +143,18 @@ class DoclingParser:
             if text:
                 target.text += "\n" + text
         return out
+
+
+    @staticmethod
+    def _is_figure_sized(document, item) -> bool:
+        """Same rule as PyMuPDFParser: pictures under MIN_FIGURE_AREA_FRACTION of the page are
+        logos/icons, not figures. Items without a page box (DOCX) are counted."""
+        prov = getattr(item, "prov", None)
+        page = document.pages.get(prov[0].page_no) if prov else None
+        if not prov or page is None or page.size is None:
+            return True
+        page_area = page.size.width * page.size.height
+        return prov[0].bbox.area() >= MIN_FIGURE_AREA_FRACTION * page_area
 
 
 PARSERS = {"pymupdf": PyMuPDFParser, "docling": DoclingParser}
