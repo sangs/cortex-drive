@@ -72,6 +72,10 @@ PRICE_PER_PAGE = {"documentai": 0.010, "llamaparse": 0.0}            # llamapars
 # Worst-case cost of ONE call, reserved before calling so the budget can't be overshot.
 CALL_RESERVE_USD = {"claude": 0.40, "gemini": 0.25, "documentai": 0.15, "llamaparse": 0.0}
 VLM_MAX_OUTPUT_TOKENS = 16000
+# A dead connection must fail fast. 2026-09-30: a Claude run blocked ~10 h on an SSL read after the
+# laptop slept; the per-request timeout plus a bounded retry count prevents that.
+VLM_REQUEST_TIMEOUT_SECONDS = 180
+VLM_MAX_RETRIES = 2
 
 GCP_PROJECT = "cortex-drive-496915"
 DOCUMENTAI_LOCATION = "us"
@@ -397,7 +401,7 @@ class ClaudeParser(VisionLLMParser):
             organization_id=ANTHROPIC_WIF["organization_id"],
             service_account_id=ANTHROPIC_WIF["service_account_id"],
             workspace_id=ANTHROPIC_WIF["workspace_id"],
-        ))
+        ), timeout=VLM_REQUEST_TIMEOUT_SECONDS, max_retries=VLM_MAX_RETRIES)
 
     @staticmethod
     def _identity_token() -> str:
@@ -432,7 +436,10 @@ class GeminiParser(VisionLLMParser):
         from google import genai
         from google.genai import types
         self.meter, self.types = meter, types
-        self.client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GEMINI_LOCATION)
+        self.client = genai.Client(
+            vertexai=True, project=GCP_PROJECT, location=GEMINI_LOCATION,
+            http_options=types.HttpOptions(timeout=VLM_REQUEST_TIMEOUT_SECONDS * 1000,
+                                           retry_options=types.HttpRetryOptions(attempts=VLM_MAX_RETRIES + 1)))
 
     def call(self, pdf_bytes: bytes) -> dict:
         types = self.types
@@ -662,10 +669,18 @@ def run(eval_dir: Path, parser_names: list, budget_usd: float = DEFAULT_BUDGET_U
                     s = score_page(expect, got, reference_numbers_for(fmt, source, expect))
                     page_scores[scope].append({**s, "doc": filename, "page": page_key})
                     raw[filename]["pages"][str(page_key)] = asdict(got)   # full text: re-scoring never needs a paid re-run
-                print(f"[{name} run {run_no}] {filename}: {timings[filename]}s  spent ${meter.spent:.2f}"
-                      f"{' ERROR ' + error if error else ''}")
+                print(f"[{name} run {run_no}] {filename}: {timings[filename]}s  spent ${meter.spent:.4f}"
+                      f"{' ERROR ' + error if error else ''}", flush=True)
+                # Persist after every document: a stopped run keeps what it finished, and spend is known.
+                (results_dir / f"{stamp}_{name}_raw.partial.json").write_text(
+                    json.dumps(raw_runs + [raw], indent=1, default=str))
+                with (results_dir / f"{stamp}_ledger.jsonl").open("a") as ledger:
+                    ledger.write(json.dumps({"time": datetime.now().isoformat(timespec="seconds"), "parser": name,
+                                             "run": run_no, "doc": filename, "error": error,
+                                             "spent_total_usd": round(meter.spent, 4),
+                                             "spent_by_vendor_usd": {k: round(v, 4) for k, v in meter.by_vendor.items()}}) + "\n")
             if stopped:
-                print(f"[{name}] STOPPED: {stopped}")
+                print(f"[{name}] STOPPED: {stopped}", flush=True)
                 break                                       # an incomplete run is discarded, never scored
             raw_runs.append(raw)
             per_run.append({"phase_b": weighted(page_scores[SCOPE_PHASE_B]),
