@@ -100,7 +100,7 @@ VLM_PROMPT = """You are a document parser. Extract the content of this single pa
 Rules:
 - text: transcribe ALL visible text exactly as printed, in natural reading order (finish a column before the next). Do not correct spelling, grammar or numbering. Omit struck-through (crossed-out) text.
 - headings: the page's titles and section headings, exactly as printed.
-- tables: only real tables (a grid of rows and columns). Cards, bullet lists, flow diagrams and charts are NOT tables. Never convert a chart into a table.
+- tables: only real tables (a grid of rows and columns). Side-by-side columns whose rows correspond to each other ARE a table, even when each cell is drawn as a separate box. Stand-alone cards, bullet lists, flow diagrams and charts are NOT tables. Never convert a chart into a table.
 - figures: every chart, diagram or photo. Skip logos, small icons and decorative backgrounds. kind is chart, diagram, photo or other. title and visible_text: only words and numbers literally printed in the figure. Never estimate or infer values that are not printed. description: what the figure shows, in one or two sentences.
 - checkboxes: every checkbox or radio button with its label and whether it is checked.
 If something is not present, return an empty list."""
@@ -618,7 +618,9 @@ def build_sample_pdf(source: Path, pages: list, work_dir: Path) -> Path:
     """Sample pages only, so a 242-page manual isn't fully converted, and every parser sees the
     byte-identical input."""
     work_dir.mkdir(parents=True, exist_ok=True)
-    out_path = work_dir / f"{source.stem}__sample.pdf"
+    # The page list is part of the name: a targeted re-test must never reuse a sample built for a
+    # different page list (2026-10-01: that shifted every page after the first mismatch by one).
+    out_path = work_dir / f"{source.stem}__p{'-'.join(str(p) for p in pages)}.pdf"
     if not out_path.exists():
         src, out = pymupdf.open(source), pymupdf.open()
         for p in pages:
@@ -627,8 +629,23 @@ def build_sample_pdf(source: Path, pages: list, work_dir: Path) -> Path:
     return out_path
 
 
-def run(eval_dir: Path, parser_names: list, budget_usd: float = DEFAULT_BUDGET_USD) -> dict:
+def select_pages(key: dict, selectors: list) -> dict:
+    """Restrict the answer key to "file.pdf:3,9" selectors, for targeted re-tests."""
+    picked = {}
+    for selector in selectors:
+        filename, _, page_list = selector.partition(":")
+        spec = dict(key[filename])
+        wanted = {p.strip() for p in page_list.split(",") if p.strip()}
+        spec["pages"] = {p: e for p, e in spec["pages"].items() if p in wanted}
+        picked[filename] = spec
+    return picked
+
+
+def run(eval_dir: Path, parser_names: list, budget_usd: float = DEFAULT_BUDGET_USD,
+        pages_filter: list = None, runs_override: int = None) -> dict:
     key = json.loads((eval_dir / ANSWER_KEY_PATH).read_text())["docs"]
+    if pages_filter:
+        key = select_pages(key, pages_filter)
     results_dir = eval_dir / RESULTS_SUBDIR
     results_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -637,7 +654,7 @@ def run(eval_dir: Path, parser_names: list, budget_usd: float = DEFAULT_BUDGET_U
 
     for name in parser_names:
         parser = PARSERS[name](meter) if name in PAID_PARSERS else PARSERS[name]()
-        runs = RUNS_PER_PARSER.get(name, 1)
+        runs = runs_override or RUNS_PER_PARSER.get(name, 1)
         per_run, raw_runs, stopped = [], [], None
         for run_no in range(1, runs + 1):
             raw, page_scores, timings = {}, {SCOPE_PHASE_B: [], SCOPE_PHASE_C: []}, {}
@@ -763,6 +780,8 @@ if __name__ == "__main__":
     cli.add_argument("--parsers", nargs="+", default=LOCAL_PARSERS, choices=list(PARSERS))
     cli.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD)
     cli.add_argument("--rescore", type=Path, help="re-score a saved *_raw.json with no vendor calls")
+    cli.add_argument("--pages", nargs="+", help='targeted re-test, e.g. "02_chai_ai.pdf:3,9" "09_slides.pdf:3,7"')
+    cli.add_argument("--runs", type=int, help="override runs per parser")
     args = cli.parse_args()
     if args.rescore:
         result = rescore(args.eval_dir, args.rescore)
@@ -772,4 +791,4 @@ if __name__ == "__main__":
             print(f"run {i}: phase_b overall={r['phase_b']['overall']:.3f}  phase_c overall={r['phase_c_preview']['overall']:.3f}  "
                   f"phase_c text={r['phase_c_preview']['text']}")
     else:
-        print_summary(run(args.eval_dir, args.parsers, args.budget_usd))
+        print_summary(run(args.eval_dir, args.parsers, args.budget_usd, args.pages, args.runs))
