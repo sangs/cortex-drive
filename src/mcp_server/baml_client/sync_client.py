@@ -94,18 +94,18 @@ class BamlSyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,existing_topics: str,
         baml_options: BamlCallOptions = {},
     ) -> types.DocumentGraphExtraction:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.ExtractDocumentGraph(parsed_content=parsed_content,vision_descriptions=vision_descriptions,document_title=document_title,
+            __stream__ = self.stream.ExtractDocumentGraph(parsed_content=parsed_content,vision_descriptions=vision_descriptions,document_title=document_title,existing_topics=existing_topics,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ExtractDocumentGraph", args={
-                "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+                "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,"existing_topics": existing_topics,
             })
             return typing.cast(types.DocumentGraphExtraction, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def ExtractGraph(self, transcript: str,episode_title: str,
@@ -159,11 +159,11 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,existing_topics: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.DocumentGraphExtraction, types.DocumentGraphExtraction]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ExtractDocumentGraph", args={
-            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,"existing_topics": existing_topics,
         })
         return baml_py.BamlSyncStream[stream_types.DocumentGraphExtraction, types.DocumentGraphExtraction](
           __result__,
@@ -215,11 +215,11 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,existing_topics: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractDocumentGraph", args={
-            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,"existing_topics": existing_topics,
         }, mode="request")
         return __result__
     def ExtractGraph(self, transcript: str,episode_title: str,
@@ -251,11 +251,11 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,existing_topics: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractDocumentGraph", args={
-            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,"existing_topics": existing_topics,
         }, mode="stream")
         return __result__
     def ExtractGraph(self, transcript: str,episode_title: str,

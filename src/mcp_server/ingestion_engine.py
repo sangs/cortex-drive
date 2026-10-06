@@ -634,7 +634,7 @@ class IngestionEngine:
         adapter's has_changed() says this content is new. Never parses or fetches."""
         text = self._document_text(parsed)
         title = title_hint or filename or uri
-        extraction = self._extract_document_entities(text, title)
+        extraction = self._extract_document_entities(text, title, self._existing_topic_names())
         source_data = {
             'tenant_id': self.tenant_id, 'owner_id': owner_id, 'source_type': 'document_url',
             'name': extraction.title or title, 'description': extraction.description,
@@ -670,8 +670,17 @@ class IngestionEngine:
                 lines.append(e.text)
         return "\n\n".join(lines)
 
+    def _existing_topic_names(self) -> list:
+        """The tenant's Topic names, offered to BAML so documents reuse shared topics."""
+        from schema_guard import DOCUMENT_TOPIC_CANDIDATES_LIMIT
+        with self.driver.session() as session:
+            rows = session.run("MATCH (t:Topic) WHERE t.tenant_id IN [$tenant_id, 'SYSTEM'] "
+                               "RETURN DISTINCT t.name AS name ORDER BY name LIMIT $limit",
+                               tenant_id=self.tenant_id, limit=DOCUMENT_TOPIC_CANDIDATES_LIMIT)
+            return [r["name"] for r in rows if r["name"]]
+
     @staticmethod
-    def _extract_document_entities(text: str, title: str):
+    def _extract_document_entities(text: str, title: str, existing_topics: Optional[list] = None):
         """ExtractDocumentGraph over the text in windows of DOCUMENT_EXTRACTION_WINDOW_CHARS,
         merged by (type, name). One window for typical documents."""
         from schema_guard import DOCUMENT_EXTRACTION_WINDOW_CHARS
@@ -679,17 +688,20 @@ class IngestionEngine:
                    for i in range(0, max(len(text), 1), DOCUMENT_EXTRACTION_WINDOW_CHARS)] or [""]
         merged = None
         for window in windows:
-            part = b.ExtractDocumentGraph(parsed_content=window, vision_descriptions="", document_title=title)
+            part = b.ExtractDocumentGraph(parsed_content=window, vision_descriptions="", document_title=title,
+                                          existing_topics=", ".join(existing_topics or []) or "(none yet)")
             if merged is None:
                 merged = part
                 continue
-            for field in ('concepts', 'technologies', 'people', 'reference_links', 'relationships'):
+            for field in ('topics', 'concepts', 'technologies', 'people', 'reference_links', 'relationships'):
                 existing = getattr(merged, field)
                 key = (lambda x: x.url) if field == 'reference_links' else \
                       (lambda x: (x.target_node, x.relationship_type)) if field == 'relationships' else \
                       (lambda x: x.name.lower())
                 seen = {key(x) for x in existing}
                 existing.extend(x for x in getattr(part, field) if key(x) not in seen)
+        from schema_guard import DOCUMENT_MAX_TOPICS
+        merged.topics = merged.topics[:DOCUMENT_MAX_TOPICS]
         return merged
 
     def _upsert_document_source(self, source, uri: str, content_hash: str):
@@ -803,7 +815,8 @@ class IngestionEngine:
         this revision) — the latter feeds orphan cleanup."""
         from schema_guard import DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP
         # Link type follows the entity label (deterministic), not the model's relationship guesses.
-        entities = [('Concept', c.name, {'description': c.description}) for c in extraction.concepts] + \
+        entities = [('Topic', t.name, {'description': t.description}) for t in extraction.topics] + \
+                   [('Concept', c.name, {'description': c.description}) for c in extraction.concepts] + \
                    [('Technology', t.name, {'description': t.description}) for t in extraction.technologies] + \
                    [('Person', p.name, {'role': p.role}) for p in extraction.people]
         ids = []
@@ -868,10 +881,10 @@ class IngestionEngine:
     def _ground_entities_to_blocks(self, source_node_id: str, snapshot_id: str) -> int:
         """Deterministic grounding (pipeline doc §9.1): link each current block to the entities
         whose names appear in its text (case-insensitive). No LLM call."""
-        from schema_guard import DOCUMENT_GROUNDING_MIN_NAME_CHARS, DOCUMENT_ENTITY_RELATIONSHIPS
+        from schema_guard import DOCUMENT_GROUNDING_MIN_NAME_CHARS, DOCUMENT_GROUNDED_RELATIONSHIPS
         query = f"""
         MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
-        WHERE type(r) IN {json.dumps([x for x in DOCUMENT_ENTITY_RELATIONSHIPS if x != 'HAS_REFERENCE'])}
+        WHERE type(r) IN {json.dumps(DOCUMENT_GROUNDED_RELATIONSHIPS)}
           AND r.snapshot_id = $snapshot_id AND size(e.name) >= $min_chars
         WITH d, collect(DISTINCT e) AS ents
         MATCH (d)-[:HAS_SECTION]->(:Section {{revision_id: $snapshot_id}})-[:HAS_BLOCK]->(b:ContentBlock)

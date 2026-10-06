@@ -79,9 +79,11 @@ DERIVED_BY_VALUES = [DERIVED_BY_TEXT, DERIVED_BY_OCR, DERIVED_BY_VLM]
 # DocumentSource → entity link types (document_extract.baml's DocumentRelationshipType).
 # Every such link carries `snapshot_id`; links not re-asserted by a new snapshot are removed
 # (entity lifecycle, build plan §1.3.3).
-DOCUMENT_ENTITY_RELATIONSHIPS = ['DISCUSSES', 'COVERS_TECHNOLOGY', 'MENTIONS', 'HAS_REFERENCE']
+DOCUMENT_ENTITY_RELATIONSHIPS = ['DISCUSSES', 'COVERS_TECHNOLOGY', 'MENTIONS', 'HAS_REFERENCE', 'HAS_TOPIC']
+# Links that are grounded to blocks by literal name match. Topics are themes, not literal mentions.
+DOCUMENT_GROUNDED_RELATIONSHIPS = ['DISCUSSES', 'COVERS_TECHNOLOGY', 'MENTIONS']
 # Entity labels a document can link to; only these are candidates for orphan cleanup.
-DOCUMENT_ENTITY_LABELS = ['Concept', 'Technology', 'Person', 'ReferenceLink']
+DOCUMENT_ENTITY_LABELS = ['Concept', 'Technology', 'Person', 'ReferenceLink', 'Topic']
 
 # Document ingestion tunables (IngestionEngine.process_document_source()).
 DOCUMENT_EXTRACTION_WINDOW_CHARS = 60000   # text per ExtractDocumentGraph call; long documents are windowed and merged
@@ -89,7 +91,12 @@ DOCUMENT_EMBEDDING_BATCH_SIZE = 100        # ContentBlock texts per embeddings r
 DOCUMENT_EMBEDDING_MODEL = 'text-embedding-3-small'
 DOCUMENT_GROUNDING_MIN_NAME_CHARS = 3      # shorter entity names are not substring-grounded (too many false matches)
 # Default link type per entity label when the extraction lists an entity without a relationship.
-DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP = {'Concept': 'DISCUSSES', 'Technology': 'COVERS_TECHNOLOGY', 'Person': 'MENTIONS'}
+DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP = {'Concept': 'DISCUSSES', 'Technology': 'COVERS_TECHNOLOGY', 'Person': 'MENTIONS',
+                                        'Topic': 'HAS_TOPIC'}
+# Topics: broad, reusable subject areas (user decision 2026-10-06). The tenant's existing topic names are
+# offered to BAML so it reuses them; at most DOCUMENT_MAX_TOPICS are kept per document.
+DOCUMENT_MAX_TOPICS = 5
+DOCUMENT_TOPIC_CANDIDATES_LIMIT = 200
 
 # --- Discovery Logic Constants (Landmarks) ---
 # High-Fidelity backbone nodes that serve as the primary landmarks in discovery.

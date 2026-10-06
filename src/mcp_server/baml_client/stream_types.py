@@ -38,6 +38,7 @@ class Concept(BaseModel):
 class DocumentGraphExtraction(BaseModel):
     title: typing.Optional[str] = None
     description: typing.Optional[str] = None
+    topics: typing.List["Topic"]
     concepts: typing.List["Concept"]
     technologies: typing.List["Technology"]
     people: typing.List["Person"]

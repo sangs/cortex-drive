@@ -14,6 +14,7 @@
 class DocumentGraphExtraction {
   title string
   description string
+  topics Topic[]
   concepts Concept[]
   technologies Technology[]
   people Person[]
@@ -33,7 +34,7 @@ class DocumentRelationship {
   relationship_type DocumentRelationshipType
 }
 
-function ExtractDocumentGraph(parsed_content: string, vision_descriptions: string, document_title: string) -> DocumentGraphExtraction {
+function ExtractDocumentGraph(parsed_content: string, vision_descriptions: string, document_title: string, existing_topics: string) -> DocumentGraphExtraction {
   client GPT4o
   prompt #"
     {{ ctx.output_format }}
@@ -52,14 +53,22 @@ function ExtractDocumentGraph(parsed_content: string, vision_descriptions: strin
        complete a URL. Write ligatures as plain letters (e.g. "tensorflow", not "tensorﬂow").
     4. Numbers, scores and measurements are not entities.
 
+    TOPIC RULES (topics connect this document to other sources, so they must be broad and shared):
+    5. `topics`: 2 to 5 BROAD subject areas the whole document is about, each a short noun phrase of
+       1 to 3 words (e.g. "Graph databases", "Enterprise AI", "Language models"). Never a title or a
+       sentence, never document-specific details.
+    6. If a topic in the existing list below fits, use its name EXACTLY as written instead of a new
+       variant. Only create a new topic when none of the existing ones fit.
+       Existing topics: {{ existing_topics }}
+
     CRITICAL INSTRUCTIONS:
-    5. Populate `concepts`, `technologies` and `people` explicitly with every entity you use in a
+    7. Populate `concepts`, `technologies` and `people` explicitly with every entity you use in a
        relationship.
-    6. For relationships from the document itself, use the exact document title
+    8. For relationships from the document itself, use the exact document title
        ("{{ document_title }}") as `source_node`; use the exact entity `name` as `target_node`.
-    7. `title`: the document's actual title. `description`: a concise 2-4 sentence summary of
+    9. `title`: the document's actual title. `description`: a concise 2-4 sentence summary of
        what the content is about. If the content is only figure descriptions, summarize those.
-    8. Use EXACTLY the field names in the schema (all lowercase).
+    10. Use EXACTLY the field names in the schema (all lowercase).
 
     Relationship rules:
     - DISCUSSES (Document -> Concept): concepts the document discusses.

@@ -80,6 +80,7 @@ class Concept(BaseModel):
 class DocumentGraphExtraction(BaseModel):
     title: str
     description: str
+    topics: typing.List["Topic"]
     concepts: typing.List["Concept"]
     technologies: typing.List["Technology"]
     people: typing.List["Person"]

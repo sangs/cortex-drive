@@ -425,7 +425,7 @@ class DocumentGraphExtractionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("DocumentGraphExtraction")
-        self._properties: typing.Set[str] = set([  "title",  "description",  "concepts",  "technologies",  "people",  "reference_links",  "relationships",  ])
+        self._properties: typing.Set[str] = set([  "title",  "description",  "topics",  "concepts",  "technologies",  "people",  "reference_links",  "relationships",  ])
         self._props = DocumentGraphExtractionProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -460,6 +460,10 @@ class DocumentGraphExtractionProperties:
     @property
     def description(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("description"))
+    
+    @property
+    def topics(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("topics"))
     
     @property
     def concepts(self) -> type_builder.ClassPropertyViewer:

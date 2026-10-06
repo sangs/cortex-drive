@@ -121,7 +121,7 @@ class DocumentIngestionTest(unittest.TestCase):
 
     def test_links_belong_to_current_snapshot(self):                            # §17.6
         rows = self._q("MATCH (d:DocumentSource {tenant_id: $t})-[:HAS_SNAPSHOT]->(s:SourceSnapshot {is_current: true}) "
-                       "MATCH (d)-[r]->(e) WHERE type(r) IN ['DISCUSSES','COVERS_TECHNOLOGY','MENTIONS','HAS_REFERENCE'] "
+                       "MATCH (d)-[r]->(e) WHERE type(r) IN ['DISCUSSES','COVERS_TECHNOLOGY','MENTIONS','HAS_REFERENCE','HAS_TOPIC'] "
                        "AND coalesce(r.snapshot_id,'') <> s.node_id RETURN count(r) AS c")
         self.assertEqual(rows, [{"c": 0}])
 
@@ -136,8 +136,15 @@ class DocumentIngestionTest(unittest.TestCase):
         self.assertEqual(still, [], "entities only revision 1 mentioned must be deleted (orphans)")
         self.assertGreater(self.result2["removed_stale_links"], 0)
 
+    def test_topics_are_broad_and_current(self):
+        rows = self._q("MATCH (d:DocumentSource {tenant_id: $t})-[:HAS_SNAPSHOT]->(s:SourceSnapshot {is_current: true}) "
+                       "MATCH (d)-[r:HAS_TOPIC]->(tp:Topic) RETURN tp.name AS name, r.snapshot_id = s.node_id AS current")
+        self.assertTrue(1 <= len(rows) <= 5, f"expected 1–5 topics, got {rows}")
+        self.assertTrue(all(r["current"] for r in rows))
+        self.assertTrue(all(len(r["name"].split()) <= 3 for r in rows), f"topics must be short phrases: {rows}")
+
     def test_no_orphan_entities(self):                                          # §17.7
-        rows = self._q("MATCH (e {tenant_id: $t}) WHERE (e:Concept OR e:Technology OR e:Person OR e:ReferenceLink) "
+        rows = self._q("MATCH (e {tenant_id: $t}) WHERE (e:Concept OR e:Technology OR e:Person OR e:ReferenceLink OR e:Topic) "
                        "AND NOT (e)--() RETURN count(e) AS c")
         self.assertEqual(rows, [{"c": 0}])
 
