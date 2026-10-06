@@ -22,6 +22,12 @@ type_map = {
     "types.Concept": types.Concept,
     "stream_types.Concept": stream_types.Concept,
 
+    "types.DocumentGraphExtraction": types.DocumentGraphExtraction,
+    "stream_types.DocumentGraphExtraction": stream_types.DocumentGraphExtraction,
+
+    "types.DocumentRelationship": types.DocumentRelationship,
+    "stream_types.DocumentRelationship": stream_types.DocumentRelationship,
+
     "types.Episode": types.Episode,
     "stream_types.Episode": stream_types.Episode,
 
@@ -85,6 +91,8 @@ type_map = {
     "types.WebRelationship": types.WebRelationship,
     "stream_types.WebRelationship": stream_types.WebRelationship,
 
+
+    "types.DocumentRelationshipType": types.DocumentRelationshipType,
 
     "types.RelationshipType": types.RelationshipType,
 

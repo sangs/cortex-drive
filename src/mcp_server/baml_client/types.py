@@ -37,8 +37,13 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (2)
+# Generated enums (3)
 # #########################################################################
+
+class DocumentRelationshipType(str, Enum):
+    DISCUSSES = "DISCUSSES"
+    MENTIONS = "MENTIONS"
+    COVERS_TECHNOLOGY = "COVERS_TECHNOLOGY"
 
 class RelationshipType(str, Enum):
     INTERVIEWED_BY = "INTERVIEWED_BY"
@@ -60,7 +65,7 @@ class WebRelationshipType(str, Enum):
     COVERS_TECHNOLOGY = "COVERS_TECHNOLOGY"
 
 # #########################################################################
-# Generated classes (23)
+# Generated classes (25)
 # #########################################################################
 
 class Approach(BaseModel):
@@ -71,6 +76,20 @@ class Approach(BaseModel):
 class Concept(BaseModel):
     name: str
     description: typing.Optional[str] = None
+
+class DocumentGraphExtraction(BaseModel):
+    title: str
+    description: str
+    concepts: typing.List["Concept"]
+    technologies: typing.List["Technology"]
+    people: typing.List["Person"]
+    reference_links: typing.List["ReferenceLink"]
+    relationships: typing.List["DocumentRelationship"]
+
+class DocumentRelationship(BaseModel):
+    source_node: str
+    target_node: str
+    relationship_type: DocumentRelationshipType
 
 class Episode(BaseModel):
     name: str

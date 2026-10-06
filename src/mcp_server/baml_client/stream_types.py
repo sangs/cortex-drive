@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (23)
+# Generated classes (25)
 # #########################################################################
 
 class Approach(BaseModel):
@@ -34,6 +34,20 @@ class Approach(BaseModel):
 class Concept(BaseModel):
     name: typing.Optional[str] = None
     description: typing.Optional[str] = None
+
+class DocumentGraphExtraction(BaseModel):
+    title: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+    concepts: typing.List["Concept"]
+    technologies: typing.List["Technology"]
+    people: typing.List["Person"]
+    reference_links: typing.List["ReferenceLink"]
+    relationships: typing.List["DocumentRelationship"]
+
+class DocumentRelationship(BaseModel):
+    source_node: typing.Optional[str] = None
+    target_node: typing.Optional[str] = None
+    relationship_type: typing.Optional[types.DocumentRelationshipType] = None
 
 class Episode(BaseModel):
     name: typing.Optional[str] = None

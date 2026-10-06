@@ -23,6 +23,12 @@ class LlmResponseParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ExtractDocumentGraph(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.DocumentGraphExtraction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractDocumentGraph", llm_response=llm_response, mode="request")
+        return typing.cast(types.DocumentGraphExtraction, __result__)
+
     def ExtractGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.GraphExtraction:
@@ -48,6 +54,12 @@ class LlmStreamParser:
 
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
+
+    def ExtractDocumentGraph(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.DocumentGraphExtraction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractDocumentGraph", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.DocumentGraphExtraction, __result__)
 
     def ExtractGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},

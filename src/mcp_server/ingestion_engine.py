@@ -618,3 +618,269 @@ class IngestionEngine:
                 session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, target=rel.target_node)
 
         return node_ids
+
+    # ------------------------------------------------------------------------------------------
+    # Phase B documents (M2) — documents/architecture/phase-b-document-ingestion-build-plan-2026-10-01.md
+    # Stage 1 of two-speed ingestion: structure + text entities. Visual blocks are written with
+    # description_status='pending'; stage 2 (L2 figure descriptions) arrives in M3'/M4'.
+    # ------------------------------------------------------------------------------------------
+
+    def process_document_source(self, *, uri: str, parsed, mime_type: str, content_hash: str,
+                                owner_id: str, filename: Optional[str] = None,
+                                title_hint: Optional[str] = None) -> Dict[str, Any]:
+        """Write one revision of a document: DocumentSource + new SourceSnapshot + Sections +
+        ContentBlocks (from the L1 parser's `parsed` ParsedDocument) + BAML entities with
+        snapshot-scoped links, grounding, and stale-link/orphan cleanup. Called only when the
+        adapter's has_changed() says this content is new. Never parses or fetches."""
+        text = self._document_text(parsed)
+        title = title_hint or filename or uri
+        extraction = self._extract_document_entities(text, title)
+        source_data = {
+            'tenant_id': self.tenant_id, 'owner_id': owner_id, 'source_type': 'document_url',
+            'name': extraction.title or title, 'description': extraction.description,
+            'uri': uri, 'mime_type': mime_type, 'filename': filename,
+            'page_count': getattr(parsed, 'page_count', None),
+        }
+        validated = validate_upsert('DocumentSource', source_data)
+        source_node_id, snapshot_id = self._upsert_document_source(validated, uri, content_hash)
+        self._delete_stale_revision_structure(source_node_id, snapshot_id)
+        block_ids = self._write_document_structure(source_node_id, snapshot_id, parsed, extraction.title or title)
+        entity_ids, previously_linked = self._link_document_entities(source_node_id, snapshot_id, extraction)
+        removed_links, removed_orphans = self._apply_entity_lifecycle(source_node_id, snapshot_id, previously_linked)
+        grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
+        self._register_with_openfga([nid for nid in [source_node_id, snapshot_id] + block_ids + entity_ids if nid])
+        return {'source_node_id': source_node_id, 'snapshot_id': snapshot_id, 'blocks': len(block_ids),
+                'entities': len(entity_ids), 'grounded_links': grounded,
+                'removed_stale_links': removed_links, 'removed_orphans': removed_orphans}
+
+    @staticmethod
+    def _document_text(parsed) -> str:
+        """Document text for L3 extraction, in reading order. Headings as markdown headings;
+        visual blocks contribute only their caption/inner text (descriptions come in stage 2)."""
+        from schema_guard import VISUAL_CONTENT_BLOCK_TYPES
+        lines = []
+        for e in parsed.elements:
+            if not e.text:
+                continue
+            if e.type == 'heading':
+                lines.append("#" * (min(e.heading_level or 0, 5) + 1) + " " + e.text)
+            elif e.type in VISUAL_CONTENT_BLOCK_TYPES:
+                lines.append(f"[figure] {e.text}")
+            else:
+                lines.append(e.text)
+        return "\n\n".join(lines)
+
+    @staticmethod
+    def _extract_document_entities(text: str, title: str):
+        """ExtractDocumentGraph over the text in windows of DOCUMENT_EXTRACTION_WINDOW_CHARS,
+        merged by (type, name). One window for typical documents."""
+        from schema_guard import DOCUMENT_EXTRACTION_WINDOW_CHARS
+        windows = [text[i:i + DOCUMENT_EXTRACTION_WINDOW_CHARS]
+                   for i in range(0, max(len(text), 1), DOCUMENT_EXTRACTION_WINDOW_CHARS)] or [""]
+        merged = None
+        for window in windows:
+            part = b.ExtractDocumentGraph(parsed_content=window, vision_descriptions="", document_title=title)
+            if merged is None:
+                merged = part
+                continue
+            for field in ('concepts', 'technologies', 'people', 'reference_links', 'relationships'):
+                existing = getattr(merged, field)
+                key = (lambda x: x.url) if field == 'reference_links' else \
+                      (lambda x: (x.target_node, x.relationship_type)) if field == 'relationships' else \
+                      (lambda x: x.name.lower())
+                seen = {key(x) for x in existing}
+                existing.extend(x for x in getattr(part, field) if key(x) not in seen)
+        return merged
+
+    def _upsert_document_source(self, source, uri: str, content_hash: str):
+        """DocumentSource identity = (tenant_id, uri), node_id set once on create; a new
+        SourceSnapshot per revision, flipping the previous current one (WebsiteSource pattern)."""
+        props = source.dict()
+        if isinstance(props.get('metadata'), dict):
+            props['metadata'] = json.dumps(props['metadata'])
+        query = """
+        MERGE (d:DocumentSource {tenant_id: $tenant_id, uri: $uri})
+        ON CREATE SET d.node_id = randomUUID()
+        SET d += $props, d.last_synced_at = $now
+        WITH d
+        OPTIONAL MATCH (d)-[:HAS_SNAPSHOT]->(old:SourceSnapshot {is_current: true})
+        SET old.is_current = false
+        WITH d
+        CREATE (snap:SourceSnapshot {tenant_id: $tenant_id, content_hash: $content_hash,
+                                     metadata_schema_version: $schema_version,
+                                     fetched_at: $now, is_current: true})
+        SET snap.node_id = randomUUID()
+        MERGE (d)-[:HAS_SNAPSHOT]->(snap)
+        SET d.current_snapshot_id = snap.node_id
+        RETURN d.node_id AS source_id, snap.node_id AS snapshot_id
+        """
+        with self.driver.session() as session:
+            rec = session.run(query, tenant_id=self.tenant_id, uri=uri, props=props,
+                              now=datetime.now().isoformat(), content_hash=content_hash,
+                              schema_version=source.metadata_schema_version).single()
+        return rec['source_id'], rec['snapshot_id']
+
+    def _delete_stale_revision_structure(self, source_node_id: str, snapshot_id: str) -> None:
+        """Sections and blocks belong to one revision; drop those of earlier revisions."""
+        query = """
+        MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})-[:HAS_SECTION]->(s:Section)
+        WHERE s.revision_id <> $snapshot_id
+        OPTIONAL MATCH (s)-[:HAS_BLOCK]->(blk:ContentBlock)
+        DETACH DELETE blk, s
+        """
+        with self.driver.session() as session:
+            session.run(query, tenant_id=self.tenant_id, source_id=source_node_id, snapshot_id=snapshot_id)
+
+    def _write_document_structure(self, source_node_id: str, snapshot_id: str, parsed, title: str) -> list:
+        """Sections from the heading hierarchy (a root section holds content before the first
+        heading) and one ContentBlock per element, embedded in batches."""
+        from schema_guard import (VISUAL_CONTENT_BLOCK_TYPES, DESCRIPTION_STATUS_PENDING,
+                                  DERIVED_BY_TEXT, DERIVED_BY_OCR, DOCUMENT_EMBEDDING_BATCH_SIZE,
+                                  DOCUMENT_EMBEDDING_MODEL)
+        sections = [{'key': 0, 'title': title, 'level': 0, 'order': 0, 'page_start': None}]
+        blocks = []
+        current = 0
+        for order, e in enumerate(parsed.elements):
+            if e.type == 'heading' and e.text:
+                current = len(sections)
+                sections.append({'key': current, 'title': e.text, 'level': e.heading_level or 1,
+                                 'order': current, 'page_start': e.page})
+            visual = e.type in VISUAL_CONTENT_BLOCK_TYPES
+            block = {
+                'tenant_id': self.tenant_id, 'type': e.type, 'text': e.text or "", 'order': order,
+                'revision_id': snapshot_id, 'page': e.page,
+                'bbox': [e.bbox.x0, e.bbox.y0, e.bbox.x1, e.bbox.y1] if e.bbox else None,
+                'section_path': list(e.section_path),
+                'cells_json': json.dumps(e.cells) if e.cells else None,
+                'description_status': DESCRIPTION_STATUS_PENDING if visual else None,
+                'derived_by': DERIVED_BY_OCR if (visual and e.text) else DERIVED_BY_TEXT,
+            }
+            validate_upsert('ContentBlock', block)
+            block['section_key'] = current
+            blocks.append(block)
+        for s in sections:
+            validate_upsert('Section', {'tenant_id': self.tenant_id, 'title': s['title'], 'level': s['level'],
+                                        'order': s['order'], 'revision_id': snapshot_id, 'page_start': s['page_start']})
+
+        texts = [(i, blk['text']) for i, blk in enumerate(blocks) if blk['text'].strip()]
+        for start in range(0, len(texts), DOCUMENT_EMBEDDING_BATCH_SIZE):
+            batch = texts[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
+            response = self.client.embeddings.create(model=DOCUMENT_EMBEDDING_MODEL, input=[t for _, t in batch])
+            for (i, _), item in zip(batch, response.data):
+                blocks[i]['embedding'] = item.embedding
+
+        query = """
+        MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})
+        UNWIND $sections AS sec
+        CREATE (s:Section {tenant_id: $tenant_id, title: sec.title, level: sec.level, order: sec.order,
+                           revision_id: $snapshot_id, page_start: sec.page_start, section_key: sec.key})
+        SET s.node_id = randomUUID()
+        MERGE (d)-[:HAS_SECTION]->(s)
+        WITH collect(s) AS secs
+        UNWIND $blocks AS blk
+        WITH blk, [x IN secs WHERE x.section_key = blk.section_key][0] AS sec
+        CREATE (b:ContentBlock {tenant_id: blk.tenant_id, type: blk.type, text: blk.text, order: blk.order,
+                                revision_id: blk.revision_id, page: blk.page, bbox: blk.bbox,
+                                section_path: blk.section_path, cells_json: blk.cells_json,
+                                description_status: blk.description_status, derived_by: blk.derived_by,
+                                embedding: blk.embedding})
+        SET b.node_id = randomUUID()
+        MERGE (sec)-[:HAS_BLOCK]->(b)
+        RETURN collect(b.node_id) AS block_ids
+        """
+        for blk in blocks:
+            blk.setdefault('embedding', None)
+        with self.driver.session() as session:
+            rec = session.run(query, tenant_id=self.tenant_id, source_id=source_node_id,
+                              snapshot_id=snapshot_id, sections=sections, blocks=blocks).single()
+            session.run("MATCH (s:Section {tenant_id: $tenant_id, revision_id: $snapshot_id}) REMOVE s.section_key",
+                        tenant_id=self.tenant_id, snapshot_id=snapshot_id)
+        return rec['block_ids'] if rec else []
+
+    def _link_document_entities(self, source_node_id: str, snapshot_id: str, extraction):
+        """MERGE entities (tenant-scoped, as the website path does) and link them to the source
+        with `snapshot_id` on the relationship. Returns (entity node_ids, node_ids linked before
+        this revision) — the latter feeds orphan cleanup."""
+        from schema_guard import DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP
+        # Link type follows the entity label (deterministic), not the model's relationship guesses.
+        entities = [('Concept', c.name, {'description': c.description}) for c in extraction.concepts] + \
+                   [('Technology', t.name, {'description': t.description}) for t in extraction.technologies] + \
+                   [('Person', p.name, {'role': p.role}) for p in extraction.people]
+        ids = []
+        with self.driver.session() as session:
+            before = session.run(
+                f"""MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
+                    WHERE type(r) IN {json.dumps(DOCUMENT_ENTITY_RELATIONSHIPS)}
+                    RETURN collect(DISTINCT e.node_id) AS ids""",
+                tenant_id=self.tenant_id, source_id=source_node_id).single()['ids']
+            for label, name, props in entities:
+                if not name or not name.strip():
+                    continue
+                rel = DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP[label]
+                rec = session.run(
+                    f"""MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})
+                        MERGE (e:{label} {{tenant_id: $tenant_id, name: $name}})
+                        ON CREATE SET e.node_id = randomUUID(), e += $props
+                        MERGE (d)-[r:{rel}]->(e)
+                        SET r.snapshot_id = $snapshot_id
+                        RETURN e.node_id AS id""",
+                    tenant_id=self.tenant_id, source_id=source_node_id, name=name.strip(),
+                    props={k: v for k, v in props.items() if v is not None}, snapshot_id=snapshot_id).single()
+                ids.append(rec['id'] if rec else None)
+            for link in extraction.reference_links:
+                if not link.url:
+                    continue
+                rec = session.run(
+                    """MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})
+                       MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
+                       ON CREATE SET l.node_id = randomUUID(), l.text = $text
+                       MERGE (d)-[r:HAS_REFERENCE]->(l)
+                       SET r.snapshot_id = $snapshot_id
+                       RETURN l.node_id AS id""",
+                    tenant_id=self.tenant_id, source_id=source_node_id, url=link.url, text=link.text,
+                    snapshot_id=snapshot_id).single()
+                ids.append(rec['id'] if rec else None)
+        return ids, before
+
+    def _apply_entity_lifecycle(self, source_node_id: str, snapshot_id: str, previously_linked: list):
+        """Delete this source's entity links that the current revision didn't re-assert, then
+        remove entities left with no relationships at all — only among those this source used
+        to link, only in this tenant (never SYSTEM primitives, Invariant 9)."""
+        from schema_guard import DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_ENTITY_LABELS
+        with self.driver.session() as session:
+            removed = session.run(
+                f"""MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
+                    WHERE type(r) IN {json.dumps(DOCUMENT_ENTITY_RELATIONSHIPS)}
+                      AND coalesce(r.snapshot_id, '') <> $snapshot_id
+                    DELETE r
+                    RETURN count(r) AS n""",
+                tenant_id=self.tenant_id, source_id=source_node_id, snapshot_id=snapshot_id).single()['n']
+            orphans = session.run(
+                f"""MATCH (e)
+                    WHERE e.node_id IN $ids AND e.tenant_id = $tenant_id
+                      AND any(l IN labels(e) WHERE l IN {json.dumps(DOCUMENT_ENTITY_LABELS)})
+                      AND NOT (e)--()
+                    DELETE e
+                    RETURN count(e) AS n""",
+                tenant_id=self.tenant_id, ids=previously_linked or []).single()['n']
+        return removed, orphans
+
+    def _ground_entities_to_blocks(self, source_node_id: str, snapshot_id: str) -> int:
+        """Deterministic grounding (pipeline doc §9.1): link each current block to the entities
+        whose names appear in its text (case-insensitive). No LLM call."""
+        from schema_guard import DOCUMENT_GROUNDING_MIN_NAME_CHARS, DOCUMENT_ENTITY_RELATIONSHIPS
+        query = f"""
+        MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
+        WHERE type(r) IN {json.dumps([x for x in DOCUMENT_ENTITY_RELATIONSHIPS if x != 'HAS_REFERENCE'])}
+          AND r.snapshot_id = $snapshot_id AND size(e.name) >= $min_chars
+        WITH d, collect(DISTINCT e) AS ents
+        MATCH (d)-[:HAS_SECTION]->(:Section {{revision_id: $snapshot_id}})-[:HAS_BLOCK]->(b:ContentBlock)
+        UNWIND ents AS e
+        WITH b, e WHERE toLower(b.text) CONTAINS toLower(e.name)
+        MERGE (b)-[:GROUNDED_TO]->(e)
+        RETURN count(*) AS n
+        """
+        with self.driver.session() as session:
+            rec = session.run(query, tenant_id=self.tenant_id, source_id=source_node_id,
+                              snapshot_id=snapshot_id, min_chars=DOCUMENT_GROUNDING_MIN_NAME_CHARS).single()
+        return rec['n'] if rec else 0

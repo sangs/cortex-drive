@@ -81,6 +81,12 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(conv.ranges, [(4, 5), (6, 7), (8, 9), (10, 10)])
         self.assertEqual(doc.page_count, 10)
 
+    def test_block_types_match_schema(self):
+        import schema_guard
+        from parsing.structure_parser import ELEMENT_TYPES, VISUAL_ELEMENT_TYPES
+        self.assertEqual(set(schema_guard.CONTENT_BLOCK_TYPES), set(ELEMENT_TYPES))
+        self.assertEqual(set(schema_guard.VISUAL_CONTENT_BLOCK_TYPES), set(VISUAL_ELEMENT_TYPES))
+
     def test_non_paged_formats_use_a_single_conversion(self):
         conv = _RecordingConverter()
         DoclingParser(converter=conv).parse(b"PK fake docx", MIME_DOCX, "a.docx")

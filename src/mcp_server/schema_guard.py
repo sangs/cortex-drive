@@ -48,6 +48,49 @@ SOURCE_CONNECTOR_LABELS = [
 
 SOURCE_CONNECTOR_STATUSES = ['active', 'paused', 'error', 'deprecated']
 
+# --- Phase B documents (M2, 2026-10-06) ---
+# documents/architecture/phase-b-document-ingestion-build-plan-2026-10-01.md and
+# multimodal-document-processing-pipeline-2026-08-19.md §2/§9.
+# Deliberately NOT in CORTEX_DRIVE_NODES / PROJECT_GRAPH_NODES yet: those lists drive the domain
+# manifests and the manifest-contract test. These labels join the new `document` domain at M5
+# (decision P2); until then no read path can return them.
+DOCUMENT_GRAPH_NODES = ['DocumentSource', 'Section', 'ContentBlock']
+
+# ContentBlock.type vocabulary. Mirrors parsing.structure_parser.ELEMENT_TYPES (a unit test keeps
+# the two equal).
+CONTENT_BLOCK_TYPES = [
+    'heading', 'paragraph', 'list_item', 'table', 'figure', 'chart', 'caption',
+    'code', 'formula', 'footnote', 'checkbox',
+]
+# Blocks the L2 visual describer works on (two-speed ingestion, federated design §1.3.8).
+VISUAL_CONTENT_BLOCK_TYPES = ['figure', 'chart']
+
+# Lifecycle of a visual block's description.
+DESCRIPTION_STATUS_PENDING = 'pending'
+DESCRIPTION_STATUS_DESCRIBED = 'described'
+DESCRIPTION_STATUSES = [DESCRIPTION_STATUS_PENDING, DESCRIPTION_STATUS_DESCRIBED]
+
+# Provenance of derived content (Invariant 11): text from the document's own layer, OCR, or a VLM.
+DERIVED_BY_TEXT = 'text'
+DERIVED_BY_OCR = 'ocr'
+DERIVED_BY_VLM = 'vlm'
+DERIVED_BY_VALUES = [DERIVED_BY_TEXT, DERIVED_BY_OCR, DERIVED_BY_VLM]
+
+# DocumentSource → entity link types (document_extract.baml's DocumentRelationshipType).
+# Every such link carries `snapshot_id`; links not re-asserted by a new snapshot are removed
+# (entity lifecycle, build plan §1.3.3).
+DOCUMENT_ENTITY_RELATIONSHIPS = ['DISCUSSES', 'COVERS_TECHNOLOGY', 'MENTIONS', 'HAS_REFERENCE']
+# Entity labels a document can link to; only these are candidates for orphan cleanup.
+DOCUMENT_ENTITY_LABELS = ['Concept', 'Technology', 'Person', 'ReferenceLink']
+
+# Document ingestion tunables (IngestionEngine.process_document_source()).
+DOCUMENT_EXTRACTION_WINDOW_CHARS = 60000   # text per ExtractDocumentGraph call; long documents are windowed and merged
+DOCUMENT_EMBEDDING_BATCH_SIZE = 100        # ContentBlock texts per embeddings request
+DOCUMENT_EMBEDDING_MODEL = 'text-embedding-3-small'
+DOCUMENT_GROUNDING_MIN_NAME_CHARS = 3      # shorter entity names are not substring-grounded (too many false matches)
+# Default link type per entity label when the extraction lists an entity without a relationship.
+DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP = {'Concept': 'DISCUSSES', 'Technology': 'COVERS_TECHNOLOGY', 'Person': 'MENTIONS'}
+
 # --- Discovery Logic Constants (Landmarks) ---
 # High-Fidelity backbone nodes that serve as the primary landmarks in discovery.
 # These appear as prominent "Sun" nodes in the initial graph expansion.
@@ -139,6 +182,10 @@ COMPOSITION_RELATIONSHIPS = [
     # Universal Source Connector (Phase A+) — a SourceSnapshot has no independent
     # existence without its parent Source; deleting the Source should cascade.
     'HAS_SNAPSHOT',
+    # Phase B documents (M2) — a Section has no existence without its DocumentSource,
+    # and a ContentBlock none without its Section.
+    'HAS_SECTION',
+    'HAS_BLOCK',
 ]
 
 # Relationships confirmed as NON-composition. Listed explicitly so future code review
@@ -157,6 +204,8 @@ NON_COMPOSITION_RELATIONSHIPS = [
     # Navigation/identity — structural identity, not ownership
     'HAS_PORTFOLIO', 'REPRESENTS', 'AT', 'FEATURE_GUEST',
     'HOSTS', 'GUEST_ON', 'INTERVIEWED_BY',
+    # Phase B documents (M2) — ContentBlock → entity it mentions; the entity exists independently.
+    'GROUNDED_TO',
 ]
 
 class Neo4jBaseModel(BaseModel):
@@ -404,6 +453,65 @@ class SourceSnapshot(Neo4jBaseModel):
     change_summary: Optional[str] = Field(None, description="Optional human-readable note on what changed.")
     image_urls: Optional[List[str]] = Field(None, description="<img> URLs captured from this fetch's raw HTML, for direct display without re-fetching. Hotlinked to the original host — Cortex-Drive stores the reference only, never the binary content.")
 
+
+class DocumentSource(SourceBaseModel, EmbeddableNodeMixin):
+    """Phase B document source (PDF/DOCX/PPTX). Same identity convention as WebsiteSource:
+    `node_id` is set at the Cypher level, never declared here."""
+    mime_type: str = Field(..., description="MIME type of the fetched bytes.")
+    filename: Optional[str] = Field(None, description="Original file name, if known.")
+    page_count: Optional[int] = Field(None, description="Pages (PDF) or slides (PPTX); None for DOCX.")
+    extraction_method: str = Field("docling", description="L1 StructureParser that produced the blocks.")
+
+
+class SectionNode(Neo4jBaseModel):
+    """A heading-delimited section of a document revision (from the parser's heading hierarchy)."""
+    title: str = Field(..., description="Heading text; the document title for the root section.")
+    level: int = Field(..., description="Heading level (0 = document title / root).")
+    order: int = Field(..., description="Position of this section within the document.")
+    revision_id: str = Field(..., description="node_id of the SourceSnapshot this section belongs to.")
+    page_start: Optional[int] = None
+
+
+class ContentBlockNode(Neo4jBaseModel):
+    """One parser element (paragraph, table, figure...) of a document revision — the chunking and
+    grounding unit (pipeline doc §9.2). Bbox comes from the L1 parser, never from an LLM."""
+    type: str = Field(..., description=f"One of {CONTENT_BLOCK_TYPES}.")
+    text: str = Field("", description="Element text (tables: markdown; figures: caption + text inside the figure).")
+    order: int = Field(..., description="Position within the document.")
+    revision_id: str = Field(..., description="node_id of the SourceSnapshot this block belongs to.")
+    page: Optional[int] = Field(None, description="1-based page/slide number; None for DOCX.")
+    bbox: Optional[List[float]] = Field(None, description="[x0, y0, x1, y1], top-left origin, points.")
+    section_path: List[str] = Field(default_factory=list)
+    cells_json: Optional[str] = Field(None, description="Tables only: JSON grid, header row first.")
+    description: Optional[str] = Field(None, description="Visual blocks: L2 description (derived_by=vlm).")
+    description_status: Optional[str] = Field(None, description=f"Visual blocks only: one of {DESCRIPTION_STATUSES}.")
+    derived_by: str = Field(DERIVED_BY_TEXT, description=f"One of {DERIVED_BY_VALUES}.")
+    embedding: Optional[List[float]] = Field(None, description="1536-dim text-embedding-3-small of the block text.")
+
+    @validator('type')
+    def type_must_be_known(cls, v):
+        if v not in CONTENT_BLOCK_TYPES:
+            raise ValueError(f"type must be one of {CONTENT_BLOCK_TYPES}, got '{v}'")
+        return v
+
+    @validator('bbox')
+    def bbox_has_four_numbers(cls, v):
+        if v is not None and len(v) != 4:
+            raise ValueError("bbox must be [x0, y0, x1, y1]")
+        return v
+
+    @validator('description_status')
+    def description_status_known(cls, v):
+        if v is not None and v not in DESCRIPTION_STATUSES:
+            raise ValueError(f"description_status must be one of {DESCRIPTION_STATUSES}")
+        return v
+
+    @validator('derived_by')
+    def derived_by_known(cls, v):
+        if v not in DERIVED_BY_VALUES:
+            raise ValueError(f"derived_by must be one of {DERIVED_BY_VALUES}")
+        return v
+
 def validate_upsert(label: str, data: Dict[str, Any]):
     """
     Validation gate to be called before any Neo4j CREATE/MERGE.
@@ -463,6 +571,10 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         # Universal Source Connector Models (Phase A+) — see SOURCE_CONNECTOR_LABELS above
         'WebsiteSource': WebsiteSource,
         'SourceSnapshot': SourceSnapshot,
+        # Phase B documents (M2) — see DOCUMENT_GRAPH_NODES
+        'DocumentSource': DocumentSource,
+        'Section': SectionNode,
+        'ContentBlock': ContentBlockNode,
         # System/Infrastructure
         '__MetaContext__': InfrastructureNode
     }

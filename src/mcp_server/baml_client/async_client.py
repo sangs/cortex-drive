@@ -82,6 +82,21 @@ class BamlAsyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
+    async def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.DocumentGraphExtraction:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.ExtractDocumentGraph(parsed_content=parsed_content,vision_descriptions=vision_descriptions,document_title=document_title,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ExtractDocumentGraph", args={
+                "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+            })
+            return typing.cast(types.DocumentGraphExtraction, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def ExtractGraph(self, transcript: str,episode_title: str,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExtraction:
@@ -136,6 +151,18 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.DocumentGraphExtraction, types.DocumentGraphExtraction]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ExtractDocumentGraph", args={
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+        })
+        return baml_py.BamlStream[stream_types.DocumentGraphExtraction, types.DocumentGraphExtraction](
+          __result__,
+          lambda x: typing.cast(stream_types.DocumentGraphExtraction, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.DocumentGraphExtraction, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def ExtractGraph(self, transcript: str,episode_title: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.GraphExtraction, types.GraphExtraction]:
@@ -180,6 +207,13 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    async def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ExtractDocumentGraph", args={
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+        }, mode="request")
+        return __result__
     async def ExtractGraph(self, transcript: str,episode_title: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -209,6 +243,13 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    async def ExtractDocumentGraph(self, parsed_content: str,vision_descriptions: str,document_title: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ExtractDocumentGraph", args={
+            "parsed_content": parsed_content,"vision_descriptions": vision_descriptions,"document_title": document_title,
+        }, mode="stream")
+        return __result__
     async def ExtractGraph(self, transcript: str,episode_title: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
