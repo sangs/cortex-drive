@@ -702,7 +702,26 @@ class IngestionEngine:
                 existing.extend(x for x in getattr(part, field) if key(x) not in seen)
         from schema_guard import DOCUMENT_MAX_TOPICS
         merged.topics = merged.topics[:DOCUMENT_MAX_TOPICS]
-        return merged
+        return IngestionEngine._ground_extraction(merged, text)
+
+    @staticmethod
+    def _ground_extraction(extraction, text: str):
+        """Deterministic grounding backstop (Invariant 11; the AP-25 lesson that prompts alone don't
+        enforce grounding): keep a Person only if the name appears in the text outside email
+        addresses and URLs, and a ReferenceLink only if its URL appears in the text (ligatures
+        normalized). Concepts/technologies are paraphrased by design, so they aren't filtered."""
+        import unicodedata
+        normalized = unicodedata.normalize("NFKC", text or "")
+        lowered = normalized.lower()
+        prose = re.sub(r"\S+@\S+|https?://\S+|www\.\S+", " ", lowered)
+        extraction.people = [p for p in extraction.people
+                             if p.name and re.search(rf"\b{re.escape(p.name.lower().strip())}\b", prose)]
+        def url_present(url: str) -> bool:
+            u = unicodedata.normalize("NFKC", url or "").lower().strip().rstrip("/")
+            bare = re.sub(r"^https?://", "", u)
+            return bool(bare) and bare in lowered
+        extraction.reference_links = [l for l in extraction.reference_links if url_present(l.url)]
+        return extraction
 
     def _upsert_document_source(self, source, uri: str, content_hash: str):
         """DocumentSource identity = (tenant_id, uri), node_id set once on create; a new

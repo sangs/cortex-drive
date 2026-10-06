@@ -35,7 +35,7 @@ class DocumentRelationship {
 }
 
 function ExtractDocumentGraph(parsed_content: string, vision_descriptions: string, document_title: string, existing_topics: string) -> DocumentGraphExtraction {
-  client GPT4o
+  client GPT4oExtract
   prompt #"
     {{ ctx.output_format }}
 
@@ -52,6 +52,16 @@ function ExtractDocumentGraph(parsed_content: string, vision_descriptions: strin
     3. `reference_links`: only URLs that appear verbatim in the content. Never construct or
        complete a URL. Write ligatures as plain letters (e.g. "tensorflow", not "tensorﬂow").
     4. Numbers, scores and measurements are not entities.
+
+    COMPLETENESS RULES (be exhaustive within the content):
+    - `technologies`: EVERY named technology, product, platform, tool, library, framework, model,
+      dataset or benchmark that appears, even if it is only listed once (e.g. in a table or a bullet
+      list). Use the name as written, without generic suffixes like "library" or "tool".
+    - `concepts`: EVERY distinct idea, method or practice the content discusses, as short noun
+      phrases (e.g. "Decision traces", "Human-in-the-loop", "Fine-tuning").
+    - A typical 10-20 page document yields 15-60 entities. Do not stop at the most prominent few.
+    - Names: the plain canonical name, singular where natural, WITHOUT a parenthetical abbreviation
+      (write "Architecture Decision Record", not "Architecture Decision Record (ADR)").
 
     TOPIC RULES (topics connect this document to other sources, so they must be broad and shared):
     5. `topics`: 2 to 5 BROAD subject areas the whole document is about, each a short noun phrase of

@@ -2,9 +2,11 @@
 Phase B M2 entity-extraction check: scores document_extract.baml (GPT-4o) against a user-reviewed
 entity key. Parses each document with the production DoclingParser, builds the same text
 IngestionEngine sends to BAML, extracts, and scores:
-  - recall of "must find" entities (case-insensitive, aliases accepted)   target >= 0.80 per doc
+  - recall of "must find" entities (case-insensitive, aliases accepted, whole-word
+    containment either way; strict exact-match recall is reported too)  target >= 0.80 per doc
   - invented People / ReferenceLinks (not present in the document text)    target 0
   - trap hits ("must NOT appear")                                           target 0
+  - topics: 2-5 short phrases, at least one in the acceptable set           (topics are subjective)
 No Neo4j writes. Cost: one GPT-4o extraction per document (a few cents).
 
     .venv/bin/python scripts/eval_entity_extraction.py
@@ -50,23 +52,37 @@ def main() -> None:
         extraction = IngestionEngine._extract_document_entities(text, doc["title"])
         found = {t: {norm(x.name) for x in getattr(extraction, f)} for t, f in TYPE_FIELDS.items()}
         found["ReferenceLink"] = {norm(x.url) for x in extraction.reference_links}
+        topics = [norm(x.name) for x in extraction.topics]
+        acceptable = {norm(t) for t in doc.get("topics_acceptable", [])}
+        topics_ok = (2 <= len(topics) <= 5 and all(len(t.split()) <= 3 for t in topics)
+                     and (not acceptable or bool(acceptable & set(topics))))
         all_found = set().union(*found.values())
         text_n = norm(text)
 
-        must, hits, misses = 0, [], []
+        all_found_tolerant = all_found | set(topics)
+
+        def tolerant(name: str) -> bool:
+            """Whole-word containment either way (e.g. "tensor2tensor library" ~ "tensor2tensor")."""
+            return any(re.search(rf"\b{re.escape(name)}\b", f) or re.search(rf"\b{re.escape(f)}\b", name)
+                       for f in all_found_tolerant if f)
+
+        must, hits, misses, strict_hits = 0, [], [], 0
         for item in doc["must_find"]:
             names = {norm(item["name"])} | {norm(a) for a in item.get("aliases", [])}
             must += 1
-            (hits if names & all_found else misses).append(item["name"])
+            strict_hits += bool(names & all_found)
+            (hits if (names & all_found_tolerant or any(tolerant(n) for n in names)) else misses).append(item["name"])
         invented = sorted(n for n in found["Person"] | found["ReferenceLink"] if n and n not in text_n)
         traps = sorted(t for t in doc.get("must_not", []) if norm(t) in all_found)
         recall = len(hits) / must if must else None
         results["docs"][doc["id"]] = {
-            "recall": recall, "passed": (recall or 0) >= RECALL_TARGET and not invented and not traps,
+            "recall": recall, "recall_strict": strict_hits / must if must else None,
+            "topics": topics, "topics_ok": topics_ok,
+            "passed": (recall or 0) >= RECALL_TARGET and not invented and not traps and topics_ok,
             "missed": misses, "invented_people_or_links": invented, "trap_hits": traps,
             "extracted": {t: sorted(v) for t, v in found.items()},
         }
-        print(f"{doc['id']}: recall {recall:.2f} ({len(hits)}/{must}) | invented {invented} | traps {traps}")
+        print(f"{doc['id']}: recall {recall:.2f} ({len(hits)}/{must}; strict {strict_hits}/{must}) | invented {invented} | traps {traps} | topics {topics} ok={topics_ok}")
         if misses:
             print(f"   missed: {misses}")
     out = CHECK_DIR / f"results-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
