@@ -1,0 +1,5 @@
+# Phase B ingestion worker dependencies (documents/architecture/phase-b-document-ingestion-build-plan-2026-10-01.md).
+# Kept separate from requirements-docker.txt on purpose: Docling's layout/OCR models add several hundred MB,
+# and they must never be installed into the cortex-mcp image (decisions P4/P5, 2026-10-06).
+# The worker image (M3') installs requirements-docker.txt + this file.
+docling==2.131.0

@@ -26,6 +26,7 @@ import os
 import re
 import statistics
 import subprocess
+import sys
 import time
 import unicodedata
 import zipfile
@@ -459,7 +460,47 @@ class GeminiParser(VisionLLMParser):
             return {}
 
 
-PARSERS = {"pymupdf": PyMuPDFParser, "docling": DoclingParser, "documentai": DocumentAIParser,
+class DoclingProdParser:
+    """The production L1 parser (src/mcp_server/parsing/docling_parser.py, Phase B M1), scored with the
+    same answer key as the eval's Docling baseline. Regression gate: Phase B PDF-only overall >= 0.85."""
+    name = "docling_prod"
+    formats = {"pdf", "docx", "pptx"}
+    MIME_BY_FORMAT = {"pdf": "application/pdf",
+                      "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                      "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}
+
+    def __init__(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "mcp_server"))
+        from parsing.docling_parser import DoclingParser
+        from parsing.structure_parser import VISUAL_ELEMENT_TYPES, ELEMENT_TYPE_TABLE, ELEMENT_TYPE_HEADING, ELEMENT_TYPE_CHECKBOX
+        self.parser = DoclingParser()
+        self.visual, self.table, self.heading, self.checkbox = VISUAL_ELEMENT_TYPES, ELEMENT_TYPE_TABLE, ELEMENT_TYPE_HEADING, ELEMENT_TYPE_CHECKBOX
+
+    def parse(self, path: Path, fmt: str, pages: list) -> dict:
+        parsed = self.parser.parse(path.read_bytes(), self.MIME_BY_FORMAT[fmt], path.name)
+        out = {}
+        for e in parsed.elements:
+            if fmt == "docx" or e.page is None:
+                key = WHOLE_DOC_KEY
+            else:
+                key = pages[e.page - 1] if fmt == "pdf" else e.page   # pdf: sample page index → original page
+            target = out.setdefault(key, PageOutput())
+            if e.type == self.table:
+                target.tables.append(e.cells or [])
+            if e.type in self.visual:
+                size = parsed.page_sizes.get(e.page)
+                if not size or not e.bbox or e.bbox.area >= MIN_FIGURE_AREA_FRACTION * size[0] * size[1]:
+                    target.figures += 1
+            if e.type == self.heading:
+                target.headings.append(e.text)
+            if e.type == self.checkbox:
+                target.checkboxes[e.text] = bool(e.checked)
+            if e.text:
+                target.text += "\n" + e.text
+        return out
+
+
+PARSERS = {"pymupdf": PyMuPDFParser, "docling": DoclingParser, "docling_prod": DoclingProdParser, "documentai": DocumentAIParser,
            "llamaparse": LlamaParseParser, "claude": ClaudeParser, "gemini": GeminiParser}
 PAID_PARSERS = {"documentai", "llamaparse", "claude", "gemini"}
 
