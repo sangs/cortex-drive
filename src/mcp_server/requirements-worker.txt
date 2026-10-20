@@ -5,4 +5,7 @@
 # Licenses checked 2026-10-08 (clean-licenses rule): docling MIT (models: layout Apache-2.0,
 # TableFormer CDLA-Permissive-2.0; OCR RapidOCR Apache-2.0), anthropic MIT, pypdfium2 BSD-3/Apache-2.0.
 docling==2.131.0
+# Pinned 2026-10-20: unpinned rapidocr resolved to 3.10.0, which removed PP_OCRV6_LANGS that
+# docling 2.131 imports (the worker image build failed). 3.9.2 is the version the worker tests passed with.
+rapidocr==3.9.2
 anthropic==1.9.0
