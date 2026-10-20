@@ -627,7 +627,8 @@ class IngestionEngine:
 
     def process_document_source(self, *, uri: str, parsed, mime_type: str, content_hash: str,
                                 owner_id: str, filename: Optional[str] = None,
-                                title_hint: Optional[str] = None) -> Dict[str, Any]:
+                                title_hint: Optional[str] = None, http_etag: Optional[str] = None,
+                                http_last_modified: Optional[str] = None) -> Dict[str, Any]:
         """Write one revision of a document: DocumentSource + new SourceSnapshot + Sections +
         ContentBlocks (from the L1 parser's `parsed` ParsedDocument) + BAML entities with
         snapshot-scoped links, grounding, and stale-link/orphan cleanup. Called only when the
@@ -640,6 +641,7 @@ class IngestionEngine:
             'name': extraction.title or title, 'description': extraction.description,
             'uri': uri, 'mime_type': mime_type, 'filename': filename,
             'page_count': getattr(parsed, 'page_count', None),
+            'http_etag': http_etag, 'http_last_modified': http_last_modified,
         }
         validated = validate_upsert('DocumentSource', source_data)
         source_node_id, snapshot_id = self._upsert_document_source(validated, uri, content_hash)
@@ -652,6 +654,66 @@ class IngestionEngine:
         return {'source_node_id': source_node_id, 'snapshot_id': snapshot_id, 'blocks': len(block_ids),
                 'entities': len(entity_ids), 'grounded_links': grounded,
                 'removed_stale_links': removed_links, 'removed_orphans': removed_orphans}
+
+    def pending_visual_blocks(self, source_node_id: str, snapshot_id: str) -> list:
+        """Current-revision figure/chart blocks still waiting for an L2 description, in document order."""
+        from schema_guard import DESCRIPTION_STATUS_PENDING
+        with self.driver.session() as session:
+            rows = session.run(
+                """MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})-[:HAS_SECTION]->
+                         (:Section {revision_id: $snapshot_id})-[:HAS_BLOCK]->(b:ContentBlock)
+                   WHERE b.description_status = $pending
+                   RETURN b.node_id AS node_id, b.type AS type, b.page AS page, b.bbox AS bbox,
+                          b.text AS text, b.section_path AS section_path
+                   ORDER BY b.order""",
+                tenant_id=self.tenant_id, source_id=source_node_id, snapshot_id=snapshot_id,
+                pending=DESCRIPTION_STATUS_PENDING)
+            return [r.data() for r in rows]
+
+    def apply_figure_descriptions(self, *, source_node_id: str, snapshot_id: str, title: str,
+                                  descriptions: Dict[str, str]) -> Dict[str, Any]:
+        """Stage 2 (L2 results → graph): store each description on its block (derived_by=vlm,
+        re-embedded with the block text), run L3 on the descriptions, link the new entities to the
+        same snapshot with derived_by=vlm, ground them, and register them in Permify. Adds only:
+        never runs entity lifecycle, so stage-1 links are untouched. `descriptions` maps
+        ContentBlock node_id → description text."""
+        from schema_guard import (DESCRIPTION_STATUS_DESCRIBED, DERIVED_BY_VLM, DOCUMENT_EMBEDDING_MODEL,
+                                  DOCUMENT_EMBEDDING_BATCH_SIZE, DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION)
+        descriptions = {k: v for k, v in descriptions.items() if v and v.strip()}
+        if not descriptions:
+            return {'described': 0, 'entities': 0, 'grounded_links': 0}
+        with self.driver.session() as session:
+            texts = {r['id']: r['text'] or '' for r in session.run(
+                "MATCH (b:ContentBlock {tenant_id: $tenant_id}) WHERE b.node_id IN $ids RETURN b.node_id AS id, b.text AS text",
+                tenant_id=self.tenant_id, ids=list(descriptions))}
+        rows = [{'id': bid, 'description': desc, 'embed_text': (texts.get(bid, '') + "\n" + desc).strip()}
+                for bid, desc in descriptions.items() if bid in texts]
+        for start in range(0, len(rows), DOCUMENT_EMBEDDING_BATCH_SIZE):
+            batch = rows[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
+            response = self.client.embeddings.create(model=DOCUMENT_EMBEDDING_MODEL, input=[r['embed_text'] for r in batch])
+            for r, item in zip(batch, response.data):
+                r['embedding'] = item.embedding
+        with self.driver.session() as session:
+            session.run(
+                """UNWIND $rows AS row
+                   MATCH (b:ContentBlock {tenant_id: $tenant_id, node_id: row.id, revision_id: $snapshot_id})
+                   SET b.description = row.description, b.description_status = $described,
+                       b.derived_by = $vlm, b.embedding = row.embedding""",
+                rows=[{k: r[k] for k in ('id', 'description', 'embedding')} for r in rows],
+                tenant_id=self.tenant_id, snapshot_id=snapshot_id,
+                described=DESCRIPTION_STATUS_DESCRIBED, vlm=DERIVED_BY_VLM)
+        vision_text = "\n\n".join(f"[figure] {r['description']}" for r in rows
+                                   if r['description'] != DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION)
+        if not vision_text:
+            return {'described': len(rows), 'entities': 0, 'grounded_links': 0}
+        extraction = b.ExtractDocumentGraph(parsed_content="", vision_descriptions=vision_text, document_title=title,
+                                            existing_topics="(topics are set from the document text)")
+        extraction.topics = []                       # document-level topics come from stage 1 only
+        extraction = self._ground_extraction(extraction, vision_text)
+        entity_ids, _ = self._link_document_entities(source_node_id, snapshot_id, extraction, derived_by=DERIVED_BY_VLM)
+        grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
+        self._register_with_openfga([nid for nid in entity_ids if nid])
+        return {'described': len(rows), 'entities': len([i for i in entity_ids if i]), 'grounded_links': grounded}
 
     @staticmethod
     def _document_text(parsed) -> str:
@@ -828,7 +890,7 @@ class IngestionEngine:
                         tenant_id=self.tenant_id, snapshot_id=snapshot_id)
         return rec['block_ids'] if rec else []
 
-    def _link_document_entities(self, source_node_id: str, snapshot_id: str, extraction):
+    def _link_document_entities(self, source_node_id: str, snapshot_id: str, extraction, derived_by: str = 'text'):
         """MERGE entities (tenant-scoped, as the website path does) and link them to the source
         with `snapshot_id` on the relationship. Returns (entity node_ids, node_ids linked before
         this revision) — the latter feeds orphan cleanup."""
@@ -854,10 +916,11 @@ class IngestionEngine:
                         MERGE (e:{label} {{tenant_id: $tenant_id, name: $name}})
                         ON CREATE SET e.node_id = randomUUID(), e += $props
                         MERGE (d)-[r:{rel}]->(e)
-                        SET r.snapshot_id = $snapshot_id
+                        SET r.snapshot_id = $snapshot_id, r.derived_by = coalesce(r.derived_by, $derived_by)
                         RETURN e.node_id AS id""",
                     tenant_id=self.tenant_id, source_id=source_node_id, name=name.strip(),
-                    props={k: v for k, v in props.items() if v is not None}, snapshot_id=snapshot_id).single()
+                    props={k: v for k, v in props.items() if v is not None}, snapshot_id=snapshot_id,
+                    derived_by=derived_by).single()
                 ids.append(rec['id'] if rec else None)
             for link in extraction.reference_links:
                 if not link.url:
@@ -867,10 +930,10 @@ class IngestionEngine:
                        MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
                        ON CREATE SET l.node_id = randomUUID(), l.text = $text
                        MERGE (d)-[r:HAS_REFERENCE]->(l)
-                       SET r.snapshot_id = $snapshot_id
+                       SET r.snapshot_id = $snapshot_id, r.derived_by = coalesce(r.derived_by, $derived_by)
                        RETURN l.node_id AS id""",
                     tenant_id=self.tenant_id, source_id=source_node_id, url=link.url, text=link.text,
-                    snapshot_id=snapshot_id).single()
+                    snapshot_id=snapshot_id, derived_by=derived_by).single()
                 ids.append(rec['id'] if rec else None)
         return ids, before
 
@@ -908,7 +971,7 @@ class IngestionEngine:
         WITH d, collect(DISTINCT e) AS ents
         MATCH (d)-[:HAS_SECTION]->(:Section {{revision_id: $snapshot_id}})-[:HAS_BLOCK]->(b:ContentBlock)
         UNWIND ents AS e
-        WITH b, e WHERE toLower(b.text) CONTAINS toLower(e.name)
+        WITH b, e WHERE toLower(coalesce(b.text, '') + ' ' + coalesce(b.description, '')) CONTAINS toLower(e.name)
         MERGE (b)-[:GROUNDED_TO]->(e)
         RETURN count(*) AS n
         """

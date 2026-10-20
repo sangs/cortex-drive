@@ -495,6 +495,93 @@ async def register_website_source(
     return json.dumps(result)
 
 @mcp.tool()
+async def register_document_source(
+    url: str = Field(description="Public URL of a PDF, DOCX or PPTX document to ingest as a DocumentSource.")
+) -> str:
+    """
+    Queues a document at a public URL for ingestion by the Phase B worker (M3'). Validates the URL
+    (SSRF guard) and enqueues; never fetches or parses here (decision P4: Docling runs only in the
+    worker). Like register_website_source, reachable only from the UI's Add Source action, never
+    from the LLM's chat tool list. Poll get_document_source_status for progress.
+    """
+    from ingestion.adapters.web_url import validate_public_url
+    from worker.enqueue import EnqueueError, build_task, enqueue_document_ingestion
+    from worker.status import status_key, status_record
+    from schema_guard import DOCUMENT_INGEST_STATUS_QUEUED, DOCUMENT_INGEST_STATUS_TTL_SECONDS
+
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
+    if not user_id:
+        return json.dumps({"error": "No owner_id available for this request."})
+    url = (url or "").strip()
+    try:
+        validate_public_url(url)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    try:
+        result = await enqueue_document_ingestion(build_task(url, tenant_id, user_id))
+    except EnqueueError as e:
+        return json.dumps({"error": str(e)})
+    except Exception as e:
+        print(f"Error in register_document_source: {e}")
+        return json.dumps({"error": "Could not queue the document for ingestion."})
+    if not result.get("duplicate"):
+        try:
+            await _redis.setex(status_key(tenant_id, url), DOCUMENT_INGEST_STATUS_TTL_SECONDS,
+                               status_record(DOCUMENT_INGEST_STATUS_QUEUED, url))
+        except Exception as e:
+            print(f"register_document_source: status write failed (non-fatal): {e}")
+    return json.dumps({"queued": True, "duplicate": bool(result.get("duplicate")), "url": url,
+                       "message": "Already queued — processing will finish shortly." if result.get("duplicate")
+                       else "Queued. Text is usually searchable within a few minutes."})
+
+@mcp.tool()
+async def get_document_source_status(
+    url: str = Field(description="The document URL passed to register_document_source.")
+) -> str:
+    """
+    Ingestion progress for a document URL in this tenant: queued, running, done, unchanged or
+    failed (from the worker's status record), plus the graph's view once a revision exists.
+    UI-only, like register_document_source.
+    """
+    from worker.status import parse_status, status_key
+
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    url = (url or "").strip()
+    try:
+        status = parse_status(await _redis.get(status_key(tenant_id, url)))
+    except Exception as e:
+        print(f"get_document_source_status: status read failed (non-fatal): {e}")
+        status = None
+
+    def _graph_view() -> dict:
+        from neo4j import GraphDatabase
+        from schema_guard import DESCRIPTION_STATUS_PENDING
+        driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
+                                      auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+        try:
+            with driver.session() as session:
+                rec = session.run(
+                    """MATCH (d:DocumentSource {tenant_id: $tenant_id, uri: $uri})
+                       OPTIONAL MATCH (d)-[:HAS_SECTION]->(:Section {revision_id: d.current_snapshot_id})-[:HAS_BLOCK]->(b:ContentBlock)
+                       RETURN d.node_id AS node_id, d.name AS name, d.page_count AS pages, d.last_synced_at AS last_synced_at,
+                              count(b) AS blocks,
+                              count(CASE WHEN b.description_status = $pending THEN 1 END) AS figures_pending""",
+                    tenant_id=tenant_id, uri=url, pending=DESCRIPTION_STATUS_PENDING).single()
+                return dict(rec) if rec and rec["node_id"] else {}
+        finally:
+            driver.close()
+
+    try:
+        graph = await asyncio.to_thread(_graph_view)
+    except Exception as e:
+        print(f"get_document_source_status: graph lookup failed: {e}")
+        graph = {}
+    if not status and not graph:
+        return json.dumps({"state": "unknown", "url": url})
+    return json.dumps({**(status or {"state": "done", "url": url}), "graph": graph})
+
+@mcp.tool()
 async def search_enterprise_graph(
     keyword: str = Field(description="The search term to find across the graph (e.g., 'startup', 'BAML', 'Iceberg', 'Kafka')."),
     domain_intent: str = Field("all", description="The domain sandbox to search within. Allowed values: 'professional' (Resume), 'podcast' (Episodes/Chunks), 'federated' (External Silos), or 'all'."),

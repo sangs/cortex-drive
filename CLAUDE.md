@@ -138,6 +138,7 @@ no diagram.
 | Anti-pattern full narratives | `documents/architecture/anti-pattern-catalog.md` | This file (one-liners only here) |
 | Security / GACL decisions | `documents/security/` | Code comments |
 | Sprint / pending work | `documents/daily_logs/daily_log-<date>.md` | This file |
+| Features and guardrails (demo, pitch, architecture reference) | `documents/cortex-drive-reference.md`; update it in the same change that adds or changes a feature or guardrail | Pitch decks, demo scripts |
 | IcePanel diagram index (C4 model + Flows) | `documents/architecture/icepanel-diagrams.md` | IcePanel UI (Flows only — model is YAML-sourced from `documents/architecture/icepanel/landscape-2026-09-21.yaml`) |
 
 ---

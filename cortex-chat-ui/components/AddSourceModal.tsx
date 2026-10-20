@@ -1,41 +1,122 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Globe, Loader2, CheckCircle2 } from 'lucide-react';
+import { X, Globe, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+// Phase B M3': the Document option is off unless the deployment enables it (feature flag).
+const DOCUMENT_SOURCES_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES === 'true';
+const DOCUMENT_STATUS_POLL_MS = 5000;
+const DOCUMENT_STATUS_POLL_LIMIT = 120;   // stop polling after 10 minutes; the worker keeps going
+const DOCUMENT_FINAL_STATES = new Set(['done', 'unchanged', 'failed']);
 
 interface AddSourceModalProps {
     open: boolean;
     onClose: () => void;
 }
 
-type Status = 'idle' | 'submitting' | 'success' | 'error';
+type Status = 'idle' | 'submitting' | 'processing' | 'success' | 'error';
+type SourceKind = 'website' | 'document';
+
+const parsePayload = async (resp: Response) => {
+    const data = await resp.json();
+    return data.content?.[0]?.text ? JSON.parse(data.content[0].text) : data;
+};
 
 export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
     const { getToken } = useAuth();
     const [url, setUrl] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [message, setMessage] = useState('');
+    const [kind, setKind] = useState<SourceKind>('website');
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const stopPolling = useCallback(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+    }, []);
+
+    useEffect(() => stopPolling, [stopPolling]);
 
     const reset = useCallback(() => {
+        stopPolling();
         setUrl('');
         setStatus('idle');
         setMessage('');
-    }, []);
+    }, [stopPolling]);
 
     const handleClose = useCallback(() => {
         reset();
         onClose();
     }, [reset, onClose]);
 
+    const postTool = useCallback(async (tool: string, body: object) => {
+        const token = await getToken();
+        const resp = await fetch(`${GATEWAY}/api/${tool}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(body),
+        });
+        if (resp.status === 403) return { error: (await resp.json()).error || 'Not allowed.' };
+        return parsePayload(resp);
+    }, [getToken]);
+
+    const pollDocumentStatus = useCallback((docUrl: string) => {
+        let polls = 0;
+        stopPolling();
+        pollRef.current = setInterval(async () => {
+            polls += 1;
+            try {
+                const s = await postTool('get_document_source_status', { url: docUrl });
+                if (s.state === 'done' || s.state === 'unchanged') {
+                    stopPolling();
+                    setStatus('success');
+                    setMessage(s.state === 'unchanged'
+                        ? 'Already up to date — the document has not changed since the last ingestion.'
+                        : `Ingested: ${s.graph?.name || docUrl}${s.graph?.figures_pending ? ` (${s.graph.figures_pending} figure description(s) pending)` : ''}`);
+                } else if (s.state === 'failed') {
+                    stopPolling();
+                    setStatus('error');
+                    setMessage(s.error || 'Ingestion failed.');
+                } else {
+                    setMessage(s.state === 'running' ? 'Processing the document…' : 'Queued…');
+                }
+            } catch { /* transient; keep polling */ }
+            if (polls >= DOCUMENT_STATUS_POLL_LIMIT && pollRef.current) {
+                stopPolling();
+                setStatus('success');
+                setMessage('Still processing in the background. It will appear in the graph when done.');
+            }
+        }, DOCUMENT_STATUS_POLL_MS);
+    }, [postTool, stopPolling]);
+
     const handleSubmit = useCallback(async () => {
         if (!url.trim()) return;
         setStatus('submitting');
         setMessage('');
+        if (kind === 'document') {
+            try {
+                const payload = await postTool('register_document_source', { url: url.trim() });
+                if (payload.error) {
+                    setStatus('error');
+                    setMessage(payload.error);
+                } else {
+                    setStatus('processing');
+                    setMessage(payload.message || 'Queued…');
+                    pollDocumentStatus(url.trim());
+                }
+            } catch (e: any) {
+                setStatus('error');
+                setMessage(e?.message || 'Failed to reach the server.');
+            }
+            return;
+        }
         try {
             const token = await getToken();
             const resp = await fetch(`${GATEWAY}/api/register_website_source`, {
@@ -62,7 +143,7 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
             setStatus('error');
             setMessage(e?.message || 'Failed to reach the server.');
         }
-    }, [url, getToken]);
+    }, [url, kind, getToken, postTool, pollDocumentStatus]);
 
     if (!open) return null;
 
@@ -86,7 +167,7 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                     <div className="flex items-start justify-between mb-5">
                         <div>
                             <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 mb-0.5">Add Source</p>
-                            <h3 className="text-base font-bold text-white leading-tight">Register a website</h3>
+                            <h3 className="text-base font-bold text-white leading-tight">{kind === 'document' ? 'Register a document' : 'Register a website'}</h3>
                         </div>
                         <button onClick={handleClose} className="p-1.5 rounded-xl hover:bg-white/5 text-slate-500 hover:text-white transition-all">
                             <X className="w-4 h-4" />
@@ -94,15 +175,29 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                     </div>
 
                     <div className="space-y-4">
+                        {DOCUMENT_SOURCES_ENABLED && (
+                            <div className="flex gap-2">
+                                {(['website', 'document'] as SourceKind[]).map(k => (
+                                    <button
+                                        key={k}
+                                        onClick={() => { if (status !== 'submitting' && status !== 'processing') { setKind(k); setStatus('idle'); setMessage(''); } }}
+                                        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${kind === k ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-300' : 'bg-white/5 border-white/10 text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        {k === 'document' ? <FileText className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+                                        {k === 'document' ? 'Document (PDF, DOCX, PPTX)' : 'Website'}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
-                            <Globe className="w-4 h-4 text-slate-500 shrink-0" />
+                            {kind === 'document' ? <FileText className="w-4 h-4 text-slate-500 shrink-0" /> : <Globe className="w-4 h-4 text-slate-500 shrink-0" />}
                             <input
                                 type="url"
                                 value={url}
                                 onChange={e => setUrl(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' && status !== 'submitting') handleSubmit(); }}
-                                placeholder="https://example.com/article"
-                                disabled={status === 'submitting'}
+                                onKeyDown={e => { if (e.key === 'Enter' && status !== 'submitting' && status !== 'processing') handleSubmit(); }}
+                                placeholder={kind === 'document' ? 'https://example.com/report.pdf' : 'https://example.com/article'}
+                                disabled={status === 'submitting' || status === 'processing'}
                                 className="bg-transparent text-sm text-slate-200 placeholder:text-slate-600 flex-1 outline-none disabled:opacity-50"
                                 autoFocus
                             />
@@ -111,7 +206,13 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                         {status === 'submitting' && (
                             <p className="text-[11px] text-slate-500 flex items-center gap-2">
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Ingesting page… this can take up to 30s.
+                                {kind === 'document' ? 'Queuing the document…' : 'Ingesting page… this can take up to 30s.'}
+                            </p>
+                        )}
+                        {status === 'processing' && (
+                            <p className="text-[11px] text-slate-400 flex items-center gap-2">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                {message} You can close this window; processing continues.
                             </p>
                         )}
                         {status === 'success' && (
@@ -134,10 +235,10 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                         ) : (
                             <button
                                 onClick={handleSubmit}
-                                disabled={status === 'submitting' || !url.trim()}
+                                disabled={status === 'submitting' || status === 'processing' || !url.trim()}
                                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50"
                             >
-                                {status === 'submitting' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+                                {status === 'submitting' || status === 'processing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : kind === 'document' ? <FileText className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
                                 {status === 'error' ? 'Retry' : 'Ingest'}
                             </button>
                         )}

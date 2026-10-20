@@ -112,6 +112,47 @@ DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP = {'Concept': 'DISCUSSES', 'Technology': 'C
 DOCUMENT_MAX_TOPICS = 5
 DOCUMENT_TOPIC_CANDIDATES_LIMIT = 200
 
+# --- Phase B M3': ingestion worker + document-URL source (2026-10-08) ---
+# Fetching (ingestion/adapters/document_url.py). Every redirect hop is re-validated against the
+# SSRF guard, so these bound both size and the number of hops.
+DOCUMENT_FETCH_MAX_BYTES = 50 * 1024 * 1024
+DOCUMENT_FETCH_TIMEOUT_SECONDS = 60
+DOCUMENT_FETCH_MAX_REDIRECTS = 5
+DOCUMENT_FETCH_USER_AGENT = 'Cortex-Drive-Document-Ingest/1.0'
+# Synchronous L2 (the user is waiting, "Add Source"): only documents up to this many pages get their
+# figures described inline; larger ones keep description_status=pending for the stage-2 batch (M4').
+DOCUMENT_SYNC_L2_MAX_PAGES = 30
+DOCUMENT_SYNC_L2_MAX_FIGURES = 40          # cost cap per document on the synchronous path
+DOCUMENT_FIGURE_MIN_AREA_FRACTION = 0.02   # skip icons/logos: figure bbox below this share of the page
+# Stored as the description of figures that are only logos/icons/decoration (too small to describe, or
+# judged decorative by L2): marks them done so they are never re-sent, and keeps them out of L3 extraction.
+DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION = '(decorative image)'
+DOCUMENT_FIGURE_RENDER_SCALE = 2.0         # PDF points → pixels for figure crops (144 dpi)
+DOCUMENT_FIGURE_CROP_MARGIN_POINTS = 6
+# L2 visual describer (parsing/visual_describer.py): the model and effort the parser eval approved.
+VISUAL_DESCRIBER_MODEL = 'claude-opus-5-5'
+VISUAL_DESCRIBER_EFFORT = 'medium'
+VISUAL_DESCRIBER_MAX_OUTPUT_TOKENS = 2000
+VISUAL_DESCRIBER_TIMEOUT_SECONDS = 180
+VISUAL_DESCRIBER_MAX_RETRIES = 2
+# Ingestion job status (Redis, read by get_document_source_status). Never stored in the graph.
+DOCUMENT_INGEST_STATUS_QUEUED = 'queued'
+DOCUMENT_INGEST_STATUS_RUNNING = 'running'
+DOCUMENT_INGEST_STATUS_DONE = 'done'
+DOCUMENT_INGEST_STATUS_UNCHANGED = 'unchanged'
+DOCUMENT_INGEST_STATUS_FAILED = 'failed'
+DOCUMENT_INGEST_STATUSES = [DOCUMENT_INGEST_STATUS_QUEUED, DOCUMENT_INGEST_STATUS_RUNNING, DOCUMENT_INGEST_STATUS_DONE,
+                            DOCUMENT_INGEST_STATUS_UNCHANGED, DOCUMENT_INGEST_STATUS_FAILED]
+DOCUMENT_INGEST_STATUS_KEY_PREFIX = 'docingest'
+DOCUMENT_INGEST_STATUS_TTL_SECONDS = 7 * 24 * 3600
+# One worker per (tenant, document) at a time: a second run for the same document exits without
+# touching the graph. Longer than the job's task timeout (2h) so a live run never loses its lock;
+# the expiry frees the document if a run crashes without releasing it.
+DOCUMENT_INGEST_JOB_TIMEOUT_SECONDS = 2 * 3600           # Cloud Run job task timeout (build-deploy-worker.sh reads it)
+DOCUMENT_INGEST_LOCK_TTL_SECONDS = DOCUMENT_INGEST_JOB_TIMEOUT_SECONDS + 30 * 60
+# Test tenants (tests/test_tenant.py): the worker never writes Permify tuples for them (user rule).
+TEST_TENANT_ID_PREFIX = 'cortex-test-'
+
 # --- Discovery Logic Constants (Landmarks) ---
 # High-Fidelity backbone nodes that serve as the primary landmarks in discovery.
 # These appear as prominent "Sun" nodes in the initial graph expansion.
@@ -482,6 +523,8 @@ class DocumentSource(SourceBaseModel, EmbeddableNodeMixin):
     filename: Optional[str] = Field(None, description="Original file name, if known.")
     page_count: Optional[int] = Field(None, description="Pages (PDF) or slides (PPTX); None for DOCX.")
     extraction_method: str = Field("docling", description="L1 StructureParser that produced the blocks.")
+    http_etag: Optional[str] = Field(None, description="ETag from the last fetch; a cheap has_changed() check before hashing.")
+    http_last_modified: Optional[str] = Field(None, description="Last-Modified from the last fetch (same use as http_etag).")
 
 
 class SectionNode(Neo4jBaseModel):

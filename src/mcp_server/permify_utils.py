@@ -58,9 +58,10 @@ def _schema_version() -> str:
 async def _get_headers() -> dict:
     h = {"Content-Type": "application/json"}
     token = os.environ.get("PERMIFY_API_TOKEN", "")
-    if not token and os.environ.get("K_SERVICE"):
+    if not token and (os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB")):
         # Running in Cloud Run — fetch a fresh GCP OIDC token from the metadata server.
-        # K_SERVICE is set by Cloud Run on every revision; absent in local dev.
+        # K_SERVICE is set on every service revision, CLOUD_RUN_JOB on every job execution (the
+        # Phase B ingestion worker); both are absent in local dev.
         # Uses httpx (already a dependency) so no extra package is needed.
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:

@@ -4050,6 +4050,19 @@ app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 app.post('/api/register_website_source', authMiddleware, mcpToolEndpoint('register_website_source'));
 
+// Source-registration writes are for signed-in tenant users only: a guest share link
+// (req.guestAuth, read-only by design) or the trial identity must never add sources to a tenant.
+const NON_WRITER_USER_IDS = new Set(['guest-auth', 'trial-user']);
+const requireSourceWriter = (req, res, next) => {
+    if (req.guestAuth === true || NON_WRITER_USER_IDS.has(req.headers['x-user-id'] || '')) {
+        return res.status(403).json({ error: 'Adding sources requires a signed-in account.' });
+    }
+    return next();
+};
+// Phase B M3': documents are queued for the ingestion worker; cortex-mcp never parses them.
+app.post('/api/register_document_source', authMiddleware, requireSourceWriter, mcpToolEndpoint('register_document_source'));
+app.post('/api/get_document_source_status', authMiddleware, requireSourceWriter, mcpToolEndpoint('get_document_source_status'));
+
 // Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because
 // app.use() strips the full mount path before the middleware sees req.url, so
 // pathRewrite: {'^/api': ''} would match '/' → forward to bento root → 404.

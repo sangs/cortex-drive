@@ -1,0 +1,17 @@
+# Phase B ingestion worker (Cloud Run job, M3'). Built by scripts/build-deploy-worker.sh from a staged
+# context holding src/mcp_server/ and prompts/ (the figure-describer prompt), laid out as in the repo
+# so prompt paths resolve the same way locally and in the image.
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app/src/mcp_server
+COPY src/mcp_server/requirements-docker.txt src/mcp_server/requirements-worker.txt ./
+# CPU-only torch wheels (Docling's models): the default index pulls multi-GB CUDA builds.
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements-docker.txt -r requirements-worker.txt
+# Bake Docling's models into the image so no run downloads them.
+ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models
+RUN docling-tools models download layout tableformer rapidocr -o /opt/docling-models
+COPY src/mcp_server/ ./
+COPY prompts/ /app/prompts/
+CMD ["python", "-m", "worker.ingest_document"]
