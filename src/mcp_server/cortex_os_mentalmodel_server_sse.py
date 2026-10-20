@@ -364,12 +364,12 @@ async def get_people_by_episode_tool(
 
 @mcp.tool()
 async def run_cypher_query(
-    query: str = Field(description="The raw Cypher query to execute. Always use $tenant_id for data isolation.")
+    query: str = Field(description="A read-only Cypher query. Filter with $tenant_id.")
 ) -> str:
     """
-    Execute a raw Cypher query against the Neo4j graph.
-    Use this for surgical precision, complex joins, or counting nodes when pre-built tools are insufficient.
-    Returns JSON results. NOTE: Sensitive node traversals are blocked for non-owner users.
+    Owner-only, READ-ONLY raw Cypher (S2-20, AP-26): non-owners are refused, write/admin keywords
+    are refused, the query runs in a READ-access transaction (the database rejects writes), and
+    other tenants' nodes are withheld from the result. Not offered to the chat LLM or to guests.
     """
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
     user_id = user_id_var.get() or ""

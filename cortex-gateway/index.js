@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } = require('./utils/intent_classifier');
+const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -2702,20 +2703,6 @@ const mcpToolsDefinitions = [
     {
         type: "function",
         function: {
-            name: "run_cypher_query",
-            description: "Execute a raw Cypher query against the Neo4j graph. Use this for surgical precision, complex joins, or counting nodes (e.g., 'How many episodes?'). Always include 'WHERE n.tenant_id = $tenant_id'.",
-            parameters: {
-                type: "object",
-                properties: {
-                    query: { type: "string", description: "The Cypher query string." }
-                },
-                required: ["query"]
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
             name: "get_node_details",
             description: "Fetch all properties and labels for a specific node by its 'name'. Use this to 'enrich' your knowledge of an entity once you have its name from a search.",
             parameters: {
@@ -2839,17 +2826,14 @@ const HR_SAFE_LABELS = [
 ];
 
 /**
- * Security Middleware to enforce HR-Safe boundaries for Guest users.
+ * Guest share-link turns (req.guestAuth, set only by guestTokenMiddleware) get the guest security
+ * prompt. The prompt is guidance only: the binding guest restriction is the tool allowlist in
+ * utils/tool_policy.js (S2-20). Replaces a securityMiddleware that was never mounted on any route
+ * and keyed on 'trial-user' instead of the guest identity.
  */
-const securityMiddleware = (req, res, next) => {
-    const userId = req.headers['x-user-id'];
-    const isGuest = userId === 'trial-user';
-
-    if (isGuest) {
-        req.securityPrompt = "\n" + gatewaySecurityPrompt;
-    }
-    next();
-};
+function securityPromptFor(req) {
+    return req.guestAuth === true ? "\n" + gatewaySecurityPrompt : '';
+}
 
 // --- Conversation History Endpoints ---
 // Private to the creating user — gated by a plain user_sub match, not routed through
@@ -2988,7 +2972,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
         console.log(`[FGA/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
 
-        let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '');
+        let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req));
         if (accessScope === 'restricted') {
             baseSystemPrompt = 'NOTE: This query is executing with restricted node access. ' +
                 'If you cannot find data, explicitly state that access is unavailable. ' +
@@ -3002,6 +2986,9 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
+        // Tools this turn may use (S2-20): guests get the read-only allowlist; raw query tools never.
+        const offeredTools = toolsOfferedFor({ isGuest: req.guestAuth === true }, mcpToolsDefinitions);
+        const offeredNames = offeredToolNames(offeredTools);
         let graphNodes = [];
         let graphLinks = [];
         const sseSeenUrls = new Set(); // accumulate tool-result URLs for grounding audit
@@ -3013,7 +3000,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: messages,
-                tools: mcpToolsDefinitions,
+                tools: offeredTools,
                 tool_choice: "auto",
             });
 
@@ -3029,6 +3016,11 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
             if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                 for (const toolCall of assistantMessage.tool_calls) {
                     const toolName = toolCall.function.name;
+                    if (!offeredNames.has(toolName)) {
+                        console.warn(`[SECURITY] Refused tool not offered this turn: ${toolName} (guest=${req.guestAuth === true})`);
+                        messages.push(refusedToolMessage(toolCall));
+                        continue;
+                    }
                     const toolArgs = JSON.parse(toolCall.function.arguments);
                     
                     console.log(`[SSE LOOP ${loopCount}] Executing ${toolName}`);
@@ -3371,7 +3363,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         const restrictionNote = accessScope === 'restricted'
             ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
             : '';
-        const systemPrompt = restrictionNote + gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', req.securityPrompt || '') + domainInstruction;
+        const systemPrompt = restrictionNote + gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req)) + domainInstruction;
         let messages = [
             { role: "system", content: systemPrompt },
             ...(history || []),
@@ -3385,6 +3377,9 @@ app.post('/query', authMiddleware, async (req, res) => {
 
         let loopCount = 0;
         const MAX_LOOPS = 5;
+        // Tools this turn may use (S2-20): guests get the read-only allowlist; raw query tools never.
+        const offeredTools = toolsOfferedFor({ isGuest: req.guestAuth === true }, mcpToolsDefinitions);
+        const offeredNames = offeredToolNames(offeredTools);
 
         // Set when any tool call in this turn fails/times out (see the catch around
         // callMcpTool below) OR returns an in-band {"error": ...} result (isToolErrorResult —
@@ -3452,7 +3447,7 @@ app.post('/query', authMiddleware, async (req, res) => {
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: messages,
-                tools: mcpToolsDefinitions,
+                tools: offeredTools,
                 tool_choice: "auto",
             });
 
@@ -3462,6 +3457,11 @@ app.post('/query', authMiddleware, async (req, res) => {
             if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                 for (const toolCall of assistantMessage.tool_calls) {
                     const toolName = toolCall.function.name;
+                    if (!offeredNames.has(toolName)) {
+                        console.warn(`[SECURITY] Refused tool not offered this turn: ${toolName} (guest=${req.guestAuth === true})`);
+                        messages.push(refusedToolMessage(toolCall));
+                        continue;
+                    }
                     const toolArgs = JSON.parse(toolCall.function.arguments);
 
                     // Career domain: wants_visual_map=true returns backbone-only skeleton nodes

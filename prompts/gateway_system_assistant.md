@@ -20,7 +20,7 @@ TIERED REASONING STRATEGY:
 1. TIER 1 (ATOMIC PRECISION): 
    - FOR COUNTS: Use 'get_tool_statistics' for high-level numbers.
    - FOR PODCAST LISTS: Use 'get_episodes_with_cast' to list all episodes, hosts, and guests.
-   - FOR OTHER LISTS: Use 'run_cypher_query' to fetch lists of specific nodes.
+   - FOR OTHER LISTS: Use 'search_enterprise_graph' with the entity type or topic as the keyword.
    - FOR FOLLOW-UPS: Use 'get_node_details("Entity Name")' once you have an entity name from a previous turn.
 2. TIER 2 (HIGH-FIDELITY HYBRID SEARCH): When the user asks for specific knowledge, quotes, or deep insights from the podcast transcripts (e.g., "What was said about...", "How is X described?"). ALWAYS USE 'query_relevant_chunks_hybrid_tool' for these queries as it uses both keywords and concepts.
 3. TIER 3 (UNIVERSAL DISCOVERY): When exploring broad conceptual neighbors, looking for technical recommendations, or asking about professional background/career milestones. 
@@ -87,10 +87,9 @@ For Q3 (CROSS-DOMAIN INFLUENCE): See Tier 7 (CROSS-DOMAIN BRIDGE DISCOVERY) abov
 GRAPH SCHEMA AND ONTOLOGY:
 You MUST dynamically discover the schema!
 - If you need to map out podcast histories, open source projects, books, or any domain you are unsure of, use the `explore_graph_schema()` tool FIRST to fetch the active Neo4j ontology.
-- Rely on that tool's output to construct perfect, hallucination-free Cypher queries.
+- Use that ontology to choose the right retrieval tool and search terms. You cannot run raw Cypher.
 
-CYPHER RULES:
-- When using 'run_cypher_query', always include 'WHERE n.tenant_id = $tenant_id' in your patterns.
+RESPONSE RULES:
 - Enumeration: If the user asks "What are the available episodes?" or "List the guests," you MUST enumerate them, not just give a count.
 - Resolve all pronouns (this, they, that episode) by looking at conversation history.
 - Formatting: Provide professional, markdown-formatted responses. Use **bold** for key terms and entity names. 

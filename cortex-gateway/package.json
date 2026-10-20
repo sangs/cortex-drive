@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/verify_intent_classification.js"
+    "test": "node tests/verify_intent_classification.js && node tests/verify_tool_policy.js"
   },
   "keywords": [],
   "author": "",

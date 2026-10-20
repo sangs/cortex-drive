@@ -1119,39 +1119,59 @@ class ExpertTools:
 
     def run_cypher_query(self, query: str, requesting_user_id: str = "", schema_readable: bool = False) -> str:
         """
-        Execute a raw Cypher query against the Neo4j graph.
+        Execute a raw, READ-ONLY Cypher query for the workspace owner (S2-20, AP-26).
+
+        Defense in depth, each layer independent:
+          1. Owner only: requesting_user_id (gateway-assigned, AP-23) must equal OWNER_USER_ID.
+          2. Write keywords refused before execution (RAW_CYPHER_WRITE_PATTERNS).
+          3. Executed in a READ-access transaction: the database itself rejects any write.
+          4. Returned nodes from tenants other than the caller's (and SYSTEM/PUBLIC) are withheld.
+        Never offered to the chat LLM or to guests (gateway tool lists).
         """
+        from schema_guard import RAW_CYPHER_WRITE_PATTERNS
+
         owner_user_id = os.environ.get("OWNER_USER_ID", "")
-        is_owner = bool(owner_user_id and requesting_user_id == owner_user_id)
-
-        if not is_owner and not schema_readable:
-            INTRO_KEYWORDS = ["CALL", "db.labels", "db.schema", "SHOW", "db.relationshipTypes", "introspection"]
-            if any(k.lower() in query.lower() for k in INTRO_KEYWORDS):
-                return json.dumps({"error": "Access Denied: Schema Readable permission required for introspection."})
-
-        if not is_owner:
-            FORBIDDEN_PATTERNS = [
-                (r"<-\s*\[\s*:CONTAINS", "Backward traversal into Chunk"),
-                (r"<-\s*\[\s*:HAS_SOURCE", "Backward traversal into Source"),
-                (r"\(\s*\w*\s*:PreparatoryNote", "Direct access to PreparatoryNote"),
-                (r":HAS_PRIVATE_NOTE", "Traversal via HAS_PRIVATE_NOTE"),
-                (r"\(\s*\w*\s*:Chunk\b", "Direct access to Chunk"),
-                (r"\(\s*\w*\s*:ResumeChunk", "Direct access to ResumeChunk"),
-            ]
-
-            for pattern, reason in FORBIDDEN_PATTERNS:
-                if re.search(pattern, query, re.IGNORECASE):
-                    return json.dumps({"error": f"Query blocked by security policy: {reason}"})
-
+        if not (owner_user_id and requesting_user_id == owner_user_id):
+            return json.dumps({"error": "Access Denied: run_cypher_query is restricted to the workspace owner."})
+        for pattern in RAW_CYPHER_WRITE_PATTERNS:
+            if re.search(pattern, query, re.IGNORECASE):
+                return json.dumps({"error": "Query blocked: run_cypher_query is read-only (write or admin keyword found)."})
         try:
-            result = self._exec_query(
-                query,
-                **self._security_params(),
-            )
-            output = [record.data() for record in result.records]
-            return json.dumps(output, indent=2)
+            result = self._run_read_only(query)
+            rows, withheld = self._filter_foreign_tenant_values([record.data() for record in result.records])
+            payload = {"rows": rows}
+            if withheld:
+                payload["withheld_nodes"] = withheld
+            return json.dumps(payload, indent=2, default=neo4j_default)
         except Exception as e:
             return json.dumps({"error": str(e)})
+
+    def _run_read_only(self, query: str):
+        """Execute in a READ-access transaction; Neo4j rejects writes server-side (AccessMode error)."""
+        from neo4j import RoutingControl
+        return self.driver.execute_query(cast(LiteralString, query), routing_=RoutingControl.READ,
+                                         **self._security_params())
+
+    def _filter_foreign_tenant_values(self, rows: list) -> tuple:
+        """Withhold any returned node (a dict carrying tenant_id) that belongs to another tenant.
+        Scalars (counts, names) can't be attributed and pass through; the tool is owner-only."""
+        from schema_guard import RAW_CYPHER_VISIBLE_TENANTS
+        visible = set(RAW_CYPHER_VISIBLE_TENANTS) | {self.tenant_id}
+        withheld = 0
+
+        def clean(value):
+            nonlocal withheld
+            if isinstance(value, dict):
+                if 'tenant_id' in value and value['tenant_id'] not in visible:
+                    withheld += 1
+                    return None
+                return {k: clean(v) for k, v in value.items()}
+            if isinstance(value, list):
+                kept = [clean(v) for v in value]
+                return [v for v in kept if v is not None]
+            return value
+
+        return [clean(row) for row in rows], withheld
 
     def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
         """

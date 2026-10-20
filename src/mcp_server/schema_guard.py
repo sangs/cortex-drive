@@ -48,6 +48,20 @@ SOURCE_CONNECTOR_LABELS = [
 
 SOURCE_CONNECTOR_STATUSES = ['active', 'paused', 'error', 'deprecated']
 
+# --- Raw Cypher tool guard (S2-20, AP-26; 2026-10-19) ---
+# ExpertTools.run_cypher_query is owner-only, runs in a READ-access transaction (the database
+# rejects writes), and is never offered to the chat LLM. These patterns are the second layer: a
+# clear refusal before the query reaches the database. Matched case-insensitively on word boundaries.
+RAW_CYPHER_WRITE_PATTERNS = [
+    r'\bCREATE\b', r'\bMERGE\b', r'\bSET\b', r'\bDELETE\b', r'\bDETACH\b', r'\bREMOVE\b',
+    r'\bDROP\b', r'\bFOREACH\b', r'\bLOAD\s+CSV\b', r'\bIN\s+TRANSACTIONS\b',
+    r'\bCALL\s+dbms\.', r'\bCALL\s+db\.(create|drop|index|clearQueryCaches)', r'\bCALL\s+apoc\.',
+    r'\bGRANT\b', r'\bREVOKE\b', r'\bDENY\b', r'\bALTER\b', r'\bTERMINATE\b', r'\bSTART\s+DATABASE\b',
+    r'\bSTOP\s+DATABASE\b',
+]
+# Tenants whose nodes may appear in raw-Cypher results besides the caller's own (Invariant 9).
+RAW_CYPHER_VISIBLE_TENANTS = ['SYSTEM', 'PUBLIC']
+
 # --- Phase B documents (M2, 2026-10-06) ---
 # documents/architecture/phase-b-document-ingestion-build-plan-2026-10-01.md and
 # multimodal-document-processing-pipeline-2026-08-19.md §2/§9.
