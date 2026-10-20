@@ -1,4 +1,6 @@
-pydantic
+# Pinned 2026-10-20 (S2-22): unpinned resolved to 2.14.1, which removed an internal that
+# mcp==1.14.0 imports, and cortex-mcp crashed at startup. 2.11.9 is the version every test passed with.
+pydantic==2.11.9
 markdown
 python-dotenv
 tqdm
