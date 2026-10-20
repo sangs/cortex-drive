@@ -6,16 +6,8 @@ then content hash) and §1.3.7 (the parser takes bytes, never a URL).
 Runs only in the ingestion worker (decision P4: no Docling in cortex-mcp). cortex-mcp never imports
 this module; it validates URLs with validate_public_url from web_url.py before enqueueing.
 
-SSRF: validate_public_url() checks one hostname once. A fetch that follows redirects can be sent
-from a public URL to 169.254.169.254 or localhost, so redirects are followed by hand here and
-EVERY hop is re-validated before it is requested. The cloud metadata server also requires a
-`Metadata-Flavor: Google` header, which this fetcher never sends (defence in depth).
-
-Accepted residual risk (tracked for future work): DNS rebinding. validate_public_url resolves the
-hostname, then httpx resolves it again to connect, so a domain whose DNS answers "public" then
-"private" could slip through. Limited by the missing metadata header and by the worker job having no
-VPC connector (private ranges aren't routable). The full fix is connecting to the validated IP
-(with the original hostname for TLS SNI and certificate checks).
+SSRF: every fetch goes through ingestion/safe_fetch.py (guard re-validated on every redirect hop,
+size cap; DNS rebinding is an accepted residual risk, tracker S2-28).
 """
 import hashlib
 import io
@@ -24,22 +16,21 @@ import sys
 import zipfile
 from dataclasses import dataclass
 from typing import Any, List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from neo4j import GraphDatabase
 
 from .base import BaseAdapter
-from .web_url import validate_public_url
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from ingestion.safe_fetch import SafeFetchError, safe_get  # noqa: E402
 from parsing.structure_parser import MIME_DOCX, MIME_PDF, MIME_PPTX  # noqa: E402
 from schema_guard import (  # noqa: E402
     DOCUMENT_FETCH_MAX_BYTES, DOCUMENT_FETCH_MAX_REDIRECTS, DOCUMENT_FETCH_TIMEOUT_SECONDS,
     DOCUMENT_FETCH_USER_AGENT,
 )
 
-REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 SUPPORTED_DOCUMENT_MIME_TYPES = (MIME_PDF, MIME_DOCX, MIME_PPTX)
 # OOXML packages are zip files; the part that identifies each format.
 OOXML_MARKER_PARTS = {MIME_DOCX: 'word/document.xml', MIME_PPTX: 'ppt/presentation.xml'}
@@ -81,52 +72,34 @@ def detect_document_mime_type(data: bytes) -> Optional[str]:
 
 def fetch_public_document(url: str, *, etag: Optional[str] = None, last_modified: Optional[str] = None,
                           transport: Optional[httpx.BaseTransport] = None) -> FetchedDocument:
-    """GET a public document with the SSRF guard on every hop, a size cap, and a conditional
-    request when ETag/Last-Modified are known (304 → not modified, nothing downloaded).
+    """GET a public document through the shared SSRF-safe fetcher (ingestion/safe_fetch.py: guard on
+    every hop, size cap), with a conditional request when ETag/Last-Modified are known (304 → not
+    modified, nothing downloaded). Accepts only PDF/DOCX/PPTX, detected from the bytes.
     `transport` is for tests only (httpx.MockTransport)."""
     headers = {'User-Agent': DOCUMENT_FETCH_USER_AGENT}
     if etag:
         headers['If-None-Match'] = etag
     if last_modified:
         headers['If-Modified-Since'] = last_modified
-    current = url
-    with httpx.Client(follow_redirects=False, timeout=DOCUMENT_FETCH_TIMEOUT_SECONDS, transport=transport) as client:
-        for _hop in range(DOCUMENT_FETCH_MAX_REDIRECTS + 1):
-            try:
-                validate_public_url(current)
-            except ValueError as e:
-                raise DocumentFetchError(str(e)) from e
-            with client.stream('GET', current, headers=headers) as resp:
-                if resp.status_code in REDIRECT_STATUSES:
-                    location = resp.headers.get('location')
-                    if not location:
-                        raise DocumentFetchError(f"Redirect without a Location header from {current}")
-                    current = urljoin(current, location)
-                    continue
-                if resp.status_code == 304:
-                    return FetchedDocument(None, current, None, None, etag, last_modified, None)
-                if resp.status_code != 200:
-                    raise DocumentFetchError(f"Fetching {current} returned HTTP {resp.status_code}")
-                declared = resp.headers.get('content-length')
-                if declared and declared.isdigit() and int(declared) > DOCUMENT_FETCH_MAX_BYTES:
-                    raise DocumentFetchError(f"Document is larger than {DOCUMENT_FETCH_MAX_BYTES // (1024 * 1024)} MB")
-                buf = bytearray()
-                for chunk in resp.iter_bytes():
-                    buf.extend(chunk)
-                    if len(buf) > DOCUMENT_FETCH_MAX_BYTES:
-                        raise DocumentFetchError(f"Document is larger than {DOCUMENT_FETCH_MAX_BYTES // (1024 * 1024)} MB")
-                data = bytes(buf)
-                mime = detect_document_mime_type(data)
-                if mime not in SUPPORTED_DOCUMENT_MIME_TYPES:
-                    raise DocumentFetchError("Not a supported document (PDF, DOCX or PPTX) — got "
-                                             f"{resp.headers.get('content-type', 'unknown content type')}")
-                return FetchedDocument(
-                    data=data, final_url=current, mime_type=mime,
-                    content_hash=hashlib.sha256(data).hexdigest(),
-                    etag=resp.headers.get('etag'), last_modified=resp.headers.get('last-modified'),
-                    filename=os.path.basename(urlparse(current).path) or None,
-                )
-    raise DocumentFetchError(f"Too many redirects (more than {DOCUMENT_FETCH_MAX_REDIRECTS})")
+    try:
+        resp = safe_get(url, max_bytes=DOCUMENT_FETCH_MAX_BYTES, max_redirects=DOCUMENT_FETCH_MAX_REDIRECTS,
+                        timeout=DOCUMENT_FETCH_TIMEOUT_SECONDS, headers=headers, transport=transport)
+    except SafeFetchError as e:
+        raise DocumentFetchError(str(e)) from e
+    if resp.status == 304:
+        return FetchedDocument(None, resp.final_url, None, None, etag, last_modified, None)
+    if resp.status != 200:
+        raise DocumentFetchError(f"Fetching {resp.final_url} returned HTTP {resp.status}")
+    mime = detect_document_mime_type(resp.data)
+    if mime not in SUPPORTED_DOCUMENT_MIME_TYPES:
+        raise DocumentFetchError("Not a supported document (PDF, DOCX or PPTX) — got "
+                                 f"{resp.headers.get('content-type', 'unknown content type')}")
+    return FetchedDocument(
+        data=resp.data, final_url=resp.final_url, mime_type=mime,
+        content_hash=hashlib.sha256(resp.data).hexdigest(),
+        etag=resp.headers.get('etag'), last_modified=resp.headers.get('last-modified'),
+        filename=os.path.basename(urlparse(resp.final_url).path) or None,
+    )
 
 
 def title_hint_from(parsed) -> Optional[str]:

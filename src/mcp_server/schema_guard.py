@@ -112,6 +112,14 @@ DOCUMENT_DEFAULT_ENTITY_RELATIONSHIP = {'Concept': 'DISCUSSES', 'Technology': 'C
 DOCUMENT_MAX_TOPICS = 5
 DOCUMENT_TOPIC_CANDIDATES_LIMIT = 200
 
+# --- Website fetching (ingestion/adapters/web_url.py via ingestion/safe_fetch.py; S2-21, 2026-10-20) ---
+# Same limits trafilatura.fetch_url() applied (settings.cfg: MAX_FILE_SIZE, MIN_FILE_SIZE,
+# DOWNLOAD_TIMEOUT, MAX_REDIRECTS), so moving to the SSRF-safe fetcher changes nothing else.
+WEB_FETCH_MAX_BYTES = 20_000_000
+WEB_FETCH_MIN_BYTES = 10
+WEB_FETCH_TIMEOUT_SECONDS = 30
+WEB_FETCH_MAX_REDIRECTS = 2
+
 # --- Phase B M3': ingestion worker + document-URL source (2026-10-08) ---
 # Fetching (ingestion/adapters/document_url.py). Every redirect hop is re-validated against the
 # SSRF guard, so these bound both size and the number of hops.

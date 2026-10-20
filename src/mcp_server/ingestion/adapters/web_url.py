@@ -1,7 +1,5 @@
 import hashlib
-import ipaddress
 import os
-import socket
 import sys
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
@@ -14,44 +12,37 @@ from .base import BaseAdapter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ingestion_engine import IngestionEngine
+# validate_public_url lives in ingestion/safe_fetch.py (shared with the document fetcher, S2-21);
+# re-exported here because register_document_source / register_website_source import it from here.
+from ingestion.safe_fetch import SafeFetchError, safe_get, validate_public_url  # noqa: E402,F401
+from schema_guard import (  # noqa: E402
+    WEB_FETCH_MAX_BYTES, WEB_FETCH_MAX_REDIRECTS, WEB_FETCH_MIN_BYTES, WEB_FETCH_TIMEOUT_SECONDS,
+)
 
 # Cap on captured <img> URLs per fetch — A2 is a cheap, additive capture, not a
 # canonical image inventory; keeps nav/footer icon noise from growing unbounded.
 MAX_CAPTURED_IMAGE_URLS = 10
 
 
-def validate_public_url(url: str) -> None:
-    """Raises ValueError if url isn't safe to fetch server-side. SSRF guard for
-    register_website_source, which — unlike view_source_live's already-registered check —
-    must accept a URL not yet in the graph: rejects non-http(s) schemes and any hostname
-    that resolves to a private/loopback/link-local/reserved address (covers the cloud
-    metadata endpoint, 169.254.169.254, among others)."""
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Unsupported URL scheme: '{parsed.scheme or url}'. Only http/https are allowed.")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("URL has no hostname.")
-    try:
-        addrs = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as e:
-        raise ValueError(f"Could not resolve hostname: {hostname}") from e
-    for _family, _type, _proto, _canonname, sockaddr in addrs:
-        ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            raise ValueError(f"URL resolves to a non-public address ({ip}) — not allowed.")
-
-
-def fetch_and_extract(url: str) -> tuple[str, str, List[str]]:
-    """Fetch a URL and return (extracted_text, content_hash, image_urls) — the exact
-    trafilatura.fetch_url() -> trafilatura.extract() call has_changed()/WebUrlAdapter.fetch()
-    already make, plus A2's <img> URL capture from the raw HTML before extract() discards
-    structure. Takes no Neo4j driver — this is a pure external fetch, usable synchronously
+def fetch_and_extract(url: str, transport=None) -> tuple[str, str, List[str]]:
+    """Fetch a URL and return (extracted_text, content_hash, image_urls): an SSRF-safe download
+    (ingestion/safe_fetch.py) -> trafilatura.extract(), the call has_changed()/WebUrlAdapter.fetch()
+    make, plus A2's <img> URL capture from the raw HTML before extract() discards structure.
+    `transport` is for tests only (httpx.MockTransport). Takes no Neo4j driver — this is a pure external fetch, usable synchronously
     from the on-demand view_source_live tool without paying for a driver connection that
     tool has no other use for."""
-    downloaded = trafilatura.fetch_url(url)
-    if downloaded is None:
+    # SSRF-safe download (S2-21): every redirect hop is re-validated. Same request headers, size limits
+    # and decoding as trafilatura.fetch_url(), which followed redirects without re-checking them.
+    from trafilatura.downloads import DEFAULT_HEADERS
+    from trafilatura.utils import decode_file
+    try:
+        resp = safe_get(url, max_bytes=WEB_FETCH_MAX_BYTES, max_redirects=WEB_FETCH_MAX_REDIRECTS,
+                        timeout=WEB_FETCH_TIMEOUT_SECONDS, headers=DEFAULT_HEADERS, transport=transport)
+    except SafeFetchError as e:
+        raise RuntimeError(f"Failed to fetch URL: {url} ({e})") from e
+    if resp.status != 200 or not resp.data or len(resp.data) < WEB_FETCH_MIN_BYTES:
         raise RuntimeError(f"Failed to fetch URL: {url}")
+    downloaded = decode_file(resp.data)
     extracted = trafilatura.extract(
         downloaded, include_comments=False, include_tables=True, favor_recall=True
     )
