@@ -21,7 +21,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schema_guard import (  # noqa: E402
     DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION, DOCUMENT_FIGURE_MIN_AREA_FRACTION, DOCUMENT_INGEST_STATUS_DONE,
     DOCUMENT_INGEST_STATUS_FAILED, DOCUMENT_INGEST_STATUS_RUNNING, DOCUMENT_INGEST_STATUS_UNCHANGED,
-    DOCUMENT_SYNC_L2_MAX_FIGURES, DOCUMENT_SYNC_L2_MAX_PAGES, TEST_TENANT_ID_PREFIX,
+    DOCUMENT_SYNC_L2_MAX_FIGURES, DOCUMENT_SYNC_L2_MAX_PAGES, L2_MODE_AUTO, L2_MODE_BATCH, L2_MODE_OFF,
+    L2_MODES, TEST_TENANT_ID_PREFIX, WORKER_MODE_COLLECT, WORKER_MODE_DESCRIBE_PENDING, WORKER_MODE_INGEST,
+    WORKER_MODES,
 )
 from worker.status import acquire_ingest_lock, connect, release_ingest_lock, write_status  # noqa: E402
 
@@ -41,21 +43,12 @@ def load_task(raw: Optional[str] = None) -> dict:
 def describe_figures_sync(*, engine, describer, data: bytes, parsed, source_node_id: str, snapshot_id: str,
                           title: str) -> dict:
     """Synchronous L2 for one PDF revision. Tiny figures are marked decorative without a call;
-    a refused or unusable description leaves the block pending (the batch path retries it)."""
-    from parsing.visual_describer import render_pdf_figure
-    descriptions, skipped_cap, unusable = {}, 0, 0
-    for i, block in enumerate(engine.pending_visual_blocks(source_node_id, snapshot_id)):
-        if i >= DOCUMENT_SYNC_L2_MAX_FIGURES:
-            skipped_cap += 1
-            continue
-        if not block.get("page") or not block.get("bbox"):
-            continue
-        width, height = parsed.page_sizes.get(block["page"], (0, 0))
-        x0, y0, x1, y1 = block["bbox"]
-        if width and height and (x1 - x0) * (y1 - y0) < DOCUMENT_FIGURE_MIN_AREA_FRACTION * width * height:
-            descriptions[block["node_id"]] = DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION
-            continue
-        png = render_pdf_figure(data, block["page"], block["bbox"], (width, height) if width else None)
+    a refused or unusable description leaves the block pending (a later batch retries it)."""
+    from worker.l2_batch import figure_jobs
+    jobs, descriptions, skipped_cap = figure_jobs(engine, data, parsed.page_sizes, source_node_id, snapshot_id,
+                                                  DOCUMENT_SYNC_L2_MAX_FIGURES)
+    unusable = 0
+    for block, png in jobs:
         result = describer.describe(png, section_path=block.get("section_path") or [], figure_text=block.get("text") or "")
         if result is None:
             unusable += 1
@@ -65,19 +58,52 @@ def describe_figures_sync(*, engine, describer, data: bytes, parsed, source_node
             descriptions[block["node_id"]] = result.as_block_text()
     applied = engine.apply_figure_descriptions(source_node_id=source_node_id, snapshot_id=snapshot_id,
                                                title=title, descriptions=descriptions)
-    return {**applied, "left_pending_cap": skipped_cap, "left_pending_unusable": unusable,
+    return {**applied, "mode": "sync", "left_pending_cap": skipped_cap, "left_pending_unusable": unusable,
             "l2_input_tokens": getattr(describer, "input_tokens", 0),
             "l2_output_tokens": getattr(describer, "output_tokens", 0)}
 
 
-def run(task: dict, *, parser=None, describer=None, transport=None, redis_client=None) -> dict:
+def resolve_l2_mode(task: dict) -> str:
+    """The task's "l2" (auto | batch | off). Legacy "sync_l2": false → off, so commands written before
+    M4' (which meant "no Claude calls") can never start spending; true or absent → auto."""
+    mode = task.get("l2")
+    if mode is None:
+        mode = L2_MODE_AUTO if task.get("sync_l2", True) else L2_MODE_OFF
+    if mode not in L2_MODES:
+        raise ValueError(f"l2 must be one of {L2_MODES}, got {mode!r}")
+    return mode
+
+
+def default_enqueue(task: dict, delay_seconds: int) -> None:
+    """Queue a worker run (collect / describe_pending) through Cloud Tasks (or local mode)."""
+    import asyncio
+    from worker.enqueue import enqueue_document_ingestion
+    asyncio.run(enqueue_document_ingestion(task, delay_seconds))
+
+
+def safe_enqueue(enqueue):
+    """Queueing a follow-up must never fail the run: without a configured queue (e.g. the feature flag is
+    off) the batch still exists and can be collected with a manual `collect` run."""
+    def _enqueue(task: dict, delay_seconds: int) -> None:
+        try:
+            enqueue(task, delay_seconds)
+        except Exception as e:  # noqa: BLE001
+            print(f"[worker] follow-up {task.get('mode')} not queued ({type(e).__name__}: {e}); "
+                  f"run it manually: DOCUMENT_TASK={json.dumps(task)}")
+    return _enqueue
+
+
+def build_describer():
+    from parsing.visual_describer import ClaudeVisualDescriber
+    return ClaudeVisualDescriber() if ClaudeVisualDescriber.available() else None
+
+
+def run(task: dict, *, parser=None, describer=None, transport=None, redis_client=None, enqueue=None) -> dict:
     """Ingest one document. `parser`, `describer`, `transport` and `redis_client` are injectable for
     tests; in production they are built here. Returns the summary written to the status record.
     Holds a per-document lock for the whole run (see DOCUMENT_INGEST_LOCK_TTL_SECONDS)."""
     uri, tenant_id, owner_id = task["uri"], task["tenant_id"], task["owner_id"]
-    if tenant_id.startswith(TEST_TENANT_ID_PREFIX):
-        os.environ.pop("PERMIFY_API_URL", None)   # test tenants never write Permify tuples (user rule)
-        os.environ["TEST_TENANT"] = tenant_id      # schema_guard accepts org_… tenants or this configured one
+    _prepare_tenant(tenant_id)
     started = time.monotonic()
     redis_client = redis_client or connect()
     lock = acquire_ingest_lock(tenant_id, uri, redis_client)   # raises LockUnavailableError: never ingest unlocked
@@ -86,12 +112,12 @@ def run(task: dict, *, parser=None, describer=None, transport=None, redis_client
         return {"state": "skipped_already_running"}
     try:
         return _run_locked(task, parser=parser, describer=describer, transport=transport,
-                           redis_client=redis_client, started=started)
+                           redis_client=redis_client, started=started, enqueue=safe_enqueue(enqueue or default_enqueue))
     finally:
         release_ingest_lock(tenant_id, uri, lock, redis_client)
 
 
-def _run_locked(task: dict, *, parser, describer, transport, redis_client, started: float) -> dict:
+def _run_locked(task: dict, *, parser, describer, transport, redis_client, started: float, enqueue) -> dict:
     from ingestion.adapters.document_url import DocumentUrlAdapter, title_hint_from
     from ingestion_engine import IngestionEngine
     from parsing.structure_parser import MIME_PDF
@@ -115,19 +141,28 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
         summary = {k: result[k] for k in ("source_node_id", "blocks", "entities", "grounded_links")}
         summary["pages"] = parsed.page_count
         doc = adapter.last_fetch
-        sync_ok = (task.get("sync_l2", True) and doc.mime_type == MIME_PDF
-                   and (parsed.page_count or 0) <= DOCUMENT_SYNC_L2_MAX_PAGES)
-        if sync_ok and describer is None:
-            from parsing.visual_describer import ClaudeVisualDescriber
-            describer = ClaudeVisualDescriber() if ClaudeVisualDescriber.available() else None
-        if sync_ok and describer is not None:
-            summary["figures"] = describe_figures_sync(
-                engine=engine, describer=describer, data=doc.data, parsed=parsed,
-                source_node_id=result["source_node_id"], snapshot_id=result["snapshot_id"],
-                title=title_hint_from(parsed) or doc.filename or uri)
+        title = title_hint_from(parsed) or doc.filename or uri
+        l2 = resolve_l2_mode(task)
+        is_pdf = doc.mime_type == MIME_PDF
+        small = (parsed.page_count or 0) <= DOCUMENT_SYNC_L2_MAX_PAGES
+        if l2 == L2_MODE_OFF or not is_pdf:
+            summary["figures"] = {"described": 0, "reason": "l2 off" if l2 == L2_MODE_OFF
+                                  else "figure crops are PDF-only; left pending"}
         else:
-            summary["figures"] = {"described": 0, "reason": "left pending for the stage-2 batch"
-                                  if not sync_ok else "no L2 credentials configured"}
+            if describer is None:
+                describer = build_describer()
+            if describer is None:
+                summary["figures"] = {"described": 0, "reason": "no L2 credentials configured"}
+            elif l2 == L2_MODE_AUTO and small:
+                summary["figures"] = describe_figures_sync(
+                    engine=engine, describer=describer, data=doc.data, parsed=parsed,
+                    source_node_id=result["source_node_id"], snapshot_id=result["snapshot_id"], title=title)
+            else:
+                from worker.l2_batch import submit_figure_batch
+                summary["figures"] = submit_figure_batch(
+                    engine=engine, describer=describer, redis_client=redis_client, enqueue=enqueue,
+                    data=doc.data, page_sizes=parsed.page_sizes, task=task,
+                    source_node_id=result["source_node_id"], snapshot_id=result["snapshot_id"], title=title)
         summary["seconds"] = round(time.monotonic() - started, 1)
         write_status(tenant_id, uri, DOCUMENT_INGEST_STATUS_DONE, redis_client, **summary)
         return {"state": DOCUMENT_INGEST_STATUS_DONE, **summary}
@@ -140,11 +175,82 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
         adapter.close()
 
 
-def main() -> int:
-    task = load_task()
-    print(f"[worker] ingesting {task['uri']} for tenant {task['tenant_id']}")
+def _prepare_tenant(tenant_id: str) -> None:
+    if tenant_id.startswith(TEST_TENANT_ID_PREFIX):
+        os.environ.pop("PERMIFY_API_URL", None)   # test tenants never write Permify tuples (user rule)
+        os.environ["TEST_TENANT"] = tenant_id
+
+
+def run_collect(task: dict, *, describer=None, redis_client=None, enqueue=None) -> dict:
+    """One poll of a figure batch (M4'). No per-document lock: writes are scoped to the batch's revision,
+    and a stale revision's results are discarded."""
+    from ingestion_engine import IngestionEngine
+    from worker.l2_batch import collect_batch
+    _prepare_tenant(task["tenant_id"])
+    describer = describer or build_describer()
+    if describer is None:
+        raise RuntimeError("no L2 credentials configured; can't collect a batch")
+    engine = IngestionEngine(tenant_id=task["tenant_id"])
     try:
-        summary = run(task)
+        return collect_batch(task=task, engine=engine, describer=describer, redis_client=redis_client or connect(),
+                             enqueue=safe_enqueue(enqueue or default_enqueue), write_status=write_status)
+    finally:
+        engine.close()
+
+
+def run_describe_pending(task: dict, *, describer=None, redis_client=None, enqueue=None, transport=None) -> dict:
+    """Re-submit still-pending figures of the CURRENT revision (retry of failed batch items). Re-fetches the
+    document for the crops; if its content no longer matches the current snapshot, does nothing (the new
+    revision's own ingest handles its figures)."""
+    from ingestion.adapters.document_url import fetch_public_document
+    from ingestion_engine import IngestionEngine
+    from parsing.structure_parser import MIME_PDF
+    from worker.l2_batch import pdf_page_sizes, submit_figure_batch
+    _prepare_tenant(task["tenant_id"])
+    describer = describer or build_describer()
+    if describer is None:
+        raise RuntimeError("no L2 credentials configured")
+    engine = IngestionEngine(tenant_id=task["tenant_id"])
+    try:
+        with engine.driver.session() as session:
+            rec = session.run("""MATCH (d:DocumentSource {tenant_id: $t, uri: $u})
+                                 MATCH (d)-[:HAS_SNAPSHOT]->(s:SourceSnapshot {is_current: true})
+                                 RETURN d.node_id AS source_id, d.name AS title, s.node_id AS snapshot_id,
+                                        s.content_hash AS content_hash""", t=task["tenant_id"], u=task["uri"]).single()
+        if not rec:
+            return {"state": "no_current_revision"}
+        doc = fetch_public_document(task["uri"], transport=transport)
+        if doc.mime_type != MIME_PDF or doc.content_hash != rec["content_hash"]:
+            return {"state": "skipped_document_changed_or_not_pdf"}
+        return submit_figure_batch(engine=engine, describer=describer, redis_client=redis_client or connect(),
+                                   enqueue=safe_enqueue(enqueue or default_enqueue), data=doc.data,
+                                   page_sizes=pdf_page_sizes(doc.data), task=task, source_node_id=rec["source_id"],
+                                   snapshot_id=rec["snapshot_id"], title=rec["title"] or task["uri"],
+                                   attempt=int(task.get("attempt", 2)))
+    finally:
+        engine.close()
+
+
+def dispatch(task: dict) -> dict:
+    mode = task.get("mode") or WORKER_MODE_INGEST
+    if mode not in WORKER_MODES:
+        raise ValueError(f"mode must be one of {WORKER_MODES}, got {mode!r}")
+    if mode == WORKER_MODE_COLLECT:
+        return run_collect(task)
+    if mode == WORKER_MODE_DESCRIBE_PENDING:
+        return run_describe_pending(task)
+    return run(task)
+
+
+def main() -> int:
+    from worker.enqueue import LOCAL_DELAY_ENV_VAR
+    delay = int(os.environ.get(LOCAL_DELAY_ENV_VAR, "0") or 0)
+    if delay > 0 and not (os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB")):
+        time.sleep(delay)   # local mode only: Cloud Tasks schedules delays itself
+    task = load_task()
+    print(f"[worker] {task.get('mode') or WORKER_MODE_INGEST} {task['uri']} for tenant {task['tenant_id']}")
+    try:
+        summary = dispatch(task)
     except Exception as e:  # noqa: BLE001
         print(f"[worker] FAILED: {type(e).__name__}: {e}")
         return 1

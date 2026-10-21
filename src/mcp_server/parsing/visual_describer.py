@@ -172,11 +172,13 @@ class ClaudeVisualDescriber(VisualDescriber):
             return all(os.environ.get(v) for v in WIF_ENV_VARS)
         return ClaudeVisualDescriber._local_api_key_opted_in()
 
-    def describe(self, image_png: bytes, *, section_path: List[str], figure_text: str) -> Optional[FigureDescription]:
+    def request_params(self, image_png: bytes, *, section_path: List[str], figure_text: str) -> dict:
+        """The Messages API request for one figure: used as-is by describe() (synchronous) and as
+        the `params` of each Message Batch request (M4'), so both paths send identical requests."""
         prompt = (self.prompt_template
                   .replace("{section_path}", " > ".join(section_path) or "(document root)")
                   .replace("{figure_text}", figure_text or ""))
-        message = self.client.messages.create(
+        return dict(
             model=VISUAL_DESCRIBER_MODEL, max_tokens=VISUAL_DESCRIBER_MAX_OUTPUT_TOKENS,
             output_config={"effort": VISUAL_DESCRIBER_EFFORT, "format": {"type": "json_schema", "schema": FIGURE_SCHEMA}},
             messages=[{"role": "user", "content": [
@@ -184,8 +186,10 @@ class ClaudeVisualDescriber(VisualDescriber):
                                              "data": base64.standard_b64encode(image_png).decode()}},
                 {"type": "text", "text": prompt}]}],
         )
-        self.input_tokens += message.usage.input_tokens
-        self.output_tokens += message.usage.output_tokens
+
+    @staticmethod
+    def parse_message(message) -> Optional[FigureDescription]:
+        """A Messages API response → FigureDescription; None on refusal, truncation or bad JSON."""
         if message.stop_reason in ("refusal", "max_tokens"):
             return None
         text = "".join(b.text for b in message.content if b.type == "text")
@@ -196,3 +200,36 @@ class ClaudeVisualDescriber(VisualDescriber):
         return FigureDescription(kind=data.get("kind", "other"), title=data.get("title", ""),
                                  visible_text=list(data.get("visible_text", [])),
                                  description=data.get("description", ""))
+
+    def describe(self, image_png: bytes, *, section_path: List[str], figure_text: str) -> Optional[FigureDescription]:
+        message = self.client.messages.create(
+            **self.request_params(image_png, section_path=section_path, figure_text=figure_text))
+        self.input_tokens += message.usage.input_tokens
+        self.output_tokens += message.usage.output_tokens
+        return self.parse_message(message)
+
+    # ---- Message Batches (M4', 50% price; results within 24 h, kept 29 days) -------------------------
+
+    def submit_batch(self, requests: List[tuple]) -> str:
+        """requests: [(custom_id, params)], custom_id = the figure block's node_id. Returns the batch id."""
+        batch = self.client.messages.batches.create(
+            requests=[{"custom_id": cid, "params": params} for cid, params in requests])
+        return batch.id
+
+    def batch_status(self, batch_id: str) -> dict:
+        b = self.client.messages.batches.retrieve(batch_id)
+        c = b.request_counts
+        return {"processing_status": b.processing_status, "succeeded": c.succeeded, "errored": c.errored,
+                "expired": c.expired, "canceled": c.canceled, "processing": c.processing}
+
+    def batch_results(self, batch_id: str):
+        """Yields (custom_id, FigureDescription | None, result_type, input_tokens, output_tokens).
+        result_type: succeeded | errored | expired | canceled."""
+        for item in self.client.messages.batches.results(batch_id):
+            kind = item.result.type
+            if kind == "succeeded":
+                message = item.result.message
+                yield (item.custom_id, self.parse_message(message), kind,
+                       message.usage.input_tokens, message.usage.output_tokens)
+            else:
+                yield item.custom_id, None, kind, 0, 0

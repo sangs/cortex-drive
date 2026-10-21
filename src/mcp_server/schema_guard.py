@@ -163,6 +163,27 @@ DOCUMENT_INGEST_STATUS_TTL_SECONDS = 7 * 24 * 3600
 # the expiry frees the document if a run crashes without releasing it.
 DOCUMENT_INGEST_JOB_TIMEOUT_SECONDS = 2 * 3600           # Cloud Run job task timeout (build-deploy-worker.sh reads it)
 DOCUMENT_INGEST_LOCK_TTL_SECONDS = DOCUMENT_INGEST_JOB_TIMEOUT_SECONDS + 30 * 60
+# Batch figure descriptions (M4', build plan §1.13; decisions M4-1..M4-4 approved 2026-10-20). Documents
+# not eligible for the synchronous path get one Claude Message Batch (50% price) for their pending PDF
+# figures; a "collect" run of the worker polls it through delayed Cloud Tasks and applies the results.
+DOCUMENT_BATCH_L2_MAX_FIGURES = 300                # M4-3: cost cap per document per batch
+DOCUMENT_BATCH_COLLECT_DELAY_SECONDS = 15 * 60     # M4-1: re-check an unfinished batch every 15 min
+DOCUMENT_BATCH_COLLECT_GIVE_UP_SECONDS = 26 * 3600 # batches end within 24 h; stop polling after 26 h
+DOCUMENT_BATCH_MAX_ATTEMPTS = 3                    # batches per revision: the first + up to 2 retries of failed figures
+DOCUMENT_BATCH_KEY_PREFIX = 'docl2:batch'          # M4-2: Redis record per open batch (never in the graph)
+DOCUMENT_BATCH_TTL_SECONDS = 30 * 24 * 3600        # batch results stay downloadable for 29 days
+# Worker task modes (the DOCUMENT_TASK payload's "mode").
+WORKER_MODE_INGEST = 'ingest'                      # stage 1 (+ synchronous L2 or batch submit)
+WORKER_MODE_COLLECT = 'collect'                    # poll a batch; apply results when it ends
+WORKER_MODE_DESCRIBE_PENDING = 'describe_pending'  # re-submit still-pending figures of the current revision
+WORKER_MODES = [WORKER_MODE_INGEST, WORKER_MODE_COLLECT, WORKER_MODE_DESCRIBE_PENDING]
+# Figure descriptions for an ingest task (the payload's "l2"). auto: synchronous for PDFs up to
+# DOCUMENT_SYNC_L2_MAX_PAGES, a batch otherwise; batch: always a batch; off: no Claude calls (figures stay
+# pending). Legacy "sync_l2": false means off, so older commands can never start spending.
+L2_MODE_AUTO = 'auto'
+L2_MODE_BATCH = 'batch'
+L2_MODE_OFF = 'off'
+L2_MODES = [L2_MODE_AUTO, L2_MODE_BATCH, L2_MODE_OFF]
 # Test tenants (tests/test_tenant.py): the worker never writes Permify tuples for them (user rule).
 TEST_TENANT_ID_PREFIX = 'cortex-test-'
 
