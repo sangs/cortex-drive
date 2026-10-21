@@ -29,8 +29,8 @@ _redis = redis_lib.Redis.from_url(
 def _resolve_allowed_ids_sync(user_id: str, tenant_id: str) -> list | None:
     """Resolve allowed node IDs for Bento (sync path).
 
-    Returns None when OpenFGA is unconfigured → legacy tenant_id-only mode.
-    Redis hit avoids an OpenFGA round-trip on every node-details request.
+    Returns None when Permify is unconfigured → legacy tenant_id-only mode.
+    Redis hit avoids a Permify round-trip on every node-details request.
     """
     if not user_id:
         return None
@@ -50,7 +50,7 @@ def _resolve_allowed_ids_sync(user_id: str, tenant_id: str) -> list | None:
             print(f"{LOG_PERM_CACHE} miss — resolved {len(allowed_ids)} ids for user={user_id}, cached 300s")
         return allowed_ids
     except Exception as e:
-        print(f"{LOG_PERM_CACHE} OpenFGA fallback failed (non-fatal): {e}")
+        print(f"{LOG_PERM_CACHE} Permify fallback failed (non-fatal): {e}")
         return None
 
 

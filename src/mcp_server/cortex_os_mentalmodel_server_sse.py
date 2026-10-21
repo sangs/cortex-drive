@@ -48,10 +48,10 @@ _redis = aioredis.Redis.from_url(
 
 
 async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | None, str]:
-    """Resolve allowed node IDs from Redis cache, falling back to OpenFGA on miss.
+    """Resolve allowed node IDs from Redis cache, falling back to Permify on miss.
 
     Returns (allowed_ids, perm_version).
-    allowed_ids=None means OpenFGA is unconfigured → legacy tenant_id-only mode.
+    allowed_ids=None means Permify is unconfigured → legacy tenant_id-only mode.
     """
     if not user_id:
         return None, "0"
@@ -79,7 +79,7 @@ async def _resolve_allowed_ids(user_id: str, tenant_id: str) -> tuple[list | Non
 
 
 async def _get_current_allowed_ids() -> list | None:
-    """Return allowed_ids from context, re-resolving from OpenFGA if perm_version changed.
+    """Return allowed_ids from context, re-resolving from Permify if perm_version changed.
 
     Called at the start of every MCP tool to detect mid-session permission revocations.
     The Redis GET adds ~0.5ms — negligible against a Cypher query.
@@ -163,7 +163,7 @@ async def query_relevant_chunks_hybrid_tool(
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
     allowed_ids = await _get_current_allowed_ids()
-    print(f"[FGA/MCP] query_relevant_chunks_hybrid_tool: mode={'openfga' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
+    print(f"[AUTHZ/MCP] query_relevant_chunks_hybrid_tool: mode={'permify' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
         return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
@@ -862,7 +862,7 @@ class TenantASGIMiddleware:
             query_params.get("share_anchor")
         )
 
-        # Resolve permissions from Redis (or OpenFGA on cache miss)
+        # Resolve permissions from Redis (or Permify on cache miss)
         resolved_allowed_ids, perm_version = await _resolve_allowed_ids(
             (user_id or ""), (tenant_id or "")
         )

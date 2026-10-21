@@ -41,7 +41,6 @@ neo4j==6.4.1
 nltk==3.10.3
 numpy==2.4.6
 openai==3.35.1
-openfga-sdk==0.10.5
 opentelemetry-api==1.45.1
 packaging==26.3
 pandas==3.0.6

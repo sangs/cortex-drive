@@ -26,7 +26,7 @@ ANTHROPIC_ORGANIZATION_ID=dadbadf4-d114-46f7-aeda-7df9ffe82a40,\
 ANTHROPIC_SERVICE_ACCOUNT_ID=svac_01CZuaCMKodSs6C83o8R5MUX,\
 ANTHROPIC_WORKSPACE_ID=wrkspc_01BWWNZfUikYXfLwu3uCec43,\
 DOCLING_ARTIFACTS_PATH=/opt/docling-models"
-# Exactly the secrets cortex-mcp-worker was granted (WIF doc task 3), minus OpenFGA (unused here).
+# Exactly the secrets cortex-mcp-worker was granted (WIF doc task 3), minus OPENFGA_* (OpenFGA decommissioned 2026-10-21).
 NEW_SECRETS="NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,NEO4J_PASSWORD=NEO4J_PASSWORD:latest,\
 OPENAI_API_KEY=OPENAI_API_KEY:latest,OWNER_USER_ID=OWNER_USER_ID:latest,REDIS_URL=REDIS_URL:latest,\
 PERMIFY_API_URL=PERMIFY_API_URL:latest"

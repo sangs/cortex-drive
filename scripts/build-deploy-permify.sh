@@ -25,7 +25,7 @@ SERVICE_ACCOUNT="377406326936-compute@developer.gserviceaccount.com"
 CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:cortex-openfga-db"
 
 # Connection budget on cortex-openfga-db (S2-32): db-f1-micro allows 25, 3 reserved, 2 admin → 20 for apps.
-# Gateway 2 × 5 instances = 10, OpenFGA 1 × 2 = 2, Permify gets the rest: 4 × 2 = 8.
+# Gateway 2 × 5 instances = 10, Permify 4 × 2 = 8 (total 18; OpenFGA decommissioned 2026-10-21, S2-37).
 PERMIFY_DB_MAX_CONNECTIONS=4
 PERMIFY_MAX_INSTANCES=2
 PERMIFY_DB_CONNECTION_BUDGET=8

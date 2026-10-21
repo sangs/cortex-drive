@@ -81,7 +81,7 @@ class IngestionEngine:
 
         # 8. Register all new nodes in Permify (owner + tenant_viewer + parent tuples + privacy attrs)
         all_node_ids = [ep_node_id] + graph_node_ids + meta_node_ids
-        self._register_with_openfga([nid for nid in all_node_ids if nid])
+        self._register_with_permify([nid for nid in all_node_ids if nid])
 
         print(f"Ingestion complete for Episode {validated_ep.number}.")
 
@@ -360,7 +360,7 @@ class IngestionEngine:
 
         return node_ids
 
-    def _register_with_openfga(self, node_ids: list[str]) -> None:
+    def _register_with_permify(self, node_ids: list[str]) -> None:
         """Register newly ingested nodes in Permify. Idempotent — existing tuples are no-ops.
 
         Writes per node: owner + tenant_viewer tuples.
@@ -510,7 +510,7 @@ class IngestionEngine:
 
         # 6. Register in Permify (only nodes that still exist)
         all_node_ids = [source_node_id] + self._existing_node_ids([i for i in entity_ids if i])
-        self._register_with_openfga([nid for nid in all_node_ids if nid])
+        self._register_with_permify([nid for nid in all_node_ids if nid])
 
         print(f"Web-source ingestion complete for {url}.")
         return source_node_id
@@ -693,7 +693,7 @@ class IngestionEngine:
         entity_ids, previously_linked = self._link_document_entities(source_node_id, snapshot_id, extraction)
         removed_links, removed_orphans = self._apply_entity_lifecycle(source_node_id, snapshot_id, previously_linked)
         grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
-        self._register_with_openfga([nid for nid in [source_node_id, snapshot_id] + block_ids + entity_ids if nid])
+        self._register_with_permify([nid for nid in [source_node_id, snapshot_id] + block_ids + entity_ids if nid])
         return {'source_node_id': source_node_id, 'snapshot_id': snapshot_id, 'blocks': len(block_ids),
                 'entities': len(entity_ids), 'grounded_links': grounded,
                 'removed_stale_links': removed_links, 'removed_orphans': removed_orphans}
@@ -755,7 +755,7 @@ class IngestionEngine:
         extraction = self._ground_extraction(extraction, vision_text)
         entity_ids, _ = self._link_document_entities(source_node_id, snapshot_id, extraction, derived_by=DERIVED_BY_VLM)
         grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
-        self._register_with_openfga([nid for nid in entity_ids if nid])
+        self._register_with_permify([nid for nid in entity_ids if nid])
         return {'described': len(rows), 'entities': len([i for i in entity_ids if i]), 'grounded_links': grounded}
 
     @staticmethod

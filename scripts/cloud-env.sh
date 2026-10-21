@@ -23,7 +23,6 @@ export REPO="$(dirname "$SCRIPT_DIR")"
 # ── Live Cloud Run service URLs ────────────────────────────────────────────────
 export MCP_URL="https://cortex-mcp-isabiovosq-uc.a.run.app"
 export BENTO_URL="https://cortex-bento-isabiovosq-uc.a.run.app"
-export OPENFGA_URL="https://cortex-openfga-isabiovosq-uc.a.run.app"
 export GATEWAY_URL="https://cortex-gateway-isabiovosq-uc.a.run.app"
 export UI_URL="https://cortex-ui-isabiovosq-uc.a.run.app"
 
@@ -31,12 +30,12 @@ export UI_URL="https://cortex-ui-isabiovosq-uc.a.run.app"
 export APP_DOMAIN="https://app.cortex-drive.com"
 export API_DOMAIN="https://api.cortex-drive.com"
 
-# ── Cloud SQL (OpenFGA datastore) ─────────────────────────────────────────────
+# ── Cloud SQL (shared: Permify + app databases; instance name is historical) ──
 export CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:cortex-openfga-db"
 
 # ── Permify ────────────────────────────────────────────────────────────────────
 # Schema version is returned by /schemas/write and required on all /data/write calls.
-# Update this value whenever scripts/openfga/authorization_schema.perm is reloaded.
+# Update this value whenever scripts/permify/authorization_schema.perm is reloaded.
 # Current version loaded: 2026-06-30
 export PERMIFY_SCHEMA_VERSION="d922hd29io6g008ivglg"
 

@@ -3,7 +3,7 @@ Shared test tenant for every test that writes to Neo4j (user decision, 2026-10-0
 
 There is one Neo4j Aura instance, so isolation is by tenant: tests write ONLY under
 TEST_TENANT_ID and delete everything under it when they finish, even on failure. Tests never
-write Permify/OpenFGA tuples (PERMIFY_API_URL is removed from the environment).
+write Permify tuples (PERMIFY_API_URL is removed from the environment).
 
 Usage:
     from tests.test_tenant import TEST_TENANT_ID, use_test_tenant, cleanup_test_tenant, count_test_tenant_nodes

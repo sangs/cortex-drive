@@ -628,28 +628,6 @@ if (!global.fetch) {
 const permify = require('./utils/permify_gateway');
 const db      = require('./utils/db');
 
-// --- OpenFGA Authorization Client ---
-const { OpenFgaClient, CredentialsMethod } = require('@openfga/sdk');
-
-// getFgaClient creates a fresh OpenFGA client per call (no singleton) so that
-// the OIDC bearer token — which expires after 1hr — is always current.
-// bearerToken is a "Bearer <token>" string from getCloudRunToken(); omit for local dev.
-function getFgaClient(bearerToken = null) {
-    const storeId = process.env.OPENFGA_STORE_ID;
-    if (!storeId) return null; // OpenFGA not configured — legacy mode
-    const config = {
-        apiUrl: process.env.OPENFGA_API_URL || 'http://localhost:8082',
-        storeId,
-        authorizationModelId: process.env.OPENFGA_MODEL_ID,
-    };
-    if (bearerToken) {
-        config.credentials = {
-            method: CredentialsMethod.ApiToken,
-            config: { token: bearerToken.replace('Bearer ', '') },
-        };
-    }
-    return new OpenFgaClient(config);
-}
 
 /**
  * Returns the list of node_id UUIDs the user can see via Permify LookupEntity.
@@ -922,7 +900,7 @@ const authMiddleware = async (req, res, next) => {
             console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (EnvOverride: ${!!process.env.TENANT_ID}, JwtOrg: ${decoded.org_id || 'none'})`);
             
             req.headers['x-tenant-id'] = tenantId;
-            // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but OpenFGA
+            // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but Permify
             // tuples are keyed on the production sub. Same override pattern as TENANT_ID.
             req.headers['x-raw-user-id'] = decoded.sub || ''; // always the real Clerk sub — used by activate-pending
             req.headers['x-user-id'] = process.env.OWNER_USER_ID || decoded.sub || '';
@@ -1428,11 +1406,10 @@ app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
     const { node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     if (!node_id) return res.status(400).json({ error: 'node_id required' });
-    const fga = getFgaClient();
-    if (!fga) return res.status(503).json({ error: 'OpenFGA not configured' });
+    if (!permify.configured()) return res.status(503).json({ error: 'Permify not configured' });
     try {
-        const { makeNodeTenantWide } = require('./utils/openfga_gateway');
-        await makeNodeTenantWide(fga, node_id, tenantId);
+        // Permify, like every other share (OpenFGA decommissioned 2026-10-21, S2-37).
+        await permify.makeNodeTenantWide(node_id, tenantId);
         await redis.incr(`perm_version:${tenantId}`);
         res.json({ ok: true });
     } catch (err) {
@@ -2970,7 +2947,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
         // MCP server reads from Redis on each tool call — no allowed_ids in headers.
         const { allowedIds, permVersion: _ssePV } = await resolveAndCachePermissions(userId, tenantId);
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
-        console.log(`[FGA/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
+        console.log(`[AUTHZ/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
 
         let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req));
         if (accessScope === 'restricted') {
@@ -3331,7 +3308,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         // Seed Redis permission cache — MCP server reads from Redis per tool call.
         const { allowedIds, permVersion: _queryPV } = await resolveAndCachePermissions(userId, tenantId);
         const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
-        console.log(`[FGA/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
+        console.log(`[AUTHZ/QUERY] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'} user=${userId}`);
 
         // confident=false means domain_signal is AP-21's safe-default fallback, not a genuine
         // match — used only to pick the LLM's tool-calling instruction below (universal

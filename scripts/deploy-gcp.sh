@@ -1,7 +1,12 @@
 #!/bin/bash
 # =============================================================================
-# CortexDrive — Google Cloud Run Deployment Script
+# CortexDrive — Google Cloud Run Deployment Script (ORIGINAL from-scratch installer, 2026-05/06)
 # =============================================================================
+# ⚠️ OUTDATED as an installer: it predates Permify (scripts/build-deploy-permify.sh + the Permify steps in
+# documents/how-to-google-cloud-operations.md), the ingestion worker (scripts/build-deploy-worker.sh) and the
+# per-service scripts (scripts/build-deploy-*.sh), which are the source of truth for each service today.
+# OpenFGA was decommissioned 2026-10-21 (documents/architecture/openfga-decommission-2026-10-21.md); its
+# phases were removed from this script and remain in git history.
 # Phases 6–9 of cloud-move-implementation-plan-2026-05-14.md
 #
 # MANUAL GATES (script pauses and waits):
@@ -28,9 +33,9 @@ TENANT_ID="org_3E0FtIXiFM6DHwXg05sEVvq2mi0"
 OWNER_USER_ID="user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
 NEO4J_URI="neo4j+s://2236ba22.databases.neo4j.io"
 NEO4J_USERNAME="neo4j"
-OPENFGA_DB_INSTANCE="cortex-openfga-db"
-OPENFGA_DB_NAME="openfga"
-OPENFGA_DB_USER="openfga-user"
+# Shared Cloud SQL instance (Permify + app databases). The name is historical (created for OpenFGA, which
+# was decommissioned 2026-10-21); Cloud SQL instances can't be renamed.
+DB_INSTANCE="cortex-openfga-db"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -121,31 +126,20 @@ PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectN
 SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 echo "Service account: ${SA}"
 
-section "Phase 6.5 — Create Cloud SQL Postgres for OpenFGA"
-OPENFGA_DB_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 32)
-echo "Generated OpenFGA DB password (save this): ${OPENFGA_DB_PASSWORD}"
-
-if gcloud sql instances describe "$OPENFGA_DB_INSTANCE" \
+section "Phase 6.5 — Create the shared Cloud SQL Postgres instance"
+if gcloud sql instances describe "$DB_INSTANCE" \
         --project="$PROJECT_ID" > /dev/null 2>&1; then
-    echo "Cloud SQL instance '${OPENFGA_DB_INSTANCE}' already exists — skipping."
+    echo "Cloud SQL instance '${DB_INSTANCE}' already exists — skipping."
 else
-    gcloud sql instances create "$OPENFGA_DB_INSTANCE" \
+    gcloud sql instances create "$DB_INSTANCE" \
         --database-version=POSTGRES_15 \
         --tier=db-f1-micro \
         --region="$REGION" \
         --project="$PROJECT_ID"
-    gcloud sql databases create "$OPENFGA_DB_NAME" \
-        --instance="$OPENFGA_DB_INSTANCE" \
-        --project="$PROJECT_ID"
-    gcloud sql users create "$OPENFGA_DB_USER" \
-        --instance="$OPENFGA_DB_INSTANCE" \
-        --password="$OPENFGA_DB_PASSWORD" \
-        --project="$PROJECT_ID"
-    echo "Cloud SQL instance created."
+    echo "Cloud SQL instance created. Permify's database/user: documents/how-to-google-cloud-operations.md."
 fi
 
-CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:${OPENFGA_DB_INSTANCE}"
-OPENFGA_DB_URI="postgresql://${OPENFGA_DB_USER}:${OPENFGA_DB_PASSWORD}@/${OPENFGA_DB_NAME}?host=/cloudsql/${CLOUD_SQL_CONN}"
+CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:${DB_INSTANCE}"
 
 # =============================================================================
 # PHASE 7 — Google Secret Manager
@@ -173,7 +167,6 @@ store_secret "NEO4J_PASSWORD"       "$NEO4J_PASSWORD"
 store_secret "TENANT_ID"            "$TENANT_ID"
 store_secret "OWNER_USER_ID"        "$OWNER_USER_ID"
 store_secret "GATEWAY_SHARE_SECRET" "$GATEWAY_SHARE_SECRET"
-store_secret "OPENFGA_DB_PASSWORD"  "$OPENFGA_DB_PASSWORD"
 echo "All secrets stored."
 
 section "Phase 7 — Grant Cloud Run SA access to secrets"
@@ -192,41 +185,6 @@ echo "IAM bindings set."
 # PHASE 8 — Cloud Run Deployments (backend-first order)
 # =============================================================================
 
-# --- 8.1 OpenFGA (internal) --------------------------------------------------
-section "Phase 8.1 — Deploy cortex-openfga (internal)"
-gcloud run deploy cortex-openfga \
-    --image "openfga/openfga:latest" \
-    --region "$REGION" \
-    --project "$PROJECT_ID" \
-    --no-allow-unauthenticated \
-    --ingress internal \
-    --port 8080 \
-    --memory 512Mi \
-    --min-instances 0 \
-    --max-instances 2 \
-    --add-cloudsql-instances "$CLOUD_SQL_CONN" \
-    --args "run,--datastore-max-open-conns=1,--datastore-max-idle-conns=1" \
-    --set-env-vars "OPENFGA_DATASTORE_ENGINE=postgres,OPENFGA_DATASTORE_URI=${OPENFGA_DB_URI}"
-# Connection budget (S2-32): OpenFGA's default pool is 30 per instance on a 25-connection database.
-# Capped at 1 (OpenFGA had no traffic after the Permify migration). Permify (deployed separately) runs with
-# --database-max-connections=4; the gateway pool is 2 (cortex-gateway/utils/db.js).
-
-OPENFGA_URL=$(gcloud run services describe cortex-openfga \
-    --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')
-echo "OpenFGA URL: ${OPENFGA_URL}"
-
-section "Phase 8.1b — Bootstrap OpenFGA with Neo4j nodes"
-(
-    cd "$REPO_ROOT"
-    .venv/bin/python scripts/bootstrap_openfga.py \
-        --tenant-id "$TENANT_ID" \
-        --visibility tenant-wide \
-        --owner-sub "$OWNER_USER_ID" \
-        --openfga-url "$OPENFGA_URL"
-)
-echo "OpenFGA bootstrap complete."
-
-# --- 8.2 MCP SSE Server (internal) ------------------------------------------
 section "Phase 8.2 — Build + deploy cortex-mcp (internal)"
 (
     cd "${REPO_ROOT}/src/mcp_server"
@@ -287,7 +245,7 @@ echo "Bento URL: ${BENTO_URL}"
 
 # --- 8.4 Grant gateway SA invoker rights on internal services ----------------
 section "Phase 8.4 — Grant gateway SA roles/run.invoker on internal services"
-for SERVICE in cortex-mcp cortex-bento cortex-openfga; do
+for SERVICE in cortex-mcp cortex-bento; do
     gcloud run services add-iam-policy-binding "$SERVICE" \
         --region "$REGION" \
         --project "$PROJECT_ID" \
@@ -296,32 +254,6 @@ for SERVICE in cortex-mcp cortex-bento cortex-openfga; do
         > /dev/null
     echo "  granted invoker: ${SERVICE}"
 done
-
-# Get OpenFGA store + model IDs from the deployed instance
-section "Phase 8.4b — Configure OpenFGA store/model IDs in Secret Manager"
-echo "Fetching OpenFGA store ID from deployed instance ..."
-STORE_RESP=$(curl -s "${OPENFGA_URL}/stores")
-OPENFGA_STORE_ID=$(echo "$STORE_RESP" | python3 -c \
-    "import sys,json; stores=json.load(sys.stdin).get('stores',[]); print(stores[0]['id'] if stores else '')")
-echo "  Store ID: ${OPENFGA_STORE_ID}"
-
-MODEL_RESP=$(curl -s "${OPENFGA_URL}/stores/${OPENFGA_STORE_ID}/authorization-models")
-OPENFGA_MODEL_ID=$(echo "$MODEL_RESP" | python3 -c \
-    "import sys,json; models=json.load(sys.stdin).get('authorization_models',[]); print(models[0]['id'] if models else '')")
-echo "  Model ID: ${OPENFGA_MODEL_ID}"
-
-store_secret "OPENFGA_API_URL"   "$OPENFGA_URL"
-store_secret "OPENFGA_STORE_ID"  "$OPENFGA_STORE_ID"
-store_secret "OPENFGA_MODEL_ID"  "$OPENFGA_MODEL_ID"
-gcloud secrets add-iam-policy-binding "OPENFGA_API_URL" \
-    --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor" \
-    --project="$PROJECT_ID" > /dev/null
-gcloud secrets add-iam-policy-binding "OPENFGA_STORE_ID" \
-    --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor" \
-    --project="$PROJECT_ID" > /dev/null
-gcloud secrets add-iam-policy-binding "OPENFGA_MODEL_ID" \
-    --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor" \
-    --project="$PROJECT_ID" > /dev/null
 
 # --- 8.5 Gateway (public) ----------------------------------------------------
 section "Phase 8.5 — Build + deploy cortex-gateway (public)"
@@ -346,9 +278,6 @@ gcloud run deploy cortex-gateway \
     --set-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest,CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\
 TENANT_ID=TENANT_ID:latest,OWNER_USER_ID=OWNER_USER_ID:latest,\
 GATEWAY_SHARE_SECRET=GATEWAY_SHARE_SECRET:latest,\
-OPENFGA_API_URL=OPENFGA_API_URL:latest,\
-OPENFGA_STORE_ID=OPENFGA_STORE_ID:latest,\
-OPENFGA_MODEL_ID=OPENFGA_MODEL_ID:latest,\
 REDIS_URL=REDIS_URL:latest"
 
 GATEWAY_URL=$(gcloud run services describe cortex-gateway \
@@ -453,7 +382,6 @@ echo "  gcloud logging read \"resource.type=cloud_run_revision AND textPayload:G
 # =============================================================================
 section "Deployment Complete"
 echo ""
-echo "  OpenFGA:  ${OPENFGA_URL}"
 echo "  MCP:      ${MCP_URL}"
 echo "  Bento:    ${BENTO_URL}"
 echo "  Gateway:  ${GATEWAY_URL}"

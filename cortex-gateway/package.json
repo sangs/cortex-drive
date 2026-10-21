@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/verify_intent_classification.js && node tests/verify_tool_policy.js && node tests/verify_upstream_fetch.js"
+    "test": "node tests/verify_intent_classification.js && node tests/verify_tool_policy.js && node tests/verify_upstream_fetch.js && node tests/verify_permify_share.js"
   },
   "keywords": [],
   "author": "",
@@ -12,7 +12,6 @@
   "dependencies": {
     "@clerk/backend": "^2.32.2",
     "@google-cloud/cloud-sql-connector": "^1.4.0",
-    "@openfga/sdk": "^0.9.6",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",

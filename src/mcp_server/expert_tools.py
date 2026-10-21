@@ -22,7 +22,7 @@ class ExpertTools:
         self.tenant_id = tenant_id
         self.requesting_user_id = requesting_user_id
         self.guest_share_anchor = guest_share_anchor
-        # None = OpenFGA not configured; use tenant_id fallback. [] = configured but empty (restricted).
+        # None = Permify not configured; use tenant_id fallback. [] = configured but empty (restricted).
         self.allowed_ids = allowed_ids
         # Initialize clients
         self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -33,15 +33,15 @@ class ExpertTools:
     
     def _get_security_clause(self, node_var: str) -> str:
         """
-        Authorization clause. OpenFGA mode when allowed_ids list is provided by gateway.
-        Falls back to tenant_id filtering when OpenFGA is not configured (allowed_ids=None).
+        Authorization clause. Permify allowlist mode when allowed_ids is provided by the gateway.
+        Falls back to tenant_id filtering when Permify is not configured (allowed_ids=None).
         """
         if self.allowed_ids is None:
             return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
         # Guest/share mode: strictly bounded to the granted node_id list (no tenant fallback).
         if self.guest_share_anchor:
             return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
-        # Org-member OpenFGA mode: node_id list + tenant_id fallback (defense-in-depth).
+        # Org-member Permify allowlist mode: node_id list + tenant_id fallback (defense-in-depth).
         # Fallback guards against missing bootstrap node_ids silently excluding org-owned nodes.
         return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
 
@@ -50,13 +50,13 @@ class ExpertTools:
         if self.allowed_ids is None:
             return {"tenant_id": self.tenant_id}
         if not self.guest_share_anchor:
-            # Non-guest OpenFGA: pass both so $tenant_id in the dual-check clause is bound.
+            # Non-guest Permify allowlist: pass both so $tenant_id in the dual-check clause is bound.
             return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
         return {"allowed_ids": self.allowed_ids}
 
     def _apply_security(self, query: str, *node_vars: str) -> str:
-        """Replace hardcoded OpenFGA $allowed_ids clauses with the dual-mode security clause.
-        Used for inline query strings that were written with the OpenFGA clause hardcoded.
+        """Replace hardcoded $allowed_ids clauses (originally written for OpenFGA) with the dual-mode security clause.
+        Used for inline query strings that were written with the allowlist clause hardcoded.
         """
         result = query
         for nv in node_vars:

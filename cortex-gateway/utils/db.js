@@ -18,7 +18,7 @@
 const { Pool } = require('pg');
 
 // Connection budget on cortex-openfga-db (db-f1-micro: 25 connections, 3 reserved for superuser, 2 used by
-// Cloud SQL admin → 20 for apps). Shared with Permify (4 × 2 instances) and OpenFGA (1 × 2), so the gateway
+// Cloud SQL admin → 20 for apps). Shared with Permify (4 × 2 instances; OpenFGA was decommissioned 2026-10-21), so the gateway
 // gets 2 per instance × up to 5 instances = 10 (S2-32, 2026-10-21: bursts exhausted the database when this
 // pool was 5 and the others were at their defaults). Idle connections are released quickly so a burst
 // doesn't hold slots. Overridable for local development only.

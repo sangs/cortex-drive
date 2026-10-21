@@ -61,6 +61,19 @@ async function shareNodeWithUser(nodeId, targetSub, expiresAt = null) {
   return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [tuple] });
 }
 
+/**
+ * Make a node visible to every member of the tenant org: ONE tenant_viewer tuple (subject org#member),
+ * exactly as permify_utils.make_tenant_wide writes it. Replaces the OpenFGA write the Share dialog's
+ * "whole organization" toggle used until 2026-10-21 (OpenFGA decommission, S2-37), which nothing read.
+ */
+async function makeNodeTenantWide(nodeId, tenantOrgId) {
+  return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [{
+    entity:   { type: 'node', id: nodeId },
+    relation: 'tenant_viewer',
+    subject:  { type: 'org', id: tenantOrgId, relation: 'member' },
+  }] });
+}
+
 /** Delete a shared_viewer tuple (revoke). Never delete parent tuples. */
 async function revokeNodeAccess(nodeId, subject, relation) {
   const [subType, subRest] = subject.split(':');
@@ -170,6 +183,7 @@ async function removeGroupMember(groupId, userSub) {
 
 module.exports = {
   configured,
+  makeNodeTenantWide,
   shareNodeWithUser,
   shareNodeWithGroup,
   addGroupMember,

@@ -2,7 +2,7 @@
 """Verify (and optionally clean up) stale HAS_ACCESS/OWNS relationships.
 
 Mirrors documents/cortex-neo4j-cypher-queries.md §2.1/§2.2. Both relationship types
-are dead — authorization is handled by Permify/OpenFGA, not Neo4j relationships.
+are dead — authorization is handled by Permify, not Neo4j relationships.
 
 Usage:
   .venv/bin/python scripts/neo4j_diagnostics/verify_has_access_owns.py            # read-only
