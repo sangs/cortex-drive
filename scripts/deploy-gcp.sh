@@ -205,7 +205,11 @@ gcloud run deploy cortex-openfga \
     --min-instances 0 \
     --max-instances 2 \
     --add-cloudsql-instances "$CLOUD_SQL_CONN" \
+    --args "run,--datastore-max-open-conns=1,--datastore-max-idle-conns=1" \
     --set-env-vars "OPENFGA_DATASTORE_ENGINE=postgres,OPENFGA_DATASTORE_URI=${OPENFGA_DB_URI}"
+# Connection budget (S2-32): OpenFGA's default pool is 30 per instance on a 25-connection database.
+# Capped at 1 (OpenFGA had no traffic after the Permify migration). Permify (deployed separately) runs with
+# --database-max-connections=4; the gateway pool is 2 (cortex-gateway/utils/db.js).
 
 OPENFGA_URL=$(gcloud run services describe cortex-openfga \
     --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')

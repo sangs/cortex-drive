@@ -4,6 +4,7 @@ const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } = require('./utils/intent_classifier');
 const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
+const { fetchWithColdStartRetry } = require('./utils/upstream_fetch.js');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -843,15 +844,14 @@ app.get('/health', (req, res) => res.send({ status: 'ok' }));
 // System status — real per-service reachability for the frontend's System Health panel.
 // Unauthenticated (infra status only, no tenant data), mirroring /health's scope.
 // See documents/architecture/neo4j-status-indicator-design-2026-08-27.md.
-const SYSTEM_STATUS_MCP_TIMEOUT_MS = 5000;
 
 app.get('/api/system-status', async (req, res) => {
     try {
         const oidcToken = await getCloudRunToken(mcpServerUrl);
-        const mcpRes = await fetch(`${mcpServerUrl}/health`, {
+        // Wait for a cold start and retry once (S2-33): a sleeping cortex-mcp isn't "down".
+        const mcpRes = await fetchWithColdStartRetry(`${mcpServerUrl}/health`, {
             headers: oidcToken ? { Authorization: oidcToken } : {},
-            signal: AbortSignal.timeout(SYSTEM_STATUS_MCP_TIMEOUT_MS),
-        });
+        }, { label: 'SYSTEM-STATUS' });
         if (!mcpRes.ok) {
             return res.send({ mcp: 'down', neo4j: 'unknown' });
         }
@@ -4072,7 +4072,8 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
     const guestShareAnchor = req.headers['x-guest-share-anchor'] || '';
     try {
         const bentoOidcToken = await getCloudRunToken(bentoServerUrl);
-        const bentoResponse = await fetch(`${bentoServerUrl}/get_node_details`, {
+        // Direct fetch (AP-18). A read, so it waits for a cold start and retries once (S2-33).
+        const bentoResponse = await fetchWithColdStartRetry(`${bentoServerUrl}/get_node_details`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -4082,8 +4083,7 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
                 ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify(req.body),
-            signal: AbortSignal.timeout(8000)
-        });
+        }, { label: '/api/get_node_details' });
         if (!bentoResponse.ok) {
             const text = await bentoResponse.text();
             return res.status(bentoResponse.status).send(text);

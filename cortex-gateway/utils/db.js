@@ -17,6 +17,15 @@
 
 const { Pool } = require('pg');
 
+// Connection budget on cortex-openfga-db (db-f1-micro: 25 connections, 3 reserved for superuser, 2 used by
+// Cloud SQL admin → 20 for apps). Shared with Permify (4 × 2 instances) and OpenFGA (1 × 2), so the gateway
+// gets 2 per instance × up to 5 instances = 10 (S2-32, 2026-10-21: bursts exhausted the database when this
+// pool was 5 and the others were at their defaults). Idle connections are released quickly so a burst
+// doesn't hold slots. Overridable for local development only.
+const DB_POOL_MAX = parseInt(process.env.DB_POOL_MAX || '2', 10);
+const DB_POOL_IDLE_TIMEOUT_MS = 10000;
+const DB_POOL_CONNECTION_TIMEOUT_MS = 10000;
+
 let _pool = null;
 
 async function getPool() {
@@ -49,7 +58,9 @@ async function getPool() {
       database: dbName,
       user:     dbUser,
       password: dbPass,
-      max:      5,
+      max:      DB_POOL_MAX,
+      idleTimeoutMillis:       DB_POOL_IDLE_TIMEOUT_MS,
+      connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
     });
   } else {
     throw new Error('Neither DB_HOST nor CLOUD_SQL_INSTANCE is set — cannot connect to Cloud SQL');
