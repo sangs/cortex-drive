@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y curl apt-transport-https gnupg && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Python deps
-COPY src/mcp_server/requirements-docker.txt ./
-RUN pip install --no-cache-dir -r requirements-docker.txt python-dotenv
+COPY src/mcp_server/requirements-docker.txt src/mcp_server/constraints-docker.txt ./
+RUN pip install --no-cache-dir -r requirements-docker.txt -c constraints-docker.txt python-dotenv
 
 # Copy only what bootstrap needs
 COPY src/mcp_server/openfga_utils.py ./src/mcp_server/
