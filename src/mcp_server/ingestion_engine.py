@@ -491,12 +491,25 @@ class IngestionEngine:
 
         # 3. Upsert WebsiteSource + create new SourceSnapshot (flip old is_current)
         source_node_id = self._upsert_website_source(validated_source, url, content_hash, image_urls or [])
+        snapshot_id = self._current_snapshot_id('WebsiteSource', source_node_id)
 
-        # 4. Upsert extracted entities + relationships, linked to the WebsiteSource
-        entity_ids = self._upsert_web_entities(source_node_id, extraction)
+        # 4. Upsert extracted entities + relationships, linked to the WebsiteSource and tagged with
+        #    this snapshot (S2-30).
+        from schema_guard import WEB_ENTITY_RELATIONSHIPS, WEB_ENTITY_LABELS
+        previously_linked = self._linked_entity_ids('WebsiteSource', source_node_id, WEB_ENTITY_RELATIONSHIPS)
+        entity_ids = self._upsert_web_entities(source_node_id, extraction, snapshot_id)
 
-        # 5. Register in Permify
-        all_node_ids = [source_node_id] + entity_ids
+        # 5. Entity lifecycle (S2-30): drop links this revision didn't re-assert (incl. untagged links
+        #    from before S2-30), then delete entities left with no relationships, among those this
+        #    source used to link and those this run created but never linked. Tenant-only, never SYSTEM.
+        removed_links, removed_orphans = self._apply_entity_lifecycle(
+            source_node_id, snapshot_id, previously_linked + [i for i in entity_ids if i],
+            source_label='WebsiteSource', relationships=WEB_ENTITY_RELATIONSHIPS, entity_labels=WEB_ENTITY_LABELS)
+        if removed_links or removed_orphans:
+            print(f"Web-source lifecycle for {url}: removed {removed_links} stale link(s), {removed_orphans} orphan(s).")
+
+        # 6. Register in Permify (only nodes that still exist)
+        all_node_ids = [source_node_id] + self._existing_node_ids([i for i in entity_ids if i])
         self._register_with_openfga([nid for nid in all_node_ids if nid])
 
         print(f"Web-source ingestion complete for {url}.")
@@ -551,7 +564,33 @@ class IngestionEngine:
             record = result.single()
             return record["node_id"] if record else None
 
-    def _upsert_web_entities(self, source_node_id: str, extraction) -> list[str | None]:
+    def _current_snapshot_id(self, source_label: str, source_node_id: str) -> Optional[str]:
+        from schema_guard import SOURCE_CONNECTOR_LABELS
+        if source_label not in SOURCE_CONNECTOR_LABELS:
+            raise ValueError(f"source_label must be one of {SOURCE_CONNECTOR_LABELS}")
+        with self.driver.session() as session:
+            rec = session.run(f"MATCH (s:{source_label} {{tenant_id: $tenant_id, node_id: $id}}) RETURN s.current_snapshot_id AS sid",
+                              tenant_id=self.tenant_id, id=source_node_id).single()
+        return rec['sid'] if rec else None
+
+    def _linked_entity_ids(self, source_label: str, source_node_id: str, relationships: list) -> list:
+        """node_ids this source links to via `relationships` (before a new revision is written)."""
+        from schema_guard import SOURCE_CONNECTOR_LABELS
+        if source_label not in SOURCE_CONNECTOR_LABELS:
+            raise ValueError(f"source_label must be one of {SOURCE_CONNECTOR_LABELS}")
+        with self.driver.session() as session:
+            return session.run(
+                f"""MATCH (s:{source_label} {{tenant_id: $tenant_id, node_id: $id}})-[r]->(e)
+                    WHERE type(r) IN {json.dumps(relationships)}
+                    RETURN collect(DISTINCT e.node_id) AS ids""",
+                tenant_id=self.tenant_id, id=source_node_id).single()['ids']
+
+    def _existing_node_ids(self, node_ids: list) -> list:
+        with self.driver.session() as session:
+            return session.run("MATCH (n {tenant_id: $tenant_id}) WHERE n.node_id IN $ids RETURN collect(n.node_id) AS ids",
+                               tenant_id=self.tenant_id, ids=node_ids).single()['ids']
+
+    def _upsert_web_entities(self, source_node_id: str, extraction, snapshot_id: Optional[str] = None) -> list[str | None]:
         """Upsert BAML-extracted Concept/Technology/Person/ReferenceLink entities and
         link them to the WebsiteSource node via DISCUSSES/COVERS_TECHNOLOGY/MENTIONS —
         the SAME node types the podcast pipeline already uses (shared ontology backbone,
@@ -601,10 +640,12 @@ class IngestionEngine:
                 MATCH (s:WebsiteSource {tenant_id: $tenant_id, node_id: $source_node_id})
                 MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
                 ON CREATE SET l.node_id = randomUUID(), l.text = $text
-                MERGE (s)-[:HAS_REFERENCE]->(l)
+                MERGE (s)-[r:HAS_REFERENCE]->(l)
+                SET r.snapshot_id = $snapshot_id
                 RETURN l.node_id AS node_id
                 """
-                result = session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, url=link.url, text=link.text)
+                result = session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, url=link.url, text=link.text,
+                                     snapshot_id=snapshot_id)
                 record = result.single()
                 node_ids.append(record["node_id"] if record else None)
 
@@ -614,8 +655,10 @@ class IngestionEngine:
                 MATCH (s:WebsiteSource {{tenant_id: $tenant_id, node_id: $source_node_id}})
                 MATCH (t {{tenant_id: $tenant_id}}) WHERE (t:Concept OR t:Technology OR t:Person) AND t.name = $target
                 MERGE (s)-[r:{rel.relationship_type.name}]->(t)
+                SET r.snapshot_id = $snapshot_id
                 """
-                session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, target=rel.target_node)
+                session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, target=rel.target_node,
+                            snapshot_id=snapshot_id)
 
         return node_ids
 
@@ -937,15 +980,22 @@ class IngestionEngine:
                 ids.append(rec['id'] if rec else None)
         return ids, before
 
-    def _apply_entity_lifecycle(self, source_node_id: str, snapshot_id: str, previously_linked: list):
+    def _apply_entity_lifecycle(self, source_node_id: str, snapshot_id: str, previously_linked: list,
+                                source_label: str = 'DocumentSource', relationships: Optional[list] = None,
+                                entity_labels: Optional[list] = None):
         """Delete this source's entity links that the current revision didn't re-assert, then
-        remove entities left with no relationships at all — only among those this source used
-        to link, only in this tenant (never SYSTEM primitives, Invariant 9)."""
-        from schema_guard import DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_ENTITY_LABELS
+        remove entities left with no relationships at all — only among `previously_linked`, only in
+        this tenant (never SYSTEM primitives, Invariant 9). Shared by documents (defaults) and
+        websites (S2-30: source_label='WebsiteSource' with the WEB_ENTITY_* constants)."""
+        from schema_guard import DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_ENTITY_LABELS, SOURCE_CONNECTOR_LABELS
+        if source_label not in SOURCE_CONNECTOR_LABELS:
+            raise ValueError(f"source_label must be one of {SOURCE_CONNECTOR_LABELS}")
+        relationships = relationships or DOCUMENT_ENTITY_RELATIONSHIPS
+        entity_labels = entity_labels or DOCUMENT_ENTITY_LABELS
         with self.driver.session() as session:
             removed = session.run(
-                f"""MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
-                    WHERE type(r) IN {json.dumps(DOCUMENT_ENTITY_RELATIONSHIPS)}
+                f"""MATCH (d:{source_label} {{tenant_id: $tenant_id, node_id: $source_id}})-[r]->(e)
+                    WHERE type(r) IN {json.dumps(relationships)}
                       AND coalesce(r.snapshot_id, '') <> $snapshot_id
                     DELETE r
                     RETURN count(r) AS n""",
@@ -953,7 +1003,7 @@ class IngestionEngine:
             orphans = session.run(
                 f"""MATCH (e)
                     WHERE e.node_id IN $ids AND e.tenant_id = $tenant_id
-                      AND any(l IN labels(e) WHERE l IN {json.dumps(DOCUMENT_ENTITY_LABELS)})
+                      AND any(l IN labels(e) WHERE l IN {json.dumps(entity_labels)})
                       AND NOT (e)--()
                     DELETE e
                     RETURN count(e) AS n""",

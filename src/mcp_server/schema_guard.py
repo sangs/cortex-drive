@@ -119,6 +119,11 @@ WEB_FETCH_MAX_BYTES = 20_000_000
 WEB_FETCH_MIN_BYTES = 10
 WEB_FETCH_TIMEOUT_SECONDS = 30
 WEB_FETCH_MAX_REDIRECTS = 2
+# WebsiteSource → entity links (web_extract.baml's WebRelationshipType + HAS_REFERENCE). Like documents,
+# every link carries `snapshot_id`; links a new revision doesn't re-assert are removed, and entities left
+# with no relationships are deleted (S2-30, 2026-10-20; same lifecycle as build plan §1.3.3).
+WEB_ENTITY_RELATIONSHIPS = ['DISCUSSES', 'COVERS_TECHNOLOGY', 'MENTIONS', 'HAS_REFERENCE']
+WEB_ENTITY_LABELS = ['Concept', 'Technology', 'Person', 'ReferenceLink']
 
 # --- Phase B M3': ingestion worker + document-URL source (2026-10-08) ---
 # Fetching (ingestion/adapters/document_url.py). Every redirect hop is re-validated against the
