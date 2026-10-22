@@ -218,5 +218,5 @@ Full index with status (Active / Historical / Superseded): **`documents/INDEX.md
 Most-referenced active docs:
 - `documents/architecture/anti-pattern-catalog.md` — full AP incident records
 - `documents/architecture/query-behavior-specification.md` — query pattern logic, virtual_links pipeline
-- `documents/security/permission-resolution-caching-architecture-2026-06-23.md` — OpenFGA + Redis caching (primary auth doc)
+- `documents/security/permission-resolution-caching-architecture-2026-06-23.md` — Redis permission caching (historical OpenFGA design; authorization is Permify-only since the 2026-10-21 OpenFGA decommission: `documents/architecture/openfga-decommission-2026-10-21.md`)
 - `documents/daily_logs/` — session logs; most recent contains current sprint items
