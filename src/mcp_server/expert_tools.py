@@ -31,28 +31,43 @@ class ExpertTools:
             auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
         )
     
+    def _has_tenant_visibility(self) -> bool:
+        """
+        True only for the owner (requesting_user_id == OWNER_USER_ID) and for internal calls that
+        carry no end-user identity (composition subtree, ingestion). S2-42, 2026-10-23: every other
+        signed-in user (an invited person, the trial identity) and every guest link sees only what
+        Permify allows. Before this, any member of the owner's tenant saw the whole tenant through
+        the tenant_id fallback below.
+        """
+        if self.guest_share_anchor:
+            return False
+        if not self.requesting_user_id:
+            return True
+        owner_user_id = os.environ.get("OWNER_USER_ID", "")
+        return bool(owner_user_id) and self.requesting_user_id == owner_user_id
+
     def _get_security_clause(self, node_var: str) -> str:
         """
-        Authorization clause. Permify allowlist mode when allowed_ids is provided by the gateway.
-        Falls back to tenant_id filtering when Permify is not configured (allowed_ids=None).
+        Authorization clause.
+        - Owner / internal: Permify allowlist + tenant_id fallback (defense-in-depth against nodes
+          missing Permify tuples, S2-41); tenant_id only when Permify is not configured or failed
+          (allowed_ids=None).
+        - Everyone else: strictly the Permify allowlist + SYSTEM/PUBLIC landmarks. allowed_ids=None
+          (Permify unconfigured or failed) means nothing — fail closed (S2-42).
         """
+        if not self._has_tenant_visibility():
+            return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
         if self.allowed_ids is None:
             return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
-        # Guest/share mode: strictly bounded to the granted node_id list (no tenant fallback).
-        if self.guest_share_anchor:
-            return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
-        # Org-member Permify allowlist mode: node_id list + tenant_id fallback (defense-in-depth).
-        # Fallback guards against missing bootstrap node_ids silently excluding org-owned nodes.
         return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
 
     def _security_params(self) -> dict:
         """Returns the kwargs for _exec_query matched to _get_security_clause."""
+        if not self._has_tenant_visibility():
+            return {"allowed_ids": self.allowed_ids or []}
         if self.allowed_ids is None:
             return {"tenant_id": self.tenant_id}
-        if not self.guest_share_anchor:
-            # Non-guest Permify allowlist: pass both so $tenant_id in the dual-check clause is bound.
-            return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
-        return {"allowed_ids": self.allowed_ids}
+        return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
 
     def _apply_security(self, query: str, *node_vars: str) -> str:
         """Replace hardcoded $allowed_ids clauses (originally written for OpenFGA) with the dual-mode security clause.
@@ -2110,12 +2125,9 @@ class ExpertTools:
         # (they clicked the node in the graph, so it was already authorized at tenant level).
         # Re-applying full ownership check here blocks cross-user org content. Use tenant-level
         # read access for the source — any org member can initiate a bridge from tenant content.
-        sec_source_read = f"""
-        (
-            source.tenant_id IN ['SYSTEM', 'PUBLIC']
-            OR source.tenant_id = $tenant_id
-        )
-        """
+        # S2-42: the source lookup uses the same rule as every other read. It was tenant-wide for
+        # everyone (guests included), which could return the name of a node the caller can't see.
+        sec_source_read = self._get_security_clause("source")
         sec_a = self._get_security_clause("a")
         sec_b = self._get_security_clause("b")
 
@@ -2147,9 +2159,6 @@ class ExpertTools:
             source_result = self._exec_query(
                 source_query,
                 **self._security_params(),
-                # sec_source_read always uses $tenant_id. _security_params() omits tenant_id
-                # only in guest_share_anchor mode — supply it there explicitly.
-                **({"tenant_id": self.tenant_id} if self.guest_share_anchor else {}),
                 source_node_id=source_node_id or "",
                 source_node_name=source_node_name or "",
             )

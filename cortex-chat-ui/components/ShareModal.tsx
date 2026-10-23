@@ -141,7 +141,13 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                 const data = await resp.json();
                 setActive(data.active || []);
                 setRevoked(data.revoked || []);
-                setTenantWide(data.active?.some((g: ActiveGrant) => g.relation === 'tenant_viewer') ?? false);
+            }
+            // The org-wide toggle lives only in Permify (one tenant_viewer tuple, no share_grants row),
+            // so its state is read from the node's Permify access list (S2-40).
+            const accessResp = await fetch(`${GATEWAY}/api/share/access/${encodeURIComponent(nodeId)}`, { headers });
+            if (accessResp.ok) {
+                const tuples: { relation?: string }[] = await accessResp.json();
+                setTenantWide(Array.isArray(tuples) && tuples.some(t => t.relation === 'tenant_viewer'));
             }
         } catch { /* non-fatal */ } finally {
             setHistoryLoading(false);
@@ -290,17 +296,16 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
 
     async function toggleTenantWide() {
         const headers = await authHeaders();
-        if (!tenantWide) {
-            await fetch(`${GATEWAY}/api/share/tenant-wide`, {
-                method: 'POST',
+        try {
+            // POST switches organization-wide visibility on, DELETE switches it off (S2-40).
+            const resp = await fetch(`${GATEWAY}/api/share/tenant-wide`, {
+                method: tenantWide ? 'DELETE' : 'POST',
                 headers,
                 body: JSON.stringify({ node_id: nodeId }),
             });
-        } else {
-            const orgGrant = active.find(g => g.relation === 'tenant_viewer');
-            if (orgGrant) await revokeAccess(orgGrant.grant_id);
-        }
-        await loadHistory();
+            if (!resp.ok) console.warn('[ShareModal] organization-wide toggle failed:', resp.status);
+        } catch { /* state is re-read below */ }
+        await loadHistory(); // re-read the real state from Permify either way
     }
 
     const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [

@@ -627,6 +627,9 @@ if (!global.fetch) {
 // --- Permify + Cloud SQL clients ---
 const permify = require('./utils/permify_gateway');
 const db      = require('./utils/db');
+const { resolveUserId, isOwner } = require('./utils/identity');
+const { createShareAuthz } = require('./utils/share_authz');
+const shareAuthz = createShareAuthz({ db, permify });
 
 
 /**
@@ -900,10 +903,10 @@ const authMiddleware = async (req, res, next) => {
             console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (EnvOverride: ${!!process.env.TENANT_ID}, JwtOrg: ${decoded.org_id || 'none'})`);
             
             req.headers['x-tenant-id'] = tenantId;
-            // OWNER_USER_ID env var wins — dev Clerk sub differs from prod sub, but Permify
-            // tuples are keyed on the production sub. Same override pattern as TENANT_ID.
+            // Only the owner's own Clerk ids map to OWNER_USER_ID (S2-42, utils/identity.js). Until
+            // 2026-10-23 this was `OWNER_USER_ID || decoded.sub`, i.e. every signed-in user was the owner.
             req.headers['x-raw-user-id'] = decoded.sub || ''; // always the real Clerk sub — used by activate-pending
-            req.headers['x-user-id'] = process.env.OWNER_USER_ID || decoded.sub || '';
+            req.headers['x-user-id'] = resolveUserId(decoded.sub);
             
             // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
             const isAdmin = decoded.org_role === 'org:admin' || decoded.org_role === 'admin';
@@ -1161,6 +1164,22 @@ async function findOrCreateGrant(issuedBy, rootNodeId, nodeIds, grantType, expir
     return { grantId: newGrant.grant_id, reused: false, nodesChanged: false };
 }
 
+/**
+ * Remove shared_viewer access for each audience member on each node. Returns the number of failed
+ * deletes (each logged); callers must not mark anything revoked unless this returns 0 (S2-39).
+ */
+async function revokeAudienceAccess(audience, nodeIds) {
+    const jobs = [];
+    for (const member of audience) {
+        const subject = permify.audienceSubject(member.assignee_type, member.assignee_id);
+        for (const nodeId of nodeIds) jobs.push(permify.revokeNodeAccess(nodeId, subject, 'shared_viewer'));
+    }
+    const results = await Promise.allSettled(jobs);
+    const failed = results.filter(r => r.status === 'rejected');
+    failed.slice(0, 3).forEach(r => console.error('[PERMIFY/REVOKE] failed:', r.reason && r.reason.message));
+    return failed.length;
+}
+
 async function refreshPermifyForGrant(grantId, oldNodeIds, newNodeIds) {
     const { rows: audience } = await db.query(
         `SELECT assignee_type, assignee_id FROM role_assignments
@@ -1183,11 +1202,9 @@ async function refreshPermifyForGrant(grantId, oldNodeIds, newNodeIds) {
             ));
         }
         if (removed.length > 0) {
-            const subject = member.assignee_type === 'group'
-                ? `group:${member.assignee_id}#member` : member.assignee_id;
-            await Promise.all(removed.map(nodeId =>
-                permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
-            ));
+            // S2-39: a failed revoke must surface (it used to be swallowed, leaving access in place).
+            const subject = permify.audienceSubject(member.assignee_type, member.assignee_id);
+            await Promise.all(removed.map(nodeId => permify.revokeNodeAccess(nodeId, subject, 'shared_viewer')));
         }
     }
 }
@@ -1340,7 +1357,7 @@ app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) =>
 /**
  * Endpoints
  */
-app.get('/api/share', authMiddleware, async (req, res) => {
+app.get('/api/share', authMiddleware, shareAuthz.requireNodeShare(req => req.query.nodeId), async (req, res) => {
     const { nodeId } = req.query;
     const tenantId = req.headers['x-tenant-id'];
     if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
@@ -1371,7 +1388,7 @@ app.get('/api/share', authMiddleware, async (req, res) => {
     });
 });
 
-app.get('/api/share/links/:node_id', authMiddleware, async (req, res) => {
+app.get('/api/share/links/:node_id', authMiddleware, shareAuthz.requireNodeShare(req => req.params.node_id), async (req, res) => {
     const tenantId = req.headers['x-tenant-id'];
     try {
         const members = await redis.smembers(`guest_links:${tenantId}:${req.params.node_id}`);
@@ -1385,7 +1402,7 @@ app.get('/api/share/links/:node_id', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/share/revoke-link', authMiddleware, async (req, res) => {
+app.delete('/api/share/revoke-link', authMiddleware, shareAuthz.requireNodeShare(req => req.body && req.body.node_id), async (req, res) => {
     const { tokenHash, node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     if (!tokenHash || !node_id) return res.status(400).json({ error: 'tokenHash and node_id required' });
@@ -1402,25 +1419,38 @@ app.delete('/api/share/revoke-link', authMiddleware, async (req, res) => {
 // Permify is the enforcement layer. share_grants (Cloud SQL) is the audit/UI record.
 // Every share writes ONE shared_viewer tuple on the root; children inherit via parent chain.
 
-app.post('/api/share/tenant-wide', authMiddleware, async (req, res) => {
+// "Share with the whole organization" toggle: one tenant_viewer tuple in Permify (S2-37). Owner
+// only (S2-43); POST switches it on, DELETE switches it off (S2-40).
+const tenantWideNode = req => req.body && req.body.node_id;
+app.post('/api/share/tenant-wide', authMiddleware, shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
     const { node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
-    if (!node_id) return res.status(400).json({ error: 'node_id required' });
-    if (!permify.configured()) return res.status(503).json({ error: 'Permify not configured' });
     try {
-        // Permify, like every other share (OpenFGA decommissioned 2026-10-21, S2-37).
         await permify.makeNodeTenantWide(node_id, tenantId);
         await redis.incr(`perm_version:${tenantId}`);
-        res.json({ ok: true });
+        res.json({ ok: true, tenant_wide: true });
     } catch (err) {
         console.error('[/api/share/tenant-wide]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
+app.delete('/api/share/tenant-wide', authMiddleware, shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
+    const { node_id } = req.body;
+    const tenantId = req.headers['x-tenant-id'];
+    try {
+        await permify.removeNodeTenantWide(node_id, tenantId);
+        await redis.incr(`perm_version:${tenantId}`);
+        res.json({ ok: true, tenant_wide: false });
+    } catch (err) {
+        console.error('[DELETE /api/share/tenant-wide]', err.message);
+        res.status(502).json({ error: 'Could not switch off organization-wide access; it is unchanged. Please retry.' });
+    }
+});
+
 // Preview what will be shared — no Permify writes, no share_grants record.
 // Returns child_node_ids[], private_node_ids[], alreadyAccessible[].
-app.post('/api/share/infer', authMiddleware, async (req, res) => {
+app.post('/api/share/infer', authMiddleware, shareAuthz.requireNodeShare(req => req.body && req.body.rootNodeId), async (req, res) => {
     const { rootNodeId, targetSub, depthSelection = 5 } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     if (!rootNodeId) return res.status(400).json({ error: 'rootNodeId required' });
@@ -1447,7 +1477,7 @@ app.post('/api/share/infer', authMiddleware, async (req, res) => {
 
 // Share a node (and its composition subtree) with a user or via pending invite.
 // Audience tracked in role_assignments. Grant reuse: one grant per (issuer, root, type).
-app.post('/api/share/user', authMiddleware, async (req, res) => {
+app.post('/api/share/user', authMiddleware, shareAuthz.requireNodeShare(req => req.body && req.body.rootNodeId), async (req, res) => {
     const { rootNodeId, targetSub, pendingEmail, expiresAt, depthSelection = 5 } = req.body;
     const tenantId  = req.headers['x-tenant-id'];
     const issuedBy  = req.headers['x-user-id'];
@@ -1526,7 +1556,7 @@ app.post('/api/share/user', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/share/group', authMiddleware, async (req, res) => {
+app.post('/api/share/group', authMiddleware, shareAuthz.requireNodeShare(req => req.body && req.body.rootNodeId), async (req, res) => {
     const { rootNodeId, groupId, expiresAt, depthSelection = 5 } = req.body;
     if (!rootNodeId || !groupId) return res.status(400).json({ error: 'rootNodeId and groupId required' });
     const tenantId = req.headers['x-tenant-id'];
@@ -1567,7 +1597,7 @@ app.post('/api/share/group', authMiddleware, async (req, res) => {
 });
 
 // Grant-level revocation: removes access for ALL audience members atomically.
-app.delete('/api/share/grants/:grant_id', authMiddleware, async (req, res) => {
+app.delete('/api/share/grants/:grant_id', authMiddleware, shareAuthz.requireGrantIssuer(), async (req, res) => {
     const { grant_id } = req.params;
     const tenantId  = req.headers['x-tenant-id'];
     const revokedBy = req.headers['x-user-id'] || 'unknown';
@@ -1584,13 +1614,12 @@ app.delete('/api/share/grants/:grant_id', authMiddleware, async (req, res) => {
             [grant_id]
         );
 
-        // Revoke all Permify tuples for all audience × all nodes
-        for (const member of audience) {
-            const subject = member.assignee_type === 'group'
-                ? `group:${member.assignee_id}#member` : member.assignee_id;
-            await Promise.all((grant.child_node_ids || []).map(nodeId =>
-                permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
-            ));
+        // Revoke all Permify tuples for all audience × all nodes. Fail closed (S2-39): if any delete
+        // fails, the grant stays active in share_grants (matching reality) and the caller sees an error.
+        // Deletes are idempotent, so retrying the revoke is safe.
+        const revokeFailures = await revokeAudienceAccess(audience, grant.child_node_ids || []);
+        if (revokeFailures > 0) {
+            return res.status(502).json({ error: `Could not remove access in the authorization service (${revokeFailures} failed). The share is still active; please retry.` });
         }
 
         await db.query(
@@ -1631,7 +1660,7 @@ app.delete('/api/share/grants/:grant_id', authMiddleware, async (req, res) => {
 });
 
 // Per-audience revocation: removes one audience member's access while others retain theirs.
-app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware, async (req, res) => {
+app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware, shareAuthz.requireGrantIssuer(), async (req, res) => {
     const { grant_id, assignment_id } = req.params;
     const tenantId  = req.headers['x-tenant-id'];
     const revokedBy = req.headers['x-user-id'] || 'unknown';
@@ -1647,12 +1676,10 @@ app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware
             `SELECT child_node_ids FROM share_grants WHERE grant_id = $1`,
             [grant_id]
         );
-        const subject = assignment.assignee_type === 'group'
-            ? `group:${assignment.assignee_id}#member` : assignment.assignee_id;
-
-        await Promise.all((grant?.child_node_ids || []).map(nodeId =>
-            permify.revokeNodeAccess(nodeId, subject, 'shared_viewer').catch(() => {})
-        ));
+        const revokeFailures = await revokeAudienceAccess([assignment], grant?.child_node_ids || []);
+        if (revokeFailures > 0) {
+            return res.status(502).json({ error: `Could not remove access in the authorization service (${revokeFailures} failed). Access is unchanged; please retry.` });
+        }
         await db.query(
             `UPDATE role_assignments SET status = 'revoked', revoked_at = now(), revoked_by = $1
              WHERE assignment_id = $2`,
@@ -1674,7 +1701,7 @@ app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware
     }
 });
 
-app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
+app.get('/api/share/access/:node_id', authMiddleware, shareAuthz.requireNodeShare(req => req.params.node_id), async (req, res) => {
     const { node_id } = req.params;
     try {
         const access = await permify.listNodeAccess(node_id);
@@ -1685,7 +1712,7 @@ app.get('/api/share/access/:node_id', authMiddleware, async (req, res) => {
     }
 });
 
-app.get('/api/share/history/:node_id', authMiddleware, async (req, res) => {
+app.get('/api/share/history/:node_id', authMiddleware, shareAuthz.requireNodeShare(req => req.params.node_id), async (req, res) => {
     const { node_id } = req.params;
     try {
         const { rows } = await db.query(
@@ -1821,7 +1848,7 @@ app.get('/api/groups/:id', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/groups/:id/members', authMiddleware, async (req, res) => {
+app.post('/api/groups/:id/members', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id }    = req.params;
     const { userSub, userOrgId } = req.body;
     const addedBy  = req.headers['x-user-id'];
@@ -1848,7 +1875,7 @@ app.post('/api/groups/:id/members', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/groups/:id/members/:sub', authMiddleware, async (req, res) => {
+app.delete('/api/groups/:id/members/:sub', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id, sub } = req.params;
     const tenantId    = req.headers['x-tenant-id'];
     try {
@@ -1875,7 +1902,7 @@ app.delete('/api/groups/:id/members/:sub', authMiddleware, async (req, res) => {
 // Unified invite endpoint: resolves email → adds directly if Clerk user exists,
 // creates a pending group_invitation + sends email if not.
 
-app.post('/api/groups/:id/invite', authMiddleware, async (req, res) => {
+app.post('/api/groups/:id/invite', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id } = req.params;
     const { email } = req.body;
     const orgId    = req.headers['x-tenant-id'];
@@ -1956,7 +1983,7 @@ app.post('/api/groups/:id/invite', authMiddleware, async (req, res) => {
 });
 
 // List pending invitations for a group
-app.get('/api/groups/:id/invitations', authMiddleware, async (req, res) => {
+app.get('/api/groups/:id/invitations', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id } = req.params;
     const orgId  = req.headers['x-tenant-id'];
     try {
@@ -1979,7 +2006,7 @@ app.get('/api/groups/:id/invitations', authMiddleware, async (req, res) => {
 });
 
 // Resend a group invitation email
-app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, async (req, res) => {
+app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id, inv_id } = req.params;
     const issuerSub = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
     const orgId     = req.headers['x-tenant-id'];
@@ -2010,7 +2037,7 @@ app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, async (re
 });
 
 // Cancel a group invitation
-app.delete('/api/groups/:id/invitations/:inv_id', authMiddleware, async (req, res) => {
+app.delete('/api/groups/:id/invitations/:inv_id', authMiddleware, shareAuthz.requireGroupCreator(), async (req, res) => {
     const { id, inv_id } = req.params;
     const orgId = req.headers['x-tenant-id'];
     try {
@@ -2036,7 +2063,7 @@ app.delete('/api/groups/:id/invitations/:inv_id', authMiddleware, async (req, re
 
 // Share all visible graph nodes with a user, group, or pending email.
 // Uses findOrCreateGrant for dedup. Audience tracked in role_assignments.
-app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
+app.post('/api/share/graph-island', authMiddleware, shareAuthz.requireNodeShare(req => (req.body && req.body.nodeIds) || []), async (req, res) => {
     const { nodeIds, targetSub, groupId, pendingEmail, expiresAt } = req.body;
     const tenantId  = req.headers['x-tenant-id'];
     const issuedBy  = req.headers['x-user-id'];
@@ -2117,7 +2144,7 @@ app.post('/api/share/graph-island', authMiddleware, async (req, res) => {
 
 // --- Public Graph Links (Loom-style) ---
 
-app.post('/api/share/graph-link', authMiddleware, async (req, res) => {
+app.post('/api/share/graph-link', authMiddleware, shareAuthz.requireNodeShare(req => (req.body && req.body.nodeIds) || []), async (req, res) => {
     const userSub  = req.headers['x-user-id'];
     const tenantId = req.headers['x-tenant-id'];
     const { nodeIds, graphData, title, expiresAt } = req.body;
@@ -2305,7 +2332,7 @@ app.get('/api/share/pending', authMiddleware, async (req, res) => {
 });
 
 // Resend invite email for a pending share invitation
-app.post('/api/share/resend-invite/:grant_id', authMiddleware, async (req, res) => {
+app.post('/api/share/resend-invite/:grant_id', authMiddleware, shareAuthz.requireGrantIssuer(), async (req, res) => {
     const { grant_id } = req.params;
     const issuerSub = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
     const issuedBy  = req.headers['x-user-id'];
@@ -2338,7 +2365,7 @@ app.post('/api/share/resend-invite/:grant_id', authMiddleware, async (req, res) 
 });
 
 // Cancel a pending share invitation
-app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, async (req, res) => {
+app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, shareAuthz.requireGrantIssuer(), async (req, res) => {
     const { grant_id } = req.params;
     const issuedBy = req.headers['x-user-id'];
     try {
@@ -4025,18 +4052,18 @@ app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_no
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
-app.post('/api/register_website_source', authMiddleware, mcpToolEndpoint('register_website_source'));
 
-// Source-registration writes are for signed-in tenant users only: a guest share link
-// (req.guestAuth, read-only by design) or the trial identity must never add sources to a tenant.
-const NON_WRITER_USER_IDS = new Set(['guest-auth', 'trial-user']);
+// Adding sources (websites, documents) is owner-only (2026-10-23, with S2-42). Ingested nodes are
+// registered to OWNER_USER_ID, and invited users were only able to add sources because every
+// signed-in user used to be mapped to the owner. Guests and the trial identity were already refused.
 const requireSourceWriter = (req, res, next) => {
-    if (req.guestAuth === true || NON_WRITER_USER_IDS.has(req.headers['x-user-id'] || '')) {
-        return res.status(403).json({ error: 'Adding sources requires a signed-in account.' });
+    if (req.guestAuth === true || !isOwner(req.headers['x-user-id'] || '')) {
+        return res.status(403).json({ error: 'Only the owner can add sources.' });
     }
     return next();
 };
 // Phase B M3': documents are queued for the ingestion worker; cortex-mcp never parses them.
+app.post('/api/register_website_source', authMiddleware, requireSourceWriter, mcpToolEndpoint('register_website_source'));
 app.post('/api/register_document_source', authMiddleware, requireSourceWriter, mcpToolEndpoint('register_document_source'));
 app.post('/api/get_document_source_status', authMiddleware, requireSourceWriter, mcpToolEndpoint('get_document_source_status'));
 

@@ -16,9 +16,13 @@ REST API used directly (no gRPC SDK required). All calls are idempotent.
 
 Permify v0.9+ endpoint map (breaking change from earlier versions):
   Relationships: POST /relationships/write  (key: "tuples")   — NOT /data/write
-  Rel delete:    POST /relationships/delete (key: "filter")
+  Rel delete:    POST /relationships/delete (key: "filter"; entity/subject take "ids" LISTS)
   Attributes:    POST /data/write           (key: "attributes") — unchanged
-  Attr delete:   POST /data/delete          (keys: "tuple_filter": {}, "attribute_filter": {...})
+  Attr delete:   POST /data/delete          (keys: "tuple_filter": {}, "attribute_filter":
+                 {"entity": {"type", "ids": [...]}, "attributes": [...]})
+  Delete filters silently IGNORE unknown keys: a singular "id"/"attribute" widens the delete to every
+  tuple/attribute of that type (S2-39, proven against Permify v1.7.1 on 2026-10-23). Build delete
+  filters only with _exact_tuple_filter() / _exact_attribute_filter().
   Rel read:      POST /data/relationships/read
   Attr read:     POST /data/attributes/read
   Check:         POST /permissions/check
@@ -370,12 +374,36 @@ async def _write_relationships(tuples: list[dict]) -> None:
         resp.raise_for_status()
 
 
+def _exact_tuple_filter(tup: dict) -> dict:
+    """Delete filter matching exactly ONE tuple. Refuses a missing id (that would widen the delete)."""
+    entity, subject = tup["entity"], tup["subject"]
+    if not entity.get("id") or not subject.get("id") or not tup.get("relation"):
+        raise ValueError(f"refusing an unscoped Permify delete: {tup}")
+    subject_filter = {"type": subject["type"], "ids": [subject["id"]]}
+    if subject.get("relation"):
+        subject_filter["relation"] = subject["relation"]
+    return {
+        "entity":   {"type": entity["type"], "ids": [entity["id"]]},
+        "relation": tup["relation"],
+        "subject":  subject_filter,
+    }
+
+
+def _exact_attribute_filter(attr: dict) -> dict:
+    """Delete filter matching exactly ONE attribute on ONE entity."""
+    entity = attr["entity"]
+    if not entity.get("id") or not attr.get("attribute"):
+        raise ValueError(f"refusing an unscoped Permify attribute delete: {attr}")
+    return {"entity": {"type": entity["type"], "ids": [entity["id"]]}, "attributes": [attr["attribute"]]}
+
+
 async def _delete_relationships(tuples: list[dict]) -> None:
     # /relationships/delete takes a single "filter" (not a list); call once per tuple.
     url = f"{_base_url()}/v1/tenants/{_tenant()}/relationships/delete"
+    filters = [_exact_tuple_filter(tup) for tup in tuples]  # validate all before deleting any
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for tup in tuples:
-            resp = await client.post(url, json={"filter": tup}, headers=await _get_headers())
+        for tuple_filter in filters:
+            resp = await client.post(url, json={"filter": tuple_filter}, headers=await _get_headers())
             resp.raise_for_status()
 
 
@@ -394,14 +422,9 @@ async def _delete_attributes(attributes: list[dict]) -> None:
     # /data/delete requires tuple_filter (non-null) even for attribute-only deletes.
     # Pass an empty tuple_filter {} which matches nothing and satisfies the constraint.
     url = f"{_base_url()}/v1/tenants/{_tenant()}/data/delete"
-    for attr in attributes:
-        payload = {
-            "tuple_filter":     {},
-            "attribute_filter": {
-                "entity":    attr["entity"],
-                "attribute": attr["attribute"],
-            },
-        }
+    filters = [_exact_attribute_filter(attr) for attr in attributes]
+    for attribute_filter in filters:
+        payload = {"tuple_filter": {}, "attribute_filter": attribute_filter}
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, json=payload, headers=await _get_headers())
             resp.raise_for_status()

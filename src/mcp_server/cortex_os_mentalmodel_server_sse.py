@@ -426,6 +426,18 @@ async def view_source_live(
     finally:
         expert.close()
 
+def _source_writer_error() -> str | None:
+    """Adding sources is owner-only (2026-10-23, with S2-42). Enforced here as well as in the gateway
+    (requireSourceWriter), because the gateway's /api catch-all proxies the MCP protocol itself, so a
+    signed-in user could call these tools directly. An empty user id means an internal call."""
+    requester = user_id_var.get() or ""
+    owner = os.environ.get("OWNER_USER_ID", "")
+    if requester and requester != owner:
+        print(f"[AUTHZ/MCP] refused source registration by non-owner user={requester[:12]}")
+        return json.dumps({"error": "Only the owner can add sources."})
+    return None
+
+
 @mcp.tool()
 async def register_website_source(
     url: str = Field(description="The website URL to fetch, extract, and register as a new queryable WebsiteSource.")
@@ -446,6 +458,9 @@ async def register_website_source(
     from ingestion_engine import IngestionEngine
 
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    owner_error = _source_writer_error()
+    if owner_error:
+        return owner_error
     user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
     if not user_id:
         return json.dumps({"error": "No owner_id available for this request."})
@@ -510,6 +525,9 @@ async def register_document_source(
     from schema_guard import DOCUMENT_INGEST_STATUS_QUEUED, DOCUMENT_INGEST_STATUS_TTL_SECONDS
 
     tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    owner_error = _source_writer_error()
+    if owner_error:
+        return owner_error
     user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
     if not user_id:
         return json.dumps({"error": "No owner_id available for this request."})

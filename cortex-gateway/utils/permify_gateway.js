@@ -74,16 +74,41 @@ async function makeNodeTenantWide(nodeId, tenantOrgId) {
   }] });
 }
 
-/** Delete a shared_viewer tuple (revoke). Never delete parent tuples. */
-async function revokeNodeAccess(nodeId, subject, relation) {
-  const [subType, subRest] = subject.split(':');
-  const subId  = subRest.split('#')[0];
-  const subRel = subRest.includes('#') ? subRest.split('#')[1] : undefined;
-  const subObj = { type: subType, id: subId };
-  if (subRel) subObj.relation = subRel;
-  return _post('/data/delete', {
-    tuples: [{ entity: { type: 'node', id: nodeId }, relation, subject: subObj }],
-  });
+/**
+ * Delete filters (S2-39, proven against Permify v1.7.1 on 2026-10-23):
+ * /relationships/delete takes ONE `filter` whose entity/subject use `ids` LISTS. Permify silently
+ * ignores unknown keys, so a singular `id` widens the delete to every tuple of that type (removing
+ * one group member removed them all). /data/delete with `{tuples}` is rejected (400). Build every
+ * delete with exactTupleFilter(), which refuses a missing id instead of widening.
+ */
+function exactTupleFilter(entityType, entityId, relation, subject) {
+  if (!entityId || !relation || !subject || !subject.type || !subject.id) {
+    throw new Error(`refusing an unscoped Permify delete (${entityType}:${entityId}#${relation})`);
+  }
+  const subjectFilter = { type: subject.type, ids: [String(subject.id)] };
+  if (subject.relation) subjectFilter.relation = subject.relation;
+  return { entity: { type: entityType, ids: [String(entityId)] }, relation, subject: subjectFilter };
+}
+
+/**
+ * Permify subject for a share audience member (role_assignments row). Users are stored as the
+ * bare Clerk id (`user_…`); before S2-39 that bare id was passed to a parser expecting "user:…",
+ * which threw, and the throw was swallowed.
+ */
+function audienceSubject(assigneeType, assigneeId) {
+  return assigneeType === 'group'
+    ? { type: 'group', id: assigneeId, relation: 'member' }
+    : { type: 'user', id: assigneeId };
+}
+
+/** Delete ONE access tuple on a node (revoke). Never delete parent tuples. Throws on failure. */
+async function revokeNodeAccess(nodeId, subject, relation = 'shared_viewer') {
+  return _post('/relationships/delete', { filter: exactTupleFilter('node', nodeId, relation, subject) });
+}
+
+/** Undo makeNodeTenantWide: remove the node's tenant_viewer tuple for the org (S2-40). */
+async function removeNodeTenantWide(nodeId, tenantOrgId) {
+  return revokeNodeAccess(nodeId, { type: 'org', id: tenantOrgId, relation: 'member' }, 'tenant_viewer');
 }
 
 /** Write is_private=true attribute on a node. */
@@ -99,8 +124,11 @@ async function writePrivacyAttribute(nodeId, isPrivate) {
       }],
     });
   } else {
+    // tuple_filter {} matches no tuples but is required; attribute_filter needs `ids` + `attributes`.
+    if (!nodeId) throw new Error('refusing an unscoped Permify attribute delete');
     return _post('/data/delete', {
-      attributes_filter: { entity: { type: 'node', id: nodeId }, attribute: 'is_private' },
+      tuple_filter:     {},
+      attribute_filter: { entity: { type: 'node', ids: [String(nodeId)] }, attributes: ['is_private'] },
     });
   }
 }
@@ -173,17 +201,16 @@ async function addGroupMember(groupId, userSub) {
 /** Remove a user from a group in Permify. */
 async function removeGroupMember(groupId, userSub) {
   return _post('/relationships/delete', {
-    filter: {
-      entity:   { type: 'group', ids: [groupId] },
-      relation: 'member',
-      subject:  { type: 'user', id: userSub },
-    },
+    filter: exactTupleFilter('group', groupId, 'member', { type: 'user', id: userSub }),
   });
 }
 
 module.exports = {
   configured,
   makeNodeTenantWide,
+  removeNodeTenantWide,
+  audienceSubject,
+  exactTupleFilter,
   shareNodeWithUser,
   shareNodeWithGroup,
   addGroupMember,
