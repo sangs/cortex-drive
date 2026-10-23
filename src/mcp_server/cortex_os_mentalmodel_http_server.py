@@ -120,6 +120,26 @@ class ToolHandler(BaseHTTPRequestHandler):
                     expert.close()
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/nodes_in_tenant":
+            # Gateway owner share checks (S2-43): which of these node ids belong to the caller's tenant.
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                if not tenant_id:
+                    self.send_error(400, "x-tenant-id required")
+                    return
+                expert = ExpertTools(tenant_id=tenant_id)
+                try:
+                    node_ids = expert.nodes_in_tenant(params.get("node_ids") or [])
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"node_ids": node_ids}).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/get_composition_subtree":
             try:
                 content_length = int(self.headers.get("Content-Length", 0))

@@ -681,3 +681,7 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         raise ValueError(f"Unknown node label: {label}. Please use a label defined in the schema guard.")
         
     return model_map[label](**data)
+
+# Cap on node ids per Bento /nodes_in_tenant request (gateway owner share checks, S2-43).
+# Matches MAX_NODES_PER_CHECK in cortex-gateway/utils/share_authz.js.
+NODES_IN_TENANT_MAX_IDS = 200

@@ -79,6 +79,25 @@ function run(mw, req) {
     const failing = createShareAuthz({ db: noDb, permify: fakePermify({ fail: true }), log: quietLog });
     eq((await run(failing.requireNodeShare(r => r.body.node_id), { body: { node_id: 'n1' }, headers: { 'x-user-id': 'owner' } })).status, 503, 'Permify error → fail closed');
 
+    // Owner fallback: nodes of the owner's own tenant pass without a Permify owner tuple (S2-41);
+    // found in production 2026-10-23 (owner got 403 on their own nodes). Non-owners never use it.
+    const tenantNodes = { org_1: ['t1', 't2'] };
+    let tenantCalls = 0;
+    const ownerAuthz = createShareAuthz({ db: noDb, permify: fakePermify({ owned: ['n1'] }), log: quietLog,
+        isOwner: u => u === 'owner',
+        nodesInTenant: async (ids, tenant) => { tenantCalls++; return ids.filter(id => (tenantNodes[tenant] || []).includes(id)); } });
+    const ownerNode = ownerAuthz.requireNodeShare(req => req.body.nodeIds);
+    eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'owner' } })).next, true, 'owner: own-tenant node without owner tuple → allowed');
+    eq((await run(ownerNode, { body: { nodeIds: ['t1', 'n1'] }, headers: { 'x-user-id': 'owner' } })).next, true, 'owner: tenant node + Permify-owned node → allowed');
+    eq((await run(ownerNode, { body: { nodeIds: ['t1', 'x9'] }, headers: { 'x-user-id': 'owner' } })).status, 403, 'owner: a node outside the tenant and not owned → refused');
+    eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'owner', 'x-tenant-id': 'org_other' } })).status, 403, 'owner: tenant fallback is per tenant');
+    const callsBefore = tenantCalls;
+    eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'invitee' } })).status, 403, 'non-owner: tenant fallback never applies');
+    eq(tenantCalls, callsBefore, 'non-owner: tenant lookup not even called');
+    const brokenLookup = createShareAuthz({ db: noDb, permify: fakePermify({ owned: [] }), log: quietLog, isOwner: () => true,
+        nodesInTenant: async () => { throw new Error('bento down'); } });
+    eq((await run(brokenLookup.requireNodeShare(r => r.body.node_id), { body: { node_id: 't1' }, headers: { 'x-user-id': 'owner' } })).status, 403, 'tenant lookup error → Permify alone decides (fail closed)');
+
     const grantDb = fakeDb((sql, [id]) => sql.includes('share_grants')
         ? ({ g_mine: [{ issued_by: 'issuer', root_node_id: 'n9' }], g_root: [{ issued_by: 'someone', root_node_id: 'n1' }] }[id] || []) : []);
     const ga = createShareAuthz({ db: grantDb, permify: fakePermify({ owned: ['n1'] }), log: quietLog }).requireGrantIssuer();

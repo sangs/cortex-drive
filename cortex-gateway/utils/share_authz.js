@@ -7,7 +7,10 @@
  * masked by S2-42 (every signed-in user was mapped to the owner) and became the main hole once
  * S2-42 was fixed.
  *
- *   node actions  → Permify `can_share` on every node involved (the schema grants it to the owner)
+ *   node actions  → Permify `can_share` on every node involved (the schema grants it to the owner);
+ *                   the OWNER may also act on any node of their own tenant (`nodesInTenant`, Bento),
+ *                   because most nodes have no Permify owner tuple (S2-41). Found in production
+ *                   2026-10-23: without this the owner got 403 on their own nodes.
  *   grant actions → share_grants.issued_by is the caller, or the caller can share the grant's root
  *   group actions → groups.created_by is the caller (same org)
  *
@@ -18,15 +21,29 @@
 const SHARE_PERMISSION = 'can_share';
 const MAX_NODES_PER_CHECK = 200;
 
-function createShareAuthz({ db, permify, log = console }) {
-    async function canShareAll(nodeIds, userId) {
+function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = null, log = console }) {
+    // Owner: nodes of their own tenant are theirs to manage. Returns the subset confirmed in-tenant;
+    // on any error returns [] so the Permify check alone decides (fail closed).
+    async function ownerTenantNodes(ids, userId, tenantId) {
+        if (!nodesInTenant || !tenantId || !isOwner(userId)) return new Set();
+        try {
+            return new Set(((await nodesInTenant(ids, tenantId)) || []).map(String));
+        } catch (err) {
+            log.error('[SHARE-AUTHZ] tenant lookup failed:', err.message);
+            return new Set();
+        }
+    }
+
+    async function canShareAll(nodeIds, userId, tenantId) {
         if (!permify.configured()) return { ok: false, status: 503, error: 'Authorization service not configured' };
         const ids = [...new Set((nodeIds || []).filter(Boolean).map(String))];
         if (ids.length === 0) return { ok: false, status: 400, error: 'node id required' };
         if (ids.length > MAX_NODES_PER_CHECK) return { ok: false, status: 400, error: `at most ${MAX_NODES_PER_CHECK} nodes per request` };
         try {
-            const results = await Promise.all(ids.map(id => permify.checkPermission(id, userId, SHARE_PERMISSION)));
-            const denied = ids.filter((_, i) => !results[i]);
+            const inTenant = await ownerTenantNodes(ids, userId, tenantId);
+            const rest = ids.filter(id => !inTenant.has(id));
+            const results = await Promise.all(rest.map(id => permify.checkPermission(id, userId, SHARE_PERMISSION)));
+            const denied = rest.filter((_, i) => !results[i]);
             if (denied.length) return { ok: false, status: 403, error: 'Only the owner of a node can share it or manage its access', denied };
             return { ok: true };
         } catch (err) {
@@ -47,7 +64,7 @@ function createShareAuthz({ db, permify, log = console }) {
         return async (req, res, next) => {
             const raw = getNodeIds(req);
             const ids = Array.isArray(raw) ? raw : [raw];
-            const verdict = await canShareAll(ids, req.headers['x-user-id']);
+            const verdict = await canShareAll(ids, req.headers['x-user-id'], req.headers['x-tenant-id']);
             return verdict.ok ? next() : refuse(res, verdict, `${req.method} ${req.route?.path || req.path}`);
         };
     }
@@ -62,7 +79,7 @@ function createShareAuthz({ db, permify, log = console }) {
                     'SELECT issued_by, root_node_id FROM share_grants WHERE grant_id = $1', [grantId]);
                 if (!grant) return res.status(404).json({ error: 'Grant not found' });
                 if (userId && grant.issued_by === userId) return next();
-                const verdict = await canShareAll([grant.root_node_id], userId);
+                const verdict = await canShareAll([grant.root_node_id], userId, req.headers['x-tenant-id']);
                 return verdict.ok ? next() : refuse(res, verdict, `${req.method} grant`);
             } catch (err) {
                 log.error('[SHARE-AUTHZ] grant lookup failed:', err.message);

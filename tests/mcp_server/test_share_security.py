@@ -114,6 +114,29 @@ class BridgeSourceLookupTest(unittest.TestCase):
         self.assertEqual(kwargs.get("tenant_id"), TEST_TENANT_ID)
 
 
+class NodesInTenantTest(unittest.TestCase):
+    """Bento /nodes_in_tenant (owner share checks, S2-43): one parameterized query, capped."""
+
+    def test_query_and_params(self):
+        t = tools()
+        t.driver = mock.MagicMock()
+        t.driver.execute_query.return_value = mock.MagicMock(records=[{"node_id": "a"}])
+        self.assertEqual(t.nodes_in_tenant(["a", "", None, "b"]), ["a"])
+        query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
+        self.assertEqual(params_used(query), {"node_ids", "tenant_id"})  # AP-2
+        self.assertEqual(kwargs, {"node_ids": ["a", "b"], "tenant_id": TEST_TENANT_ID})
+
+    def test_empty_and_cap(self):
+        from schema_guard import NODES_IN_TENANT_MAX_IDS
+        t = tools()
+        t.driver = mock.MagicMock()
+        self.assertEqual(t.nodes_in_tenant([]), [])
+        t.driver.execute_query.assert_not_called()
+        t.driver.execute_query.return_value = mock.MagicMock(records=[])
+        t.nodes_in_tenant([f"n{i}" for i in range(NODES_IN_TENANT_MAX_IDS + 50)])
+        self.assertEqual(len(t.driver.execute_query.call_args[1]["node_ids"]), NODES_IN_TENANT_MAX_IDS)
+
+
 class PermifyDeleteFilterTest(unittest.TestCase):
     def test_exact_tuple_filter_uses_id_lists(self):
         f = permify_utils._exact_tuple_filter({"entity": {"type": "node", "id": "n1"}, "relation": "shared_viewer",

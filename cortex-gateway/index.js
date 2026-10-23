@@ -629,7 +629,20 @@ const permify = require('./utils/permify_gateway');
 const db      = require('./utils/db');
 const { resolveUserId, isOwner } = require('./utils/identity');
 const { createShareAuthz } = require('./utils/share_authz');
-const shareAuthz = createShareAuthz({ db, permify });
+// Owner share checks also accept nodes of the owner's own tenant (most nodes have no Permify owner
+// tuple, S2-41). One Bento query per request; Gateway→Bento via direct fetch + OIDC (AP-18, Flow 5).
+async function bentoNodesInTenant(nodeIds, tenantId) {
+    const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+    const token = await getCloudRunToken(bentoBase);
+    const res = await fetch(`${bentoBase}/nodes_in_tenant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, ...(token ? { Authorization: token } : {}) },
+        body: JSON.stringify({ node_ids: nodeIds }),
+    });
+    if (!res.ok) throw new Error(`Bento /nodes_in_tenant → ${res.status}`);
+    return (await res.json()).node_ids || [];
+}
+const shareAuthz = createShareAuthz({ db, permify, isOwner, nodesInTenant: bentoNodesInTenant });
 
 
 /**

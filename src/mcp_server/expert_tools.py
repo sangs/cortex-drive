@@ -2981,6 +2981,20 @@ class ExpertTools:
         private_node_ids = [r["node_id"] for r in result.records if r.get("is_private")]
         return {"child_node_ids": child_node_ids, "private_node_ids": private_node_ids}
 
+    def nodes_in_tenant(self, node_ids: list) -> list:
+        """Which of node_ids belong to this tenant. Used by the gateway's owner share checks (S2-43):
+        the owner may manage any node of their own tenant, including nodes with no Permify owner
+        tuple (S2-41). Internal call only (Bento, no end-user identity)."""
+        from schema_guard import NODES_IN_TENANT_MAX_IDS
+        ids = [str(i) for i in (node_ids or []) if i][:NODES_IN_TENANT_MAX_IDS]
+        if not ids:
+            return []
+        result = self._exec_query(
+            "MATCH (n) WHERE n.node_id IN $node_ids AND n.tenant_id = $tenant_id RETURN DISTINCT n.node_id AS node_id",
+            node_ids=ids, tenant_id=self.tenant_id,
+        )
+        return [r["node_id"] for r in result.records]
+
     def close(self):
         """Close the Neo4j driver"""
         if self.driver:
