@@ -704,3 +704,14 @@ CAREER_PUBLIC_EXCLUDED_LABELS = [
 SEED_BUILTIN_VOCABULARY_LABELS = ['Technology', 'Tool', 'Concept', 'Topic', 'Institution', 'Year']
 # Tiers visible to every caller (visibility rule, S2-44): built-in vocabulary and public content. Not shareable.
 VISIBLE_TO_EVERYONE_TENANTS = ['SYSTEM', 'PUBLIC']
+
+# ── Phase B M5: document query (phase-b-m5-document-query-design-2026-10-21.md §1.3.2, §1.3.6) ──────
+DOCUMENT_SEARCH_TOP_K = 8                 # evidence blocks returned per question
+DOCUMENT_SEARCH_MAX_PER_SOURCE = 4        # at most this many blocks from one document
+DOCUMENT_EVIDENCE_MAX_CHARS = 800         # block text sent to the LLM (citations carry the rest)
+DOCUMENT_GRAPH_MAX_NODES = 40             # graph view cap for the document domain
+DOCUMENT_GRAPH_MAX_ENTITIES = 10          # linked entities shown for a matched document
+DOCUMENT_SEARCH_RRF_K = 60                # reciprocal-rank-fusion constant (same as the chunk tool)
+DOCUMENT_BLOCK_VECTOR_INDEX = 'contentBlockIndex'
+DOCUMENT_BLOCK_TEXT_INDEX = 'contentBlockTextIndex'
+DOCUMENT_PDF_MIME_TYPES = ['application/pdf']

@@ -12,6 +12,7 @@ const DOMAIN_ALLOWED_TYPES = {
     podcast: new Set(_domainManifestsRaw.podcast.node_types),
     career: new Set(_domainManifestsRaw.career.node_types),
     website: new Set(_domainManifestsRaw.website.node_types),
+    document: new Set(_domainManifestsRaw.document.node_types), // Phase B M5 (reached only with ENABLE_DOCUMENT_DOMAIN)
 };
 
 // search_enterprise_graph's own domain_intent enum uses Python/domain_registry.py naming
@@ -19,12 +20,12 @@ const DOMAIN_ALLOWED_TYPES = {
 // pre-existing mismatch website-domain-cross-domain-routing-design-2026-08-24.md §2.1 flagged
 // as "out of scope to fix". Needed here specifically to key DOMAIN_ALLOWED_TYPES (JS-side,
 // "career") off a tool call's actual domain_intent argument (Python-side, "professional").
-const DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY = { professional: 'career', podcast: 'podcast', website: 'website' };
+const DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY = { professional: 'career', podcast: 'podcast', website: 'website', document: 'document' };
 
 // The reverse direction (AP-25): a confident single-domain classification → the
 // search_enterprise_graph domain_intent that enforces it at the Cypher level. cross_domain is
 // deliberately absent — cross-domain turns are meant to search more than one domain.
-const DOMAIN_SIGNAL_TO_SEARCH_INTENT = { podcast: 'podcast', career: 'professional', website: 'website' };
+const DOMAIN_SIGNAL_TO_SEARCH_INTENT = { podcast: 'podcast', career: 'professional', website: 'website', document: 'document' };
 
 // Invariant 11 wording for a turn where data tools ran but none returned anything (AP-25).
 const NO_DATA_FOUND_ANSWER = (question) => `No data found in Cortex-Drive for "${String(question).trim()}".`;

@@ -1,6 +1,6 @@
 import os
 
-from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES
+from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES, DOCUMENT_GRAPH_NODES
 
 # Node-metadata embedding eligibility (2026-09-04) — single source of truth for "which node
 # types get a metadata_embedding" (schema_guard.EmbeddableNodeMixin) and "which types the
@@ -187,6 +187,10 @@ BRIDGE_LABELS = ["ReferenceLink", "Chunk", "Source", "PreparatoryNote", "__MetaC
 
 VISUAL_DENY_LIST = BRIDGE_LABELS
 
+# Phase B M5 (documents): the `document` domain is offered only when this flag is on (gateway +
+# MCP). Off (default) = production behaviour identical to before M5 (decision M5-10, S2-19).
+ENABLE_DOCUMENT_DOMAIN = os.environ.get("ENABLE_DOCUMENT_DOMAIN", "false").lower() == "true"
+
 def get_discovery_label_string() -> str:
     """Returns a Cypher-compatible label string like 'Project|Role|Company'."""
     return "|".join(DISCOVERY_LABELS)
@@ -195,9 +199,17 @@ def get_bridge_label_string() -> str:
     """Returns a Cypher-compatible label string for bridge nodes."""
     return "|".join(BRIDGE_LABELS)
 
-def get_visual_deny_list() -> list:
-    """Returns the list of labels that should be excluded from the visual graph."""
-    return VISUAL_DENY_LIST
+def get_visual_deny_list(domain: str = None) -> list:
+    """Labels excluded from the visual graph: the global bridge labels, plus the domain's own
+    `visual_deny_labels` (M5-8: ContentBlock is hidden for `document` only — its text goes to the chat
+    with citations)."""
+    manifest = DOMAIN_MANIFESTS.get((domain or "").lower()) if domain else None
+    return VISUAL_DENY_LIST + (manifest.get("visual_deny_labels", []) if manifest else [])
+
+
+def _in_universal_discovery(manifest: dict) -> bool:
+    """M5-6: a manifest can opt out of the domain="all" unions (universal discovery, Flow 4)."""
+    return manifest.get("universal_discovery", True)
 
 # Authoritative Domain Manifests (The Single Source of Experience Truth)
 DOMAIN_MANIFESTS = {
@@ -286,6 +298,27 @@ DOMAIN_MANIFESTS = {
         "node_set": ["ExternalSilo", "DataLake", "GitHub", "Confluence", "TableMetadata", "PageMetadata", "Publication", "Source"],
         "anchor_labels": ["ExternalSilo", "DataLake", "TableMetadata", "Publication"],
         "realm": "INTERNAL"
+    },
+    # Phase B M5: documents (design: phase-b-m5-document-query-design-2026-10-21.md §1.3.1).
+    # No shared entity labels in node_set (§1.3.5); not part of universal discovery (M5-6); only
+    # reachable when ENABLE_DOCUMENT_DOMAIN is on.
+    "document": {
+        "persona": "document",
+        "ui_hints": {
+            "impact_label": "Document Summary",
+            "tech_label": "Referenced Tech",
+            "timeline_label": "Last Synced",
+            "narrative_label": "Cited Passage",
+            "trace_label": "Source Document",
+            "trace_sub_label": "Page Citation",
+            "placeholder": "Searching the document's passages..."
+        },
+        "node_set": list(DOCUMENT_GRAPH_NODES),
+        "anchor_labels": ["DocumentSource", "Section"],
+        "backbone_labels": ["DocumentSource"],
+        "visual_deny_labels": ["ContentBlock"],
+        "universal_discovery": False,
+        "realm": "INTERNAL"
     }
 }
 
@@ -298,7 +331,8 @@ def get_backbone_labels(domain: str = "all") -> list:
     if domain.lower() == "all":
         backbone = set()
         for manifest in DOMAIN_MANIFESTS.values():
-            backbone.update(manifest.get("backbone_labels", []))
+            if _in_universal_discovery(manifest):
+                backbone.update(manifest.get("backbone_labels", []))
         return list(backbone)
     manifest = DOMAIN_MANIFESTS.get(domain.lower())
     return manifest.get("backbone_labels", []) if manifest else []
@@ -316,7 +350,8 @@ def get_anchor_labels(domain: str) -> list:
         # Combine all anchors for universal discovery
         anchors = set()
         for manifest in DOMAIN_MANIFESTS.values():
-            anchors.update(manifest.get("anchor_labels", []))
+            if _in_universal_discovery(manifest):
+                anchors.update(manifest.get("anchor_labels", []))
         return list(anchors)
     manifest = DOMAIN_MANIFESTS.get(domain.lower())
     return manifest.get("anchor_labels", []) if manifest else []

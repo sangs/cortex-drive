@@ -1,25 +1,85 @@
 {
   "podcast": {
     "node_types": [
-      "Podcast", "Episode", "Chunk", "Topic", "Concept",
-      "ReferenceLink", "Person", "Technology", "Source",
-      "Publication", "Community"
+      "Podcast",
+      "Episode",
+      "Chunk",
+      "Topic",
+      "Concept",
+      "ReferenceLink",
+      "Person",
+      "Technology",
+      "Source",
+      "Publication",
+      "Community"
     ]
   },
   "career": {
     "node_types": [
-      "Project", "Purpose", "Objective", "Value", "Benefit", "Metric",
-      "Outcome", "SuccessCriteria", "MeasurableResult", "Approach",
-      "Plan", "Method", "MethodStep", "Tool", "Timeline", "Milestone",
-      "Team", "Role", "Responsibility", "Task", "Deliverable", "TeamMember",
-      "Company", "Degree", "Institution", "Skill", "Category", "PreparatoryNote",
-      "Startup", "Hackathon", "Certification", "Publication", "OpenSource",
-      "SocialLearning", "ProfessionalEducation", "Year",
-      "ExternalSilo", "DataLake", "GitHub", "Confluence", "TableMetadata", "PageMetadata",
-      "ThoughtLeadership", "Community", "Person"
+      "Project",
+      "Purpose",
+      "Objective",
+      "Value",
+      "Benefit",
+      "Metric",
+      "Outcome",
+      "SuccessCriteria",
+      "MeasurableResult",
+      "Approach",
+      "Plan",
+      "Method",
+      "MethodStep",
+      "Tool",
+      "Timeline",
+      "Milestone",
+      "Team",
+      "Role",
+      "Responsibility",
+      "Task",
+      "Deliverable",
+      "TeamMember",
+      "Company",
+      "Degree",
+      "Institution",
+      "Skill",
+      "Category",
+      "PreparatoryNote",
+      "Startup",
+      "Hackathon",
+      "Certification",
+      "Publication",
+      "OpenSource",
+      "SocialLearning",
+      "ProfessionalEducation",
+      "Year",
+      "ExternalSilo",
+      "DataLake",
+      "GitHub",
+      "Confluence",
+      "TableMetadata",
+      "PageMetadata",
+      "ThoughtLeadership",
+      "Community",
+      "Person"
     ]
   },
   "website": {
-    "node_types": ["WebsiteSource", "SourceSnapshot"]
+    "node_types": [
+      "WebsiteSource",
+      "SourceSnapshot"
+    ]
+  },
+  "document": {
+    "node_types": [
+      "DocumentSource",
+      "Section",
+      "ContentBlock",
+      "Concept",
+      "Technology",
+      "Person",
+      "ReferenceLink",
+      "Topic"
+    ],
+    "_comment": "Phase B M5. Python node_set (DOCUMENT_GRAPH_NODES) + DOCUMENT_ENTITY_LABELS: the gateway guard must keep the <=10 linked entities the graph view shows (design \u00a71.3.6), while Cypher-level scope excludes shared labels (\u00a71.3.5). Mirror kept equal by tests/mcp_server/test_domain_registry_contract.py."
   }
 }

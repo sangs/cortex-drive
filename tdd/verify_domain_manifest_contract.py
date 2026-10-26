@@ -10,7 +10,8 @@ try:
     # Mock openai and neo4j before importing ExpertTools
     from unittest.mock import MagicMock
     sys.modules["openai"] = MagicMock()
-    sys.modules["neo4j"] = MagicMock()
+    # S2-15 fix (2026-10-26): neo4j is NOT mocked — expert_tools imports neo4j.time, which a mocked
+    # package breaks at import. Only openai is mocked; no connection is opened by this script.
     from expert_tools import ExpertTools
     from schema_guard import PROJECT_GRAPH_NODES, CORTEX_DRIVE_NODES
 except ImportError as e:
