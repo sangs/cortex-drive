@@ -192,6 +192,9 @@ function run(mw, req) {
     ok(/app\.delete\('\/api\/share\/tenant-wide', authMiddleware, shareAuthz\.requireNodeShare/.test(src), 'tenant-wide off route exists and is owner-only (S2-40)');
     ok(/app\.post\('\/api\/register_website_source', authMiddleware, requireSourceWriter/.test(src), 'website registration is owner-only');
     ok(/app\.post\('\/api\/register_document_source', authMiddleware, requireSourceWriter/.test(src), 'document registration is owner-only');
+    // S2-47: nobody is added to the organization automatically (not by the Clerk webhook, not by
+    // "share by email"); membership comes only from an explicit Clerk invitation by an admin.
+    ok(!/createOrganizationMembership/.test(src), 'no automatic Clerk organization membership (S2-47)');
 
     console.log(`verify_share_security: ${passed} checks passed`);
 })().catch(err => { console.error('FAIL:', err.message); process.exit(1); });

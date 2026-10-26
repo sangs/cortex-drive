@@ -1028,13 +1028,12 @@ async function activatePendingGrants(email, userSub) {
  */
 // Provisions a new invited user end-to-end without depending on Clerk's sign-up flow:
 // 1. Creates the Clerk account programmatically (bypasses all sign-up restrictions)
-// 2. Adds to Clerk org immediately
+// 2. Does NOT add them to the Clerk organization (S2-47: external collaborator, not a member)
 // 3. Activates pending CortexDrive grants directly (doesn't wait for webhook)
 // 4. Issues a sign-in token (single-use magic link, no password required)
 // 5. Delivers via Resend — user clicks → signs in → lands on dashboard with full access
 // If the user already has a Clerk account, skips creation and just sends the sign-in link.
 async function sendClerkOrgInvitation(toEmail, inviterName = 'A Cortex-Drive member') {
-    const orgId  = process.env.CLERK_ORG_ID || 'org_3E0FtIXiFM6DHwXg05sEVvq2mi0';
     const appUrl = process.env.APP_URL || 'https://app.cortex-drive.com';
     try {
         let userId;
@@ -1061,16 +1060,8 @@ async function sendClerkOrgInvitation(toEmail, inviterName = 'A Cortex-Drive mem
             userId = newUser.id;
             console.log(`[clerk/invite] Created Clerk account for ${toEmail}: ${userId}`);
 
-            // Add to org immediately (webhook may also do this, but fire it here too)
-            await clerkClient.organizations.createOrganizationMembership({
-                organizationId: orgId,
-                userId,
-                role: 'org:member',
-            }).then(() =>
-                console.log(`[clerk/invite] Added ${userId} to org`)
-            ).catch(e =>
-                console.warn('[clerk/invite] Org membership:', e.message)
-            );
+            // Not added to the organization (S2-47, 2026-10-26): people you share with are external
+            // collaborators. They see only what is shared with them (Permify) plus Public content.
 
             // Activate pending grants directly in case the user.created webhook fires
             // after we send the email and the user signs in before the webhook arrives
@@ -1262,23 +1253,12 @@ app.post('/api/webhooks/clerk', async (req, res) => {
             || email_addresses?.[0]?.email_address;
         console.log(`[webhook/clerk] user.created: ${primaryEmail} → ${userSub}`);
         if (primaryEmail && userSub) {
-            const orgId = process.env.CLERK_ORG_ID || 'org_3E0FtIXiFM6DHwXg05sEVvq2mi0';
-            // Fire-and-forget — respond 200 immediately so Clerk doesn't retry
-            Promise.all([
-                activatePendingGrants(primaryEmail, userSub).catch(e =>
-                    console.error('[webhook/clerk activation]', e.message)
-                ),
-                clerkClient.organizations.createOrganizationMembership({
-                    organizationId: orgId,
-                    userId: userSub,
-                    role: 'org:member',
-                }).then(() =>
-                    console.log(`[webhook/clerk] Added ${userSub} to org ${orgId}`)
-                ).catch(e =>
-                    // Non-fatal: user may already be a member
-                    console.warn('[webhook/clerk] Org membership:', e.message)
-                ),
-            ]);
+            // Fire-and-forget — respond 200 immediately so Clerk doesn't retry. New users are NOT added
+            // to the organization (S2-47, 2026-10-26); organization membership comes only from an
+            // explicit Clerk organization invitation sent by an admin.
+            activatePendingGrants(primaryEmail, userSub).catch(e =>
+                console.error('[webhook/clerk activation]', e.message)
+            );
         }
     }
     res.status(200).json({ received: true });
