@@ -33,6 +33,7 @@ eq(resolveUserId('user_INVITEE', {}), 'user_INVITEE', 'no owner configured → o
 eq(resolveUserId('user_X', { OWNER_CLERK_SUBS: 'user_X' }), 'user_X', 'list without OWNER_USER_ID maps nothing');
 ok(isOwner('user_PROD_OWNER', ENV) && !isOwner('user_INVITEE', ENV) && !isOwner('', {}), 'isOwner');
 eq([...ownerClerkSubs(ENV)].sort(), ['user_DEV_OWNER', 'user_OTHER_OWNED', 'user_PROD_OWNER'], 'owner id set');
+eq([...ownerClerkSubs({ OWNER_USER_ID: 'user_P', OWNER_CLERK_SUBS: 'user_A;user_B' })].sort(), ['user_A', 'user_B', 'user_P'], '`;` separator (Cloud Run-safe)');
 
 // ── 2. share_authz ─────────────────────────────────────────────────────────────────────────────
 const { createShareAuthz, MAX_NODES_PER_CHECK } = require('../utils/share_authz');

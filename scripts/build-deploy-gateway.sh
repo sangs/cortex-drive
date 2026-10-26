@@ -92,7 +92,11 @@ CLOUD_SQL_CONN="cortex-drive-496915:us-central1:cortex-openfga-db"
 # This string is the full, authoritative plain-env-var set for cortex-gateway —
 # gcloud run deploy --set-env-vars REPLACES the live set rather than merging with
 # it, so anything live but missing from this string is silently dropped on deploy.
-NEW_ENV_VARS="MCP_SERVER_URL=${MCP_URL},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
+# The owner's OTHER Clerk sign-ins that act as the owner (S2-42, utils/identity.js). ';'-separated
+# (',' is gcloud's own separator). Production OWNER_USER_ID itself is always included by the gateway.
+#   user_3LFIHAyUMoFU4p7J321fqf5mDzo = sangeethavijayl@cortex-drive.com (added 2026-10-26)
+OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS:-user_3LFIHAyUMoFU4p7J321fqf5mDzo}"
+NEW_ENV_VARS="MCP_SERVER_URL=${MCP_URL},OWNER_CLERK_SUBS=${OWNER_CLERK_SUBS},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
 CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
 PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
 CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\

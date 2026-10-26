@@ -9,12 +9,13 @@
  *
  * Now only an explicit list of the owner's own Clerk ids is mapped:
  *   - OWNER_USER_ID itself (the production account), and
- *   - OWNER_CLERK_SUBS: comma-separated extra ids of the owner's own accounts (e.g. the dev Clerk id).
+ *   - OWNER_CLERK_SUBS: extra ids of the owner's own accounts (e.g. the dev Clerk id, a second sign-in),
+ *     separated by `;` (or `,` locally — Cloud Run's --set-env-vars uses `,` as its own separator).
  * Everyone else keeps their real Clerk id.
  */
 
 function ownerClerkSubs(env = process.env) {
-    const subs = new Set(String(env.OWNER_CLERK_SUBS || '').split(',').map(s => s.trim()).filter(Boolean));
+    const subs = new Set(String(env.OWNER_CLERK_SUBS || '').split(/[;,\s]+/).map(s => s.trim()).filter(Boolean));
     if (env.OWNER_USER_ID) subs.add(env.OWNER_USER_ID);
     return subs;
 }
