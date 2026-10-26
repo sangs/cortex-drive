@@ -455,6 +455,20 @@ async def view_source_live(
     finally:
         expert.close()
 
+def _visibility_error(visibility: str) -> str | None:
+    """S2-44 / M5-11: validate the visibility chosen when adding a source. `public` and `organization`
+    need the owner (or an internal call) here; the gateway additionally lets organization admins choose
+    `organization` once non-owners may add sources."""
+    from schema_guard import SOURCE_VISIBILITIES, SOURCE_VISIBILITY_PRIVATE
+    if visibility not in SOURCE_VISIBILITIES:
+        return json.dumps({"error": f"visibility must be one of {SOURCE_VISIBILITIES}"})
+    requester = user_id_var.get() or ""
+    owner = os.environ.get("OWNER_USER_ID", "")
+    if visibility != SOURCE_VISIBILITY_PRIVATE and requester and requester != owner:
+        return json.dumps({"error": f"Only the owner can choose '{visibility}' visibility."})
+    return None
+
+
 def _source_writer_error() -> str | None:
     """Adding sources is owner-only (2026-10-23, with S2-42). Enforced here as well as in the gateway
     (requireSourceWriter), because the gateway's /api catch-all proxies the MCP protocol itself, so a
@@ -469,7 +483,8 @@ def _source_writer_error() -> str | None:
 
 @mcp.tool()
 async def register_website_source(
-    url: str = Field(description="The website URL to fetch, extract, and register as a new queryable WebsiteSource.")
+    url: str = Field(description="The website URL to fetch, extract, and register as a new queryable WebsiteSource."),
+    visibility: Optional[str] = Field("private", description="Who will see it: private (default) | organization | public (owner only)."),
 ) -> str:
     """
     Fetches a website URL, extracts its content via LLM, and registers it as a
@@ -490,6 +505,12 @@ async def register_website_source(
     owner_error = _source_writer_error()
     if owner_error:
         return owner_error
+    from schema_guard import SOURCE_VISIBILITY_DEFAULT, SOURCE_VISIBILITY_PUBLIC, PUBLIC_TENANT_ID
+    visibility = (visibility or SOURCE_VISIBILITY_DEFAULT).strip().lower()
+    visibility_error = _visibility_error(visibility)
+    if visibility_error:
+        return visibility_error
+    graph_tenant = PUBLIC_TENANT_ID if visibility == SOURCE_VISIBILITY_PUBLIC else tenant_id
     user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
     if not user_id:
         return json.dumps({"error": "No owner_id available for this request."})
@@ -506,11 +527,11 @@ async def register_website_source(
         return json.dumps({"error": "Server misconfiguration: missing Neo4j credentials."})
 
     def _ingest() -> dict:
-        adapter = WebUrlAdapter(url, neo4j_uri, neo4j_user, neo4j_password, tenant_id, user_id)
+        adapter = WebUrlAdapter(url, neo4j_uri, neo4j_user, neo4j_password, graph_tenant, user_id)
         unprocessed = adapter.get_unprocessed_items()
         if not unprocessed:
             return {"skipped": True, "message": "Content unchanged since last ingestion — already registered."}
-        engine = IngestionEngine(tenant_id=tenant_id)
+        engine = IngestionEngine(tenant_id=graph_tenant, visibility=visibility)
         try:
             node_id = adapter.process_item(url, engine)
         finally:
@@ -536,11 +557,13 @@ async def register_website_source(
         finally:
             expert.close()
 
+    result["visibility"] = visibility
     return json.dumps(result)
 
 @mcp.tool()
 async def register_document_source(
-    url: str = Field(description="Public URL of a PDF, DOCX or PPTX document to ingest as a DocumentSource.")
+    url: str = Field(description="Public URL of a PDF, DOCX or PPTX document to ingest as a DocumentSource."),
+    visibility: Optional[str] = Field("private", description="Who will see it: private (default) | organization | public (owner only)."),
 ) -> str:
     """
     Queues a document at a public URL for ingestion by the Phase B worker (M3'). Validates the URL
@@ -557,6 +580,11 @@ async def register_document_source(
     owner_error = _source_writer_error()
     if owner_error:
         return owner_error
+    from schema_guard import SOURCE_VISIBILITY_DEFAULT
+    visibility = (visibility or SOURCE_VISIBILITY_DEFAULT).strip().lower()
+    visibility_error = _visibility_error(visibility)
+    if visibility_error:
+        return visibility_error
     user_id = user_id_var.get() or os.environ.get("OWNER_USER_ID") or ""
     if not user_id:
         return json.dumps({"error": "No owner_id available for this request."})
@@ -566,7 +594,7 @@ async def register_document_source(
     except ValueError as e:
         return json.dumps({"error": str(e)})
     try:
-        result = await enqueue_document_ingestion(build_task(url, tenant_id, user_id))
+        result = await enqueue_document_ingestion(build_task(url, tenant_id, user_id, visibility=visibility))
     except EnqueueError as e:
         return json.dumps({"error": str(e)})
     except Exception as e:
@@ -578,7 +606,7 @@ async def register_document_source(
                                status_record(DOCUMENT_INGEST_STATUS_QUEUED, url))
         except Exception as e:
             print(f"register_document_source: status write failed (non-fatal): {e}")
-    return json.dumps({"queued": True, "duplicate": bool(result.get("duplicate")), "url": url,
+    return json.dumps({"queued": True, "duplicate": bool(result.get("duplicate")), "url": url, "visibility": visibility,
                        "message": "Already queued — processing will finish shortly." if result.get("duplicate")
                        else "Queued. Text is usually searchable within a few minutes."})
 

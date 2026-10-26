@@ -495,6 +495,7 @@ class SourceBaseModel(Neo4jBaseModel):
     current_snapshot_id: Optional[str] = Field(None, description="Pointer to the current SourceSnapshot's node_id — the Iceberg 'current' pointer.")
     credential_ref_id: Optional[str] = Field(None, description="Pointer to a CredentialRef node. Null if the source needs no auth.")
     primary_content_category: Optional[str] = Field(None, description="Coarse content-classification hint, set at registration time if known upfront. Fine-grained per-document classification is a later phase, not populated by Phase A.")
+    visibility: Optional[str] = Field(None, description="private | organization | public — chosen when the source was added (S2-44 / M5-11). Null on sources added before 2026-10-26 (organization-wide).")
     last_synced_at: Optional[str] = Field(None, description="ISO datetime of the last successful sync.")
     sync_frequency: Optional[str] = Field(None, description="For scheduled sources only.")
     error_message: Optional[str] = Field(None, description="Last error, only populated when status = error.")
@@ -717,3 +718,13 @@ DOCUMENT_BLOCK_TEXT_INDEX = 'contentBlockTextIndex'
 DOCUMENT_PDF_MIME_TYPES = ['application/pdf']
 DOCUMENT_GRAPH_MAX_DOCS = 5               # documents matched per graph-view request
 DOCUMENT_GRAPH_MAX_SECTIONS = 10          # matching sections shown per document
+
+# ── Source visibility at ingestion (S2-44 phase 3 / M5 addendum M5-11, 2026-10-26) ─────────────────────
+SOURCE_VISIBILITY_PRIVATE = 'private'            # owner + explicit shares only (default for new sources)
+SOURCE_VISIBILITY_ORGANIZATION = 'organization'  # every member of the owning organization (Permify tenant_viewer)
+SOURCE_VISIBILITY_PUBLIC = 'public'              # everyone (stored in the PUBLIC tier; platform owner only)
+SOURCE_VISIBILITIES = [SOURCE_VISIBILITY_PRIVATE, SOURCE_VISIBILITY_ORGANIZATION, SOURCE_VISIBILITY_PUBLIC]
+SOURCE_VISIBILITY_DEFAULT = SOURCE_VISIBILITY_PRIVATE
+# IngestionEngine's default when a caller doesn't say (podcast/seed scripts): unchanged pre-M5 behaviour.
+INGESTION_ENGINE_DEFAULT_VISIBILITY = SOURCE_VISIBILITY_ORGANIZATION
+PUBLIC_TENANT_ID = 'PUBLIC'

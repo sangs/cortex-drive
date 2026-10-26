@@ -49,9 +49,12 @@ def ingest_mode() -> str:
     return os.environ.get(MODE_ENV, "").strip().lower()
 
 
-def build_task(uri: str, tenant_id: str, owner_id: str, l2: str = "auto") -> dict:
-    """An ingest task. l2: auto (synchronous for small PDFs, batch otherwise) | batch | off (no Claude calls)."""
+def build_task(uri: str, tenant_id: str, owner_id: str, l2: str = "auto", visibility: str = None) -> dict:
+    """An ingest task. l2: auto (synchronous for small PDFs, batch otherwise) | batch | off (no Claude calls).
+    visibility: private (default) | organization | public — who will see the document (S2-44 / M5-11)."""
+    from schema_guard import SOURCE_VISIBILITY_DEFAULT
     return {"mode": "ingest", "uri": uri, "tenant_id": tenant_id, "owner_id": owner_id, "l2": l2,
+            "visibility": visibility or SOURCE_VISIBILITY_DEFAULT,
             "requested_at": datetime.now(timezone.utc).isoformat()}
 
 

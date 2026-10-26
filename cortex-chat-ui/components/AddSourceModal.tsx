@@ -9,6 +9,13 @@ import { useAuth } from '@clerk/nextjs';
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 // Phase B M3': the Document option is off unless the deployment enables it (feature flag).
 const DOCUMENT_SOURCES_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES === 'true';
+
+type SourceVisibility = 'private' | 'organization' | 'public';
+const VISIBILITY_OPTIONS: { value: SourceVisibility; label: string; hint: string }[] = [
+    { value: 'private', label: 'Private', hint: 'Only you, plus people and groups you share it with.' },
+    { value: 'organization', label: 'Organization', hint: 'Every member of your organization.' },
+    { value: 'public', label: 'Public', hint: 'Everyone, including guest links (platform owner only).' },
+];
 const DOCUMENT_STATUS_POLL_MS = 5000;
 const DOCUMENT_STATUS_POLL_LIMIT = 120;   // stop polling after 10 minutes; the worker keeps going
 const DOCUMENT_FINAL_STATES = new Set(['done', 'unchanged', 'failed']);
@@ -32,6 +39,9 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
     const [status, setStatus] = useState<Status>('idle');
     const [message, setMessage] = useState('');
     const [kind, setKind] = useState<SourceKind>('website');
+    // Who will see the new source (S2-44 / M5-11). Private by default; the server enforces who may
+    // choose Organization (owner or org admin) and Public (platform owner only).
+    const [visibility, setVisibility] = useState<SourceVisibility>('private');
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const stopPolling = useCallback(() => {
@@ -102,7 +112,7 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
         setMessage('');
         if (kind === 'document') {
             try {
-                const payload = await postTool('register_document_source', { url: url.trim() });
+                const payload = await postTool('register_document_source', { url: url.trim(), visibility });
                 if (payload.error) {
                     setStatus('error');
                     setMessage(payload.error);
@@ -125,7 +135,7 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-                body: JSON.stringify({ url: url.trim() }),
+                body: JSON.stringify({ url: url.trim(), visibility }),
             });
             const data = await resp.json();
             const payload = data.content?.[0]?.text ? JSON.parse(data.content[0].text) : data;
@@ -201,6 +211,20 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                                 className="bg-transparent text-sm text-slate-200 placeholder:text-slate-600 flex-1 outline-none disabled:opacity-50"
                                 autoFocus
                             />
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="source-visibility" className="text-[11px] text-slate-400 shrink-0">Visible to</label>
+                            <select
+                                id="source-visibility"
+                                value={visibility}
+                                onChange={e => setVisibility(e.target.value as SourceVisibility)}
+                                disabled={status === 'submitting' || status === 'processing'}
+                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-slate-200 outline-none disabled:opacity-50"
+                            >
+                                {VISIBILITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                            <span className="text-[11px] text-slate-500">{VISIBILITY_OPTIONS.find(o => o.value === visibility)?.hint}</span>
                         </div>
 
                         {status === 'submitting' && (

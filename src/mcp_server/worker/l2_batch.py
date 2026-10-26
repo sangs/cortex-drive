@@ -85,6 +85,7 @@ def submit_figure_batch(*, engine, describer, redis_client, enqueue: Enqueue, da
                 for block, png in jobs]
     batch_id = describer.submit_batch(requests)
     record = {"batch_id": batch_id, "tenant_id": task["tenant_id"], "owner_id": task["owner_id"], "uri": task["uri"],
+              "visibility": task.get("visibility"),
               "source_node_id": source_node_id, "snapshot_id": snapshot_id, "title": title, "attempt": attempt,
               "figures": len(jobs), "submitted_at": datetime.now(timezone.utc).isoformat()}
     redis_client.setex(batch_key(batch_id), DOCUMENT_BATCH_TTL_SECONDS, json.dumps(record))
@@ -94,7 +95,8 @@ def submit_figure_batch(*, engine, describer, redis_client, enqueue: Enqueue, da
 
 def collect_task(record: dict, poll: int) -> dict:
     return {"mode": WORKER_MODE_COLLECT, "batch_id": record["batch_id"], "poll": poll,
-            "uri": record["uri"], "tenant_id": record["tenant_id"], "owner_id": record["owner_id"]}
+            "uri": record["uri"], "tenant_id": record["tenant_id"], "owner_id": record["owner_id"],
+            "visibility": record.get("visibility")}
 
 
 def collect_batch(*, task: dict, engine, describer, redis_client, enqueue: Enqueue,
@@ -133,6 +135,7 @@ def collect_batch(*, task: dict, engine, describer, redis_client, enqueue: Enque
     retry = None
     if (failed or unusable) and record["attempt"] < DOCUMENT_BATCH_MAX_ATTEMPTS:
         retry = {"mode": WORKER_MODE_DESCRIBE_PENDING, "attempt": record["attempt"] + 1, "uri": record["uri"],
+                 "visibility": record.get("visibility"),
                  "tenant_id": record["tenant_id"], "owner_id": record["owner_id"]}
         enqueue(retry, 0)
     summary = {"state": "applied", "batch_id": record["batch_id"], "attempt": record["attempt"],

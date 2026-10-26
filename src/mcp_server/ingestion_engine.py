@@ -24,8 +24,16 @@ class IngestionEngine:
     Consolidates the 10-step legacy ingestion process into a streamlined pipeline.
     """
 
-    def __init__(self, tenant_id: str):
+    def __init__(self, tenant_id: str, visibility: str = None):
+        from schema_guard import SOURCE_VISIBILITIES, INGESTION_ENGINE_DEFAULT_VISIBILITY
         self.tenant_id = tenant_id
+        # S2-44 / M5-11: who will see what this engine ingests. private = owner + shares only;
+        # organization = tenant_viewer on the source root + its entities (sections, blocks, snapshots
+        # inherit through parent tuples); public = written in the PUBLIC tier (caller passes
+        # tenant_id='PUBLIC'). Default keeps the pre-M5 behaviour for podcast/seed callers.
+        self.visibility = visibility or INGESTION_ENGINE_DEFAULT_VISIBILITY
+        if self.visibility not in SOURCE_VISIBILITIES:
+            raise ValueError(f"unknown visibility {self.visibility!r}")
         self.expert = ExpertTools(tenant_id=tenant_id)
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
         self.driver = GraphDatabase.driver(
@@ -360,15 +368,22 @@ class IngestionEngine:
 
         return node_ids
 
-    def _register_with_permify(self, node_ids: list[str]) -> None:
+    def _register_with_permify(self, node_ids: list[str], tenant_wide_ids: list[str] = None) -> None:
         """Register newly ingested nodes in Permify. Idempotent — existing tuples are no-ops.
 
-        Writes per node: owner + tenant_viewer tuples.
+        Writes per node: owner tuple. tenant_viewer (organization-wide) only when this engine's
+        visibility is `organization`, and then only on `tenant_wide_ids` (the source root + entities;
+        default: every node, the pre-M5 behaviour). Nothing for the PUBLIC tier (it bypasses Permify).
         Writes per composition edge: parent tuple (child.parent = parent_node).
         Writes per PreparatoryNote: is_private=true attribute.
         """
         if not os.environ.get("PERMIFY_API_URL"):
             return
+        from schema_guard import PUBLIC_TENANT_ID, SOURCE_VISIBILITY_ORGANIZATION
+        if self.tenant_id == PUBLIC_TENANT_ID:
+            return
+        org_wide = set(node_ids if tenant_wide_ids is None else tenant_wide_ids) \
+            if self.visibility == SOURCE_VISIBILITY_ORGANIZATION else set()
         owner_sub = os.environ.get("OWNER_USER_ID", "")
         if not owner_sub:
             print("[ingestion] OWNER_USER_ID not set — skipping Permify registration")
@@ -385,7 +400,8 @@ class IngestionEngine:
         async def _register_all():
             for nid in node_ids:
                 await register_node_owner(nid, owner_sub)
-                await make_tenant_wide(nid, self.tenant_id)
+                if nid in org_wide:
+                    await make_tenant_wide(nid, self.tenant_id)
             for parent_id, child_id in composition_edges:
                 await write_parent_tuple(child_node_id=child_id, parent_node_id=parent_id)
             for nid in private_node_ids:
@@ -486,6 +502,7 @@ class IngestionEngine:
             'base_url': url,
             'requires_auth': False,
             'extraction_method': 'trafilatura',
+            'visibility': self.visibility,
         }
         validated_source = validate_upsert('WebsiteSource', source_data)
 
@@ -510,7 +527,7 @@ class IngestionEngine:
 
         # 6. Register in Permify (only nodes that still exist)
         all_node_ids = [source_node_id] + self._existing_node_ids([i for i in entity_ids if i])
-        self._register_with_permify([nid for nid in all_node_ids if nid])
+        self._register_with_permify([nid for nid in all_node_ids if nid], tenant_wide_ids=all_node_ids)
 
         print(f"Web-source ingestion complete for {url}.")
         return source_node_id
@@ -685,6 +702,7 @@ class IngestionEngine:
             'uri': uri, 'mime_type': mime_type, 'filename': filename,
             'page_count': getattr(parsed, 'page_count', None),
             'http_etag': http_etag, 'http_last_modified': http_last_modified,
+            'visibility': self.visibility,
         }
         validated = validate_upsert('DocumentSource', source_data)
         source_node_id, snapshot_id = self._upsert_document_source(validated, uri, content_hash)
@@ -693,7 +711,12 @@ class IngestionEngine:
         entity_ids, previously_linked = self._link_document_entities(source_node_id, snapshot_id, extraction)
         removed_links, removed_orphans = self._apply_entity_lifecycle(source_node_id, snapshot_id, previously_linked)
         grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
-        self._register_with_permify([nid for nid in [source_node_id, snapshot_id] + block_ids + entity_ids if nid])
+        # Sections are registered too (before 2026-10-26 they weren't, so blocks had no parent chain to the
+        # document). Organization-wide = the document root + its entities; snapshot, sections and blocks
+        # inherit through parent tuples, so one toggle on the root changes the whole source.
+        section_ids = self._current_section_ids(source_node_id, snapshot_id)
+        self._register_with_permify([nid for nid in [source_node_id, snapshot_id] + section_ids + block_ids + entity_ids if nid],
+                                    tenant_wide_ids=[source_node_id] + [e for e in entity_ids if e])
         return {'source_node_id': source_node_id, 'snapshot_id': snapshot_id, 'blocks': len(block_ids),
                 'entities': len(entity_ids), 'grounded_links': grounded,
                 'removed_stale_links': removed_links, 'removed_orphans': removed_orphans}
@@ -755,7 +778,7 @@ class IngestionEngine:
         extraction = self._ground_extraction(extraction, vision_text)
         entity_ids, _ = self._link_document_entities(source_node_id, snapshot_id, extraction, derived_by=DERIVED_BY_VLM)
         grounded = self._ground_entities_to_blocks(source_node_id, snapshot_id)
-        self._register_with_permify([nid for nid in entity_ids if nid])
+        self._register_with_permify([nid for nid in entity_ids if nid], tenant_wide_ids=[nid for nid in entity_ids if nid])
         return {'described': len(rows), 'entities': len([i for i in entity_ids if i]), 'grounded_links': grounded}
 
     @staticmethod
@@ -866,6 +889,14 @@ class IngestionEngine:
         """
         with self.driver.session() as session:
             session.run(query, tenant_id=self.tenant_id, source_id=source_node_id, snapshot_id=snapshot_id)
+
+    def _current_section_ids(self, source_node_id: str, snapshot_id: str) -> list:
+        """node_ids of the document's sections in this revision (for Permify registration)."""
+        with self.driver.session() as session:
+            return [r["id"] for r in session.run(
+                "MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})-[:HAS_SECTION]->"
+                "(s:Section {revision_id: $snapshot_id}) RETURN s.node_id AS id",
+                tenant_id=self.tenant_id, source_id=source_node_id, snapshot_id=snapshot_id) if r["id"]]
 
     def _write_document_structure(self, source_node_id: str, snapshot_id: str, parsed, title: str) -> list:
         """Sections from the heading hierarchy (a root section holds content before the first

@@ -127,10 +127,11 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
     if parser is None:
         from parsing.docling_parser import DoclingParser
         parser = DoclingParser()
+    graph_tenant, visibility = engine_scope(task)
     adapter = DocumentUrlAdapter(uri, os.environ["NEO4J_URI"], os.environ["NEO4J_USERNAME"],
-                                 os.environ["NEO4J_PASSWORD"], tenant_id, owner_id,
+                                 os.environ["NEO4J_PASSWORD"], graph_tenant, owner_id,
                                  parser=parser, transport=transport)
-    engine = IngestionEngine(tenant_id=tenant_id)
+    engine = IngestionEngine(tenant_id=graph_tenant, visibility=visibility)
     try:
         if not adapter.get_unprocessed_items():
             summary = {"seconds": round(time.monotonic() - started, 1)}
@@ -175,6 +176,18 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
         adapter.close()
 
 
+def engine_scope(task: dict) -> tuple:
+    """(graph tenant, visibility) for this task's IngestionEngine (S2-44 / M5-11). A public document is
+    stored in the PUBLIC tier; status records stay under the requesting organization (task tenant_id).
+    Tasks queued before 2026-10-26 carry no visibility: they keep the pre-M5 behaviour (organization)."""
+    from schema_guard import (PUBLIC_TENANT_ID, SOURCE_VISIBILITY_PUBLIC, INGESTION_ENGINE_DEFAULT_VISIBILITY,
+                              SOURCE_VISIBILITIES)
+    visibility = task.get("visibility") or INGESTION_ENGINE_DEFAULT_VISIBILITY
+    if visibility not in SOURCE_VISIBILITIES:
+        raise ValueError(f"unknown visibility {visibility!r}")
+    return (PUBLIC_TENANT_ID if visibility == SOURCE_VISIBILITY_PUBLIC else task["tenant_id"]), visibility
+
+
 def _prepare_tenant(tenant_id: str) -> None:
     if tenant_id.startswith(TEST_TENANT_ID_PREFIX):
         os.environ.pop("PERMIFY_API_URL", None)   # test tenants never write Permify tuples (user rule)
@@ -190,7 +203,8 @@ def run_collect(task: dict, *, describer=None, redis_client=None, enqueue=None) 
     describer = describer or build_describer()
     if describer is None:
         raise RuntimeError("no L2 credentials configured; can't collect a batch")
-    engine = IngestionEngine(tenant_id=task["tenant_id"])
+    graph_tenant, visibility = engine_scope(task)
+    engine = IngestionEngine(tenant_id=graph_tenant, visibility=visibility)
     try:
         return collect_batch(task=task, engine=engine, describer=describer, redis_client=redis_client or connect(),
                              enqueue=safe_enqueue(enqueue or default_enqueue), write_status=write_status)
@@ -210,13 +224,14 @@ def run_describe_pending(task: dict, *, describer=None, redis_client=None, enque
     describer = describer or build_describer()
     if describer is None:
         raise RuntimeError("no L2 credentials configured")
-    engine = IngestionEngine(tenant_id=task["tenant_id"])
+    graph_tenant, visibility = engine_scope(task)
+    engine = IngestionEngine(tenant_id=graph_tenant, visibility=visibility)
     try:
         with engine.driver.session() as session:
             rec = session.run("""MATCH (d:DocumentSource {tenant_id: $t, uri: $u})
                                  MATCH (d)-[:HAS_SNAPSHOT]->(s:SourceSnapshot {is_current: true})
                                  RETURN d.node_id AS source_id, d.name AS title, s.node_id AS snapshot_id,
-                                        s.content_hash AS content_hash""", t=task["tenant_id"], u=task["uri"]).single()
+                                        s.content_hash AS content_hash""", t=graph_tenant, u=task["uri"]).single()
         if not rec:
             return {"state": "no_current_revision"}
         doc = fetch_public_document(task["uri"], transport=transport)

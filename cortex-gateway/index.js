@@ -640,6 +640,7 @@ const permify = require('./utils/permify_gateway');
 const db      = require('./utils/db');
 const { resolveUserId, isOwner } = require('./utils/identity');
 const { createShareAuthz } = require('./utils/share_authz');
+const { createVisibilityGuard } = require('./utils/source_visibility');
 // Owner share checks also accept nodes of the owner's own tenant (most nodes have no Permify owner
 // tuple, S2-41). One Bento query per request; Gateway→Bento via direct fetch + OIDC (AP-18, Flow 5).
 async function bentoNodesInTenant(nodeIds, tenantId) {
@@ -4093,8 +4094,10 @@ const requireSourceWriter = (req, res, next) => {
     return next();
 };
 // Phase B M3': documents are queued for the ingestion worker; cortex-mcp never parses them.
-app.post('/api/register_website_source', authMiddleware, requireSourceWriter, mcpToolEndpoint('register_website_source'));
-app.post('/api/register_document_source', authMiddleware, requireSourceWriter, mcpToolEndpoint('register_document_source'));
+// Visibility chosen when adding a source (S2-44 / M5-11): private (default) | organization | public.
+const requireVisibilityChoice = createVisibilityGuard({ isOwner });
+app.post('/api/register_website_source', authMiddleware, requireSourceWriter, requireVisibilityChoice, mcpToolEndpoint('register_website_source'));
+app.post('/api/register_document_source', authMiddleware, requireSourceWriter, requireVisibilityChoice, mcpToolEndpoint('register_document_source'));
 app.post('/api/get_document_source_status', authMiddleware, requireSourceWriter, mcpToolEndpoint('get_document_source_status'));
 
 // Smart Routing — /api/get_node_details uses a direct fetch (not proxy) because

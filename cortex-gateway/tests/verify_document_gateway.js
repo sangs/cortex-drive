@@ -91,5 +91,23 @@ const intentEnum = tools => tools.find(t => t.function.name === 'search_enterpri
     eq([documentResultHasEvidence(JSON.parse(payload)), documentResultHasEvidence({ blocks: [] }), documentResultHasEvidence({ error: 'x', blocks: [1] })],
         [true, false, false], 'evidence only with >= 1 block and no error (AP-25)');
 
+    // ── 4. visibility chosen when adding a source (S2-44 / M5-11) ──────────────────────────────
+    const { createVisibilityGuard } = require('../utils/source_visibility.js');
+    const guard = createVisibilityGuard({ isOwner: u => u === 'owner' });
+    const runGuard = (body, headers) => new Promise(resolve => {
+        const req = { body, headers };
+        const res = { status(c) { this.c = c; return this; }, json(b) { resolve({ status: this.c, body: b }); } };
+        guard(req, res, () => resolve({ status: 200, visibility: req.body.visibility }));
+    });
+    eq(await runGuard({ url: 'u' }, { 'x-user-id': 'owner' }), { status: 200, visibility: 'private' }, 'default private');
+    eq((await runGuard({ url: 'u', visibility: 'PUBLIC' }, { 'x-user-id': 'owner' })).visibility, 'public', 'owner may choose public (case-insensitive)');
+    eq((await runGuard({ visibility: 'public' }, { 'x-user-id': 'member', 'x-schema-readable': 'true' })).status, 403, 'org admin may not choose public');
+    eq((await runGuard({ visibility: 'organization' }, { 'x-user-id': 'member', 'x-schema-readable': 'true' })).status, 200, 'org admin may choose organization');
+    eq((await runGuard({ visibility: 'organization' }, { 'x-user-id': 'member' })).status, 403, 'member may not choose organization');
+    eq((await runGuard({ visibility: 'everyone' }, { 'x-user-id': 'owner' })).status, 400, 'unknown value → 400');
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'), 'utf8');
+    ok(/register_website_source', authMiddleware, requireSourceWriter, requireVisibilityChoice/.test(src), 'website route checks visibility');
+    ok(/register_document_source', authMiddleware, requireSourceWriter, requireVisibilityChoice/.test(src), 'document route checks visibility');
+
     console.log(`verify_document_gateway: ${passed} checks passed`);
 })().catch(err => { console.error('FAIL:', err.message); process.exit(1); });
