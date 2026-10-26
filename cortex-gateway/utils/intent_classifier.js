@@ -41,6 +41,9 @@ const path = require('path');
 // distinction and the keyword-selection discipline for new entries.
 
 const INTENT_KEYWORDS_CONFIG = require('../config/intent_keywords.js');
+const { documentDomainEnabled } = require('./feature_flags');
+// Phase B M5: `document` matches (Phase R and Phase E) are ignored unless ENABLE_DOCUMENT_DOMAIN.
+const DOCUMENT_DOMAIN = 'document';
 
 // Evidence-backed single-word `keywords` entries — data lives in intent_keywords.js's
 // singleWordAllowlist (the file a developer actually edits), not hardcoded here. Populated by
@@ -89,6 +92,7 @@ const INTENT_PATTERNS = _buildIntentPatterns(INTENT_KEYWORDS_CONFIG);
 
 function _regexClassify(q) {
     for (const { domain_signal, pattern } of INTENT_PATTERNS) {
+        if (domain_signal === DOCUMENT_DOMAIN && !documentDomainEnabled()) continue;
         if (pattern.test(q)) return domain_signal;
     }
     return null;
@@ -144,8 +148,21 @@ function _longestMatchLookup(query, lookupMap) {
 }
 
 function _entityClassify(q) {
-    const match = _longestMatchLookup(q, _entityLookup);
+    const lookup = documentDomainEnabled() ? _entityLookup : _withoutDocumentEntries(_entityLookup);
+    const match = _longestMatchLookup(q, lookup);
     return match ? { domain: match.value, matched: match.matched } : null;
+}
+
+// Document titles from the entity catalog must not route anything while the flag is off.
+let _entityLookupNoDocs = null;
+let _entityLookupNoDocsSource = null;
+function _withoutDocumentEntries(lookup) {
+    if (!lookup) return lookup;
+    if (_entityLookupNoDocsSource !== lookup) {
+        _entityLookupNoDocs = new Map([...lookup].filter(([, domain]) => domain !== DOCUMENT_DOMAIN));
+        _entityLookupNoDocsSource = lookup;
+    }
+    return _entityLookupNoDocs;
 }
 
 // ─── Phase B: Bridge-entity lookup (added 2026-08-24) ────────────────────────

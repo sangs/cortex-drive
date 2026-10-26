@@ -1,4 +1,5 @@
 'use strict';
+const { documentDomainEnabled } = require('./feature_flags');
 
 /**
  * Which MCP tools the chat LLM may be offered and may call in one turn (S2-20, AP-26; 2026-10-19).
@@ -36,13 +37,33 @@ const GUEST_ALLOWED_TOOLS = new Set([
 // Never offered to the chat LLM, for anyone (raw query tools: AP-26).
 const CHAT_EXCLUDED_TOOLS = new Set(['run_cypher_query']);
 
-/** The tool definitions to offer the LLM this turn. */
-function toolsOfferedFor({ isGuest }, toolDefinitions) {
+// Phase B M5: offered only when ENABLE_DOCUMENT_DOMAIN is on. Not in GUEST_ALLOWED_TOOLS (M5-9:
+// guest-link chats get no document passages until reviewed with S2-19).
+const DOCUMENT_TOOLS = new Set(['search_document_blocks']);
+const DOCUMENT_DOMAIN_INTENT = 'document';
+
+/** search_enterprise_graph without the `document` domain_intent (flag off). Returns a copy. */
+function _withoutDocumentIntent(def) {
+    const props = def.function.parameters && def.function.parameters.properties;
+    const di = props && props.domain_intent;
+    if (!di || !Array.isArray(di.enum) || !di.enum.includes(DOCUMENT_DOMAIN_INTENT)) return def;
+    const copy = JSON.parse(JSON.stringify(def));
+    copy.function.parameters.properties.domain_intent.enum = di.enum.filter(v => v !== DOCUMENT_DOMAIN_INTENT);
+    return copy;
+}
+
+/**
+ * The tool definitions to offer the LLM this turn.
+ * documentDomain: defaults to the ENABLE_DOCUMENT_DOMAIN flag. Off → no document tool and no
+ * `document` domain_intent, so the offered list is exactly what it was before M5.
+ */
+function toolsOfferedFor({ isGuest, documentDomain = documentDomainEnabled() }, toolDefinitions) {
     return toolDefinitions.filter(t => {
         const name = t.function.name;
         if (CHAT_EXCLUDED_TOOLS.has(name)) return false;
+        if (DOCUMENT_TOOLS.has(name) && !documentDomain) return false;
         return !isGuest || GUEST_ALLOWED_TOOLS.has(name);
-    });
+    }).map(t => (documentDomain ? t : _withoutDocumentIntent(t)));
 }
 
 /** Names of the offered tools, for the per-call check. */
@@ -60,4 +81,4 @@ function refusedToolMessage(toolCall) {
     };
 }
 
-module.exports = { GUEST_ALLOWED_TOOLS, CHAT_EXCLUDED_TOOLS, toolsOfferedFor, offeredToolNames, refusedToolMessage };
+module.exports = { GUEST_ALLOWED_TOOLS, CHAT_EXCLUDED_TOOLS, DOCUMENT_TOOLS, toolsOfferedFor, offeredToolNames, refusedToolMessage };

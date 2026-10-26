@@ -58,6 +58,12 @@ PODCAST_LABELS = frozenset({'Episode', 'Podcast'})
 # title is.
 WEBSITE_LABELS = frozenset({'WebsiteSource'})
 
+# 'document' domain (Phase B M5, 2026-10-26) — DocumentSource is exclusive to it, same pattern as
+# WEBSITE_LABELS: a document's title routes confidently (design §1.3.3, Phase E). Section/ContentBlock
+# are excluded (not titles a user would name). The gateway ignores this list unless
+# ENABLE_DOCUMENT_DOMAIN is on (utils/intent_classifier.js).
+DOCUMENT_LABELS = frozenset({'DocumentSource'})
+
 # Person is a shared/SYSTEM label (excluded from the per-domain lists above for the same
 # misclassification reason), but named-person detection is a real, separate need — the
 # gateway's career-backbone auto-inject and Tier 7 bridge-source resolution both need to
@@ -87,6 +93,7 @@ def main():
     career_names  = set()
     podcast_names = set()
     website_names = set()
+    document_names = set()
     person_names  = set()
     bridge_entities: dict[str, list[str]] = {}
 
@@ -112,6 +119,8 @@ def main():
                     podcast_names.add(name)
                 elif labels & WEBSITE_LABELS:
                     website_names.add(name)
+                elif labels & DOCUMENT_LABELS:
+                    document_names.add(name)
                 elif labels & PERSON_LABELS:
                     person_names.add(name)
                 # Remaining shared/SYSTEM labels (Topic, Concept, Technology, Community,
@@ -162,11 +171,12 @@ def main():
 
     catalog = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "node_count": len(career_names) + len(podcast_names) + len(website_names),
+        "node_count": len(career_names) + len(podcast_names) + len(website_names) + len(document_names),
         "domains": {
             "career":  sorted(career_names),
             "podcast": sorted(podcast_names),
-            "website": sorted(website_names)
+            "website": sorted(website_names),
+            "document": sorted(document_names)
         },
         "persons": sorted(person_names),
         "bridge_entities": bridge_entities
@@ -177,6 +187,7 @@ def main():
     print(f"  career:  {len(career_names)} entities")
     print(f"  podcast: {len(podcast_names)} entities")
     print(f"  website: {len(website_names)} entities")
+    print(f"  document: {len(document_names)} entities")
     print(f"  persons: {len(person_names)} entities")
     print(f"  bridge_entities (website<->podcast): {len(bridge_entities)}")
     if bridge_entities:

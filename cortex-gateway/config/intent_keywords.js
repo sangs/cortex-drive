@@ -66,6 +66,18 @@ module.exports = {
     ],
     domains: [
         {
+            domain_signal: 'document',
+            // Phase B M5 (2026-10-26). Category (a) only: structural sentence shapes that refer to a
+            // document itself — page references, "according to the <document>", "in the <pdf/deck>",
+            // "what does the <document> say" — never topic words. Evidence: the canonical document
+            // queries D-1..D-3 in documents/user_queries.md (added with M5) and the M5 design §1.3.3.
+            // "report"/"paper" are deliberately NOT in the "in the …" fragment (career queries say
+            // "in the paper she published"). Checked FIRST: "what does the report discuss" would
+            // otherwise hit podcast's unanchored "discuss". Ignored unless ENABLE_DOCUMENT_DOMAIN.
+            patternSource: '\\bon\\s+(?:page|slide)\\s+\\d+|\\baccording\\s+to\\s+the\\s+(?:document|pdf|report|deck|slides|whitepaper|manual)\\b|\\bin\\s+the\\s+(?:document|pdf|deck|slides|whitepaper|manual)\\b|\\bwhat\\s+does\\s+the\\s+(?:document|pdf|report|deck|slides|paper|whitepaper|manual)\\s+say\\b',
+            keywords: []
+        },
+        {
             domain_signal: 'podcast',
             // "episode" (matches episode/episodes as a prefix) and "discuss" (matches
             // discuss/discussed/discussing/discussion as a substring) are evidence-backed but

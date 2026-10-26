@@ -6,6 +6,8 @@ const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } 
 const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
 const { fetchWithColdStartRetry } = require('./utils/upstream_fetch.js');
 
+const { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls, documentResultHasEvidence } = require('./utils/document_evidence');
+
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
 const DOMAIN_ALLOWED_TYPES = {
@@ -41,6 +43,7 @@ const COMPOSITION_RELS = ['HAS_EPISODE', 'HAS_SOURCE', 'CONTAINS', 'HAS_REFERENC
 const MAX_KNOWLEDGE_CONTENT_CHARS = 8000;
 
 function buildLlmToolContent(toolName, toolContent, toolArgs = {}) {
+    if (toolName === DOCUMENT_SEARCH_TOOL) return buildDocumentEvidenceContent(toolContent);
     if (GRAPH_HEAVY_TOOLS.has(toolName)) {
         try {
             const parsed = JSON.parse(toolContent);
@@ -136,6 +139,8 @@ function extractToolUrls(parsed) {
     });
     const refUrls = parsed.ref_urls || parsed.reference_links || [];
     if (Array.isArray(refUrls)) refUrls.forEach(u => u && urls.add(u));
+    // Phase B M5: document evidence blocks — the server-built cite_url and the document uri.
+    documentEvidenceUrls(parsed).forEach(u => urls.add(u));
     return urls;
 }
 
@@ -435,6 +440,9 @@ const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_sec
 const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
 const gatewayQ2WriterPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_q2_writer.md'), 'utf-8').trim();
 const gatewayDomainInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_domain_instruction.md'), 'utf-8');
+// Phase B M5: appended only on `document` turns (reachable only with ENABLE_DOCUMENT_DOMAIN), so every
+// other turn's prompt is unchanged.
+const gatewayDocumentInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_domain_instruction_document.md'), 'utf-8');
 const gatewayCrossDomainBridgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_bridge.md'), 'utf-8').trim();
 const gatewayCrossDomainTier7Prompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_tier7.md'), 'utf-8').trim();
 const gatewayBridgeCompletionNudgePrompt = fs.readFileSync(path.join(promptsDir, 'gateway_bridge_completion_nudge.md'), 'utf-8').trim();
@@ -531,6 +539,8 @@ function toolResultHasEvidence(toolName, toolContent) {
         return text.length > 0 && !/^error\b/i.test(text);
     }
     if (isToolErrorResult(parsed)) return false;
+    // Phase B M5 (AP-25): document search counts only when at least one evidence block came back.
+    if (toolName === DOCUMENT_SEARCH_TOOL) return documentResultHasEvidence(parsed);
     if (GRAPH_HEAVY_TOOLS.has(toolName) && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return (Array.isArray(parsed.nodes) && parsed.nodes.length > 0)
             || (Array.isArray(parsed.virtual_links) && parsed.virtual_links.length > 0);
@@ -2539,6 +2549,22 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
 }
 
 const mcpToolsDefinitions = [
+    // Phase B M5: offered only when ENABLE_DOCUMENT_DOMAIN is on, never to guests (utils/tool_policy.js).
+    {
+        type: "function",
+        function: {
+            name: "search_document_blocks",
+            description: "Search the passages of ingested documents (PDF, DOCX, PPTX). Returns evidence blocks, each with its text, page, section and a citation (source name, version date, page, cite_url). Use for any question about what a document says. Cite every document fact with its citation; never construct a link yourself.",
+            parameters: {
+                type: "object",
+                properties: {
+                    question: { type: "string", description: "The question to answer from document passages." },
+                    top_k: { type: "integer", description: "Maximum passages (default and maximum 8)." }
+                },
+                required: ["question"]
+            }
+        }
+    },
     {
         type: "function",
         function: {
@@ -2722,7 +2748,8 @@ const mcpToolsDefinitions = [
                 type: "object",
                 properties: {
                     keyword: { type: "string", description: "The search term to find across the graph (e.g., 'startup', 'Iceberg', 'Kafka')." },
-                    domain_intent: { type: "string", enum: ["all", "professional", "podcast", "website", "federated"], default: "all", description: "The domain sandbox to search within." },
+                    // "document" is removed from this enum by toolsOfferedFor() unless ENABLE_DOCUMENT_DOMAIN (M5).
+                    domain_intent: { type: "string", enum: ["all", "professional", "podcast", "website", "federated", "document"], default: "all", description: "The domain sandbox to search within." },
                     wants_visual_map: { type: "boolean", description: "Set to true if the user asks for a map, graph, overview, or visual landscape." }
                 },
                 required: ["keyword"]
@@ -3357,7 +3384,8 @@ app.post('/query', authMiddleware, async (req, res) => {
         const domainInstruction = gatewayDomainInstructionPrompt
             .replace('{domain_signal}', domainSignal)
             .replace('{low_confidence_override}', lowConfidenceOverride)
-            .replace('{cross_domain_instruction}', crossDomainInstruction);
+            .replace('{cross_domain_instruction}', crossDomainInstruction)
+            + (domainSignal === 'document' ? '\n' + gatewayDocumentInstructionPrompt : '');
 
         const restrictionNote = accessScope === 'restricted'
             ? 'NOTE: This query is executing with restricted node access. If you cannot find data, explicitly state that access is unavailable. Do not synthesize from prior knowledge.\n\n'
@@ -3398,6 +3426,9 @@ app.post('/query', authMiddleware, async (req, res) => {
         // evidence === 0, the LLM's answer can only have come from training data.
         let dataToolCalls = 0;
         let groundingEvidence = 0;
+        // Phase B M5 (M5-7): documents cited this turn → stored with the cached answer, so revision-based
+        // cache eviction (Flow 1 steps 2b/13c, planned) can be built later without changing the tool.
+        const citedSources = new Map();
 
         // Accumulate graph data from ALL tool calls so every tool's nodes/links reach the UI.
         // Previously only the last tool's result was forwarded (Gap #1 fix).
@@ -3562,6 +3593,9 @@ app.post('/query', authMiddleware, async (req, res) => {
                             mergeGraphData(parsed, toolName === 'search_enterprise_graph' ? toolArgs.domain_intent : undefined);
                             // Accumulate tool-result URLs for grounding audit (AP-15).
                             extractToolUrls(parsed).forEach(u => querySeenUrls.add(u));
+                            if (toolName === DOCUMENT_SEARCH_TOOL && Array.isArray(parsed.cited_sources)) {
+                                parsed.cited_sources.forEach(c => c && c.source_id && citedSources.set(c.source_id, c.current_snapshot_id));
+                            }
                             // Orphaned-Person filter (career domain only).
                             // Person is a shared label — podcast guests/hosts and career people both use it.
                             // Podcast guests reach career search results via [*0..2] taxonomy expansion
@@ -3954,7 +3988,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
                     domain_signal: domainSignal,
                     is_targeted_career: isTargetedCareer,
-                    access_scope: accessScope
+                    access_scope: accessScope,
+                    ...(citedSources.size ? { cited_sources: [...citedSources].map(([source_id, current_snapshot_id]) => ({ source_id, current_snapshot_id })) } : {})
                 };
                 // Cache the response for repeated identical questions (per tenant+user,
                 // QUERY_CACHE_TTL_SECONDS). Only a confirmed, grounded success is cached — see
