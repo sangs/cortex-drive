@@ -148,6 +148,35 @@ async def search_episodes_by_question_tool(
         expert.close()
 
 @mcp.tool()
+async def search_document_blocks(
+    question: str = Field(description="The question to answer from document passages (PDF/DOCX/PPTX sources)."),
+    top_k: Optional[int] = Field(8, description="Maximum passages to return (capped at 8)."),
+) -> str:
+    """Phase B M5: hybrid (vector + keyword) search over document passages. Read-only.
+
+    Returns JSON {"blocks": [...], "cited_sources": [...]}: each block has its text, page, section and a
+    `citation` with a server-built `cite_url`. Cite every document fact with it. Blocks with
+    derived_by = "vlm" are AI-generated figure descriptions. Disabled unless ENABLE_DOCUMENT_DOMAIN is on.
+    """
+    from domain_registry import ENABLE_DOCUMENT_DOMAIN
+    if not ENABLE_DOCUMENT_DOMAIN:
+        return json.dumps({"error": "document search is not enabled"})
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    print(f"[AUTHZ/MCP] search_document_blocks: mode={'permify' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return json.dumps(expert.search_document_blocks(question, top_k=top_k), default=str)
+    except Exception as e:
+        print(f"Error in search_document_blocks: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+
+@mcp.tool()
 async def query_relevant_chunks_hybrid_tool(
     question: str = Field(description="The natural language question or topic to search for using Hybrid (Vector + BM25) search."),
     top_k: Optional[int] = Field(10, description="Number of results to return. Default 10.")

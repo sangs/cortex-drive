@@ -715,3 +715,5 @@ DOCUMENT_SEARCH_RRF_K = 60                # reciprocal-rank-fusion constant (sam
 DOCUMENT_BLOCK_VECTOR_INDEX = 'contentBlockIndex'
 DOCUMENT_BLOCK_TEXT_INDEX = 'contentBlockTextIndex'
 DOCUMENT_PDF_MIME_TYPES = ['application/pdf']
+DOCUMENT_GRAPH_MAX_DOCS = 5               # documents matched per graph-view request
+DOCUMENT_GRAPH_MAX_SECTIONS = 10          # matching sections shown per document

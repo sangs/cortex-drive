@@ -602,6 +602,95 @@ class ExpertTools:
             print(f"Hybrid Search Error: {e}")
             return self.query_relevant_chunks(question, top_k)
 
+    # ── Phase B M5: document evidence (phase-b-m5-document-query-design-2026-10-21.md §1.3.2/§1.3.4) ──
+    _LUCENE_SPECIAL = re.compile(r'[+\-&|!(){}\[\]^"~*?:\\/]')
+
+    def _document_block_scope(self) -> str:
+        """Shared tail of both document searches: the block must sit in the document's CURRENT revision,
+        and the caller must be allowed to see both the block and its DocumentSource (security clause on
+        each, decided by the caller's role — owner, collaborator, guest)."""
+        return f"""
+            MATCH (d:DocumentSource)-[:HAS_SECTION]->(sec:Section)-[:HAS_BLOCK]->(b)
+            WHERE b.revision_id = d.current_snapshot_id
+              AND {self._get_security_clause("b")}
+              AND {self._get_security_clause("d")}
+            OPTIONAL MATCH (d)-[:HAS_SNAPSHOT]->(snap:SourceSnapshot {{node_id: d.current_snapshot_id}})
+            RETURN b.node_id AS block_id, b.text AS text, b.description AS description, b.type AS type,
+                   coalesce(b.derived_by, 'text') AS derived_by, b.page AS page, b.section_path AS section_path,
+                   d.node_id AS source_id, d.name AS source_name, d.uri AS uri, d.mime_type AS mime_type,
+                   d.current_snapshot_id AS revision_id, toString(snap.fetched_at) AS revision_date,
+                   sec.title AS section, score
+            ORDER BY score DESC
+        """
+
+    def search_document_blocks(self, question: str, top_k: int = None) -> dict:
+        """Hybrid (vector + keyword) search over document passages with reciprocal rank fusion.
+
+        Returns {"blocks": [...], "cited_sources": [...]} — each block carries its text (capped), page,
+        section and a `citation` whose `cite_url` is built here (never by the LLM, AP-15). Figure
+        descriptions written by the vision model (derived_by = vlm) are labelled as AI-generated.
+        Failures are returned in-band as {"error": ...} (AP-22)."""
+        from schema_guard import (DOCUMENT_SEARCH_TOP_K, DOCUMENT_SEARCH_MAX_PER_SOURCE, DOCUMENT_EVIDENCE_MAX_CHARS,
+                                  DOCUMENT_SEARCH_RRF_K, DOCUMENT_BLOCK_VECTOR_INDEX, DOCUMENT_BLOCK_TEXT_INDEX,
+                                  DOCUMENT_PDF_MIME_TYPES)
+        from domain_registry import SEMANTIC_OVERFETCH_MULTIPLIER
+        question = (question or "").strip()
+        if not question:
+            return {"error": "question is required"}
+        k = max(1, min(int(top_k or DOCUMENT_SEARCH_TOP_K), DOCUMENT_SEARCH_TOP_K))
+        candidates = k * SEMANTIC_OVERFETCH_MULTIPLIER
+        scope = self._document_block_scope()
+        vector_query = ("CALL db.index.vector.queryNodes($vector_index, $candidates, $embedding) "
+                        "YIELD node AS b, score " + scope + " LIMIT $candidates")
+        keyword_query = ("CALL db.index.fulltext.queryNodes($text_index, $lucene) YIELD node AS b, score "
+                         "WITH b, score LIMIT $candidates " + scope)
+        lucene = " ".join(self._LUCENE_SPECIAL.sub(" ", question).split())
+        try:
+            embedding = self.get_embedding(question)
+            ranked = [self._exec_query(vector_query, vector_index=DOCUMENT_BLOCK_VECTOR_INDEX, candidates=candidates,
+                                       embedding=embedding, **self._security_params()).records]
+            if lucene:
+                ranked.append(self._exec_query(keyword_query, text_index=DOCUMENT_BLOCK_TEXT_INDEX, lucene=lucene,
+                                               candidates=candidates, **self._security_params()).records)
+        except Exception as e:
+            print(f"[DOCS] search_document_blocks failed: {e}")
+            return {"error": f"document search failed: {e}"}
+
+        fused, rows = {}, {}
+        for records in ranked:
+            for rank, r in enumerate(records):
+                bid = r["block_id"]
+                fused[bid] = fused.get(bid, 0.0) + 1.0 / (rank + 1 + DOCUMENT_SEARCH_RRF_K)
+                rows.setdefault(bid, r)
+
+        blocks, per_source, cited = [], {}, {}
+        for bid, score in sorted(fused.items(), key=lambda x: x[1], reverse=True):
+            r = rows[bid]
+            if per_source.get(r["source_id"], 0) >= DOCUMENT_SEARCH_MAX_PER_SOURCE:
+                continue
+            text = (r["text"] or r["description"] or "").strip()
+            if not text:
+                continue
+            per_source[r["source_id"]] = per_source.get(r["source_id"], 0) + 1
+            page = r["page"]
+            is_pdf = (r["mime_type"] or "") in DOCUMENT_PDF_MIME_TYPES
+            cite_url = f"{r['uri']}#page={page}" if (is_pdf and page) else r["uri"]
+            vlm = r["derived_by"] == "vlm"
+            blocks.append({
+                "text": text[:DOCUMENT_EVIDENCE_MAX_CHARS],
+                "type": r["type"], "derived_by": r["derived_by"], "page": page,
+                "section_path": list(r["section_path"] or []), "score": round(score, 6),
+                "label": (f"AI-generated figure description (from the figure on p. {page})" if vlm else None),
+                "citation": {"source_id": r["source_id"], "source_name": r["source_name"], "uri": r["uri"],
+                             "revision_id": r["revision_id"], "revision_date": r["revision_date"],
+                             "page": page, "section": r["section"], "cite_url": cite_url},
+            })
+            cited[r["source_id"]] = r["revision_id"]
+            if len(blocks) >= k:
+                break
+        return {"blocks": blocks,
+                "cited_sources": [{"source_id": sid, "current_snapshot_id": rev} for sid, rev in cited.items()]}
+
     def query_relevant_chunks(self, question: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Standard Vector Search on Transcript Chunks using the unified 3-small manifold."""
         embedding = self.get_embedding(question)
@@ -1401,6 +1490,71 @@ class ExpertTools:
     def _inject_federated_demo_boost(self) -> str:
         return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
 
+    def _search_document_graph(self, keyword: str) -> dict:
+        """Graph view for the document domain (§1.3.6): matched DocumentSources (title, a current section
+        title, or a linked entity name contains the keyword; none given = most recent), their matching
+        current Sections and up to DOCUMENT_GRAPH_MAX_ENTITIES linked entities of THAT document only.
+        ContentBlocks are never returned (their text goes to the chat with citations). The caller's
+        visibility rule applies to every node (AP-1)."""
+        from schema_guard import (DOCUMENT_GRAPH_MAX_NODES, DOCUMENT_GRAPH_MAX_ENTITIES, DOCUMENT_GRAPH_MAX_DOCS,
+                                  DOCUMENT_GRAPH_MAX_SECTIONS, DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_ENTITY_LABELS)
+        kw = " ".join((keyword or "").lower().split())
+        query = f"""
+            MATCH (d:DocumentSource)
+            WHERE {self._get_security_clause("d")}
+              AND ($keyword = '' OR toLower(coalesce(d.name, '')) CONTAINS $keyword
+                   OR EXISTS {{ MATCH (d)-[:HAS_SECTION]->(s0:Section)
+                                WHERE s0.revision_id = d.current_snapshot_id
+                                  AND toLower(coalesce(s0.title, '')) CONTAINS $keyword }}
+                   OR EXISTS {{ MATCH (d)-[r0]->(e0) WHERE type(r0) IN $entity_rels
+                                  AND toLower(coalesce(e0.name, '')) CONTAINS $keyword }})
+            WITH d ORDER BY d.last_synced_at DESC LIMIT $max_docs
+            OPTIONAL MATCH (d)-[:HAS_SECTION]->(s:Section)
+              WHERE s.revision_id = d.current_snapshot_id AND $keyword <> ''
+                AND toLower(coalesce(s.title, '')) CONTAINS $keyword
+                AND {self._get_security_clause("s")}
+            WITH d, collect(DISTINCT s)[..$max_sections] AS sections
+            OPTIONAL MATCH (d)-[r]->(e)
+              WHERE type(r) IN $entity_rels AND any(l IN labels(e) WHERE l IN $entity_labels)
+                AND {self._get_security_clause("e")}
+            WITH d, sections, collect(DISTINCT {{node: e, rel: type(r)}})[..$max_entities] AS entities
+            RETURN d, sections, entities
+        """
+        try:
+            records = self._exec_query(query, keyword=kw, entity_rels=DOCUMENT_ENTITY_RELATIONSHIPS,
+                                       entity_labels=DOCUMENT_ENTITY_LABELS, max_docs=DOCUMENT_GRAPH_MAX_DOCS,
+                                       max_sections=DOCUMENT_GRAPH_MAX_SECTIONS, max_entities=DOCUMENT_GRAPH_MAX_ENTITIES,
+                                       **self._security_params()).records
+        except Exception as e:
+            print(f"[DOCS] document graph failed: {e}")
+            return {"error": f"document graph failed: {e}"}
+
+        nodes, links, seen = [], [], set()
+
+        def add(node, anchor=False):
+            if node is None or node.element_id in seen or len(nodes) >= DOCUMENT_GRAPH_MAX_NODES:
+                return node is not None and node.element_id in seen
+            props = dict(node)
+            labels = list(node.labels)
+            seen.add(node.element_id)
+            nodes.append({"id": node.element_id, "element_id": node.element_id, "node_id": props.get("node_id"),
+                          "name": props.get("name") or props.get("title") or "", "type": labels[0] if labels else "",
+                          "labels": labels, "description": (props.get("description") or "")[:500],
+                          "url": props.get("uri") or props.get("url"), "is_anchor": anchor})
+            return True
+
+        for rec in records:
+            doc = rec["d"]
+            if not add(doc, anchor=True):
+                break
+            for sec in rec["sections"]:
+                if add(sec):
+                    links.append({"source": doc.element_id, "target": sec.element_id, "type": "HAS_SECTION"})
+            for item in rec["entities"]:
+                if item["node"] is not None and add(item["node"]):
+                    links.append({"source": doc.element_id, "target": item["node"].element_id, "type": item["rel"]})
+        return {"nodes": nodes, "links": links}
+
     def search_enterprise_graph(self, keyword: str, requesting_user_id: str = "", wants_visual_map: bool = False, domain_intent: str = "all", scoped_expansion: bool = False) -> str:
         """
         Search for entities across the Universal Enterprise Graph dynamically, explicitly crossing boundaries between domains (Podcast/Resume/Federated).
@@ -1410,6 +1564,13 @@ class ExpertTools:
         fan-out to SEARCH_EXPANSION_LIMIT_SCOPED instead of the default practical-no-op limit.
         See domain_registry.py and documents/architecture/search-enterprise-graph-expansion-cap-2026-08-27.md.
         """
+        # Phase B M5: the document domain has its own, narrow graph view (design §1.3.6, M5-8).
+        if (domain_intent or "").lower() == "document":
+            from domain_registry import ENABLE_DOCUMENT_DOMAIN
+            if not ENABLE_DOCUMENT_DOMAIN:
+                return json.dumps({"error": "document search is not enabled"})
+            return json.dumps(self._search_document_graph(keyword))
+
         # Career cluster shortcut: only fire when the LLM explicitly signals wants_visual_map=True.
         # Keyword-based triggering (checking for "career", "map", etc.) is suppressed because it
         # intercepts Q2 career map queries, returning backbone-only nodes that fail the
