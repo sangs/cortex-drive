@@ -2981,19 +2981,22 @@ class ExpertTools:
         private_node_ids = [r["node_id"] for r in result.records if r.get("is_private")]
         return {"child_node_ids": child_node_ids, "private_node_ids": private_node_ids}
 
-    def nodes_in_tenant(self, node_ids: list) -> list:
-        """Which of node_ids belong to this tenant. Used by the gateway's owner share checks (S2-43):
-        the owner may manage any node of their own tenant, including nodes with no Permify owner
-        tuple (S2-41). Internal call only (Bento, no end-user identity)."""
-        from schema_guard import NODES_IN_TENANT_MAX_IDS
+    def nodes_in_tenant(self, node_ids: list) -> dict:
+        """Classify node_ids for the gateway's owner share checks (S2-43, S2-44):
+        `own` = in this tenant (the owner may manage them, incl. nodes with no Permify owner tuple, S2-41);
+        `everyone` = SYSTEM/PUBLIC (already visible to everyone, so not shareable).
+        Internal call only (Bento, no end-user identity)."""
+        from schema_guard import NODES_IN_TENANT_MAX_IDS, VISIBLE_TO_EVERYONE_TENANTS
         ids = [str(i) for i in (node_ids or []) if i][:NODES_IN_TENANT_MAX_IDS]
         if not ids:
-            return []
+            return {"own": [], "everyone": []}
         result = self._exec_query(
-            "MATCH (n) WHERE n.node_id IN $node_ids AND n.tenant_id = $tenant_id RETURN DISTINCT n.node_id AS node_id",
-            node_ids=ids, tenant_id=self.tenant_id,
+            "MATCH (n) WHERE n.node_id IN $node_ids AND (n.tenant_id = $tenant_id OR n.tenant_id IN $everyone_tenants) "
+            "RETURN DISTINCT n.node_id AS node_id, n.tenant_id = $tenant_id AS own",
+            node_ids=ids, tenant_id=self.tenant_id, everyone_tenants=VISIBLE_TO_EVERYONE_TENANTS,
         )
-        return [r["node_id"] for r in result.records]
+        return {"own": [r["node_id"] for r in result.records if r["own"]],
+                "everyone": [r["node_id"] for r in result.records if not r["own"]]}
 
     def close(self):
         """Close the Neo4j driver"""

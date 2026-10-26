@@ -640,7 +640,8 @@ async function bentoNodesInTenant(nodeIds, tenantId) {
         body: JSON.stringify({ node_ids: nodeIds }),
     });
     if (!res.ok) throw new Error(`Bento /nodes_in_tenant → ${res.status}`);
-    return (await res.json()).node_ids || [];
+    const body = await res.json();
+    return { own: body.node_ids || [], everyone: body.everyone_ids || [] };
 }
 const shareAuthz = createShareAuthz({ db, permify, isOwner, nodesInTenant: bentoNodesInTenant });
 

@@ -131,13 +131,13 @@ class ToolHandler(BaseHTTPRequestHandler):
                     return
                 expert = ExpertTools(tenant_id=tenant_id)
                 try:
-                    node_ids = expert.nodes_in_tenant(params.get("node_ids") or [])
+                    classified = expert.nodes_in_tenant(params.get("node_ids") or [])
                 finally:
                     expert.close()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"node_ids": node_ids}).encode("utf-8"))
+                self.wfile.write(json.dumps({"node_ids": classified["own"], "everyone_ids": classified["everyone"]}).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/get_composition_subtree":

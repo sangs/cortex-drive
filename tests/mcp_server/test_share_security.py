@@ -120,17 +120,17 @@ class NodesInTenantTest(unittest.TestCase):
     def test_query_and_params(self):
         t = tools()
         t.driver = mock.MagicMock()
-        t.driver.execute_query.return_value = mock.MagicMock(records=[{"node_id": "a"}])
-        self.assertEqual(t.nodes_in_tenant(["a", "", None, "b"]), ["a"])
+        t.driver.execute_query.return_value = mock.MagicMock(records=[{"node_id": "a", "own": True}, {"node_id": "p", "own": False}])
+        self.assertEqual(t.nodes_in_tenant(["a", "", None, "b", "p"]), {"own": ["a"], "everyone": ["p"]})
         query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
-        self.assertEqual(params_used(query), {"node_ids", "tenant_id"})  # AP-2
-        self.assertEqual(kwargs, {"node_ids": ["a", "b"], "tenant_id": TEST_TENANT_ID})
+        self.assertEqual(params_used(query), {"node_ids", "tenant_id", "everyone_tenants"})  # AP-2
+        self.assertEqual(kwargs, {"node_ids": ["a", "b", "p"], "tenant_id": TEST_TENANT_ID, "everyone_tenants": ["SYSTEM", "PUBLIC"]})
 
     def test_empty_and_cap(self):
         from schema_guard import NODES_IN_TENANT_MAX_IDS
         t = tools()
         t.driver = mock.MagicMock()
-        self.assertEqual(t.nodes_in_tenant([]), [])
+        self.assertEqual(t.nodes_in_tenant([]), {"own": [], "everyone": []})
         t.driver.execute_query.assert_not_called()
         t.driver.execute_query.return_value = mock.MagicMock(records=[])
         t.nodes_in_tenant([f"n{i}" for i in range(NODES_IN_TENANT_MAX_IDS + 50)])

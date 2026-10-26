@@ -85,12 +85,15 @@ function run(mw, req) {
     let tenantCalls = 0;
     const ownerAuthz = createShareAuthz({ db: noDb, permify: fakePermify({ owned: ['n1'] }), log: quietLog,
         isOwner: u => u === 'owner',
-        nodesInTenant: async (ids, tenant) => { tenantCalls++; return ids.filter(id => (tenantNodes[tenant] || []).includes(id)); } });
+        nodesInTenant: async (ids, tenant) => { tenantCalls++; return { own: ids.filter(id => (tenantNodes[tenant] || []).includes(id)), everyone: ids.filter(id => id.startsWith('pub')) }; } });
     const ownerNode = ownerAuthz.requireNodeShare(req => req.body.nodeIds);
     eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'owner' } })).next, true, 'owner: own-tenant node without owner tuple → allowed');
     eq((await run(ownerNode, { body: { nodeIds: ['t1', 'n1'] }, headers: { 'x-user-id': 'owner' } })).next, true, 'owner: tenant node + Permify-owned node → allowed');
     eq((await run(ownerNode, { body: { nodeIds: ['t1', 'x9'] }, headers: { 'x-user-id': 'owner' } })).status, 403, 'owner: a node outside the tenant and not owned → refused');
     eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'owner', 'x-tenant-id': 'org_other' } })).status, 403, 'owner: tenant fallback is per tenant');
+    const pub = await run(ownerNode, { body: { nodeIds: ['pub1'] }, headers: { 'x-user-id': 'owner' } });
+    eq([pub.status, pub.body.everyone_visible], [409, true], 'owner: PUBLIC/SYSTEM node → 409 already visible to everyone (S2-44)');
+    eq((await run(ownerNode, { body: { nodeIds: ['t1', 'pub1'] }, headers: { 'x-user-id': 'owner' } })).status, 409, 'owner: a set containing a PUBLIC node → 409');
     const callsBefore = tenantCalls;
     eq((await run(ownerNode, { body: { nodeIds: ['t1'] }, headers: { 'x-user-id': 'invitee' } })).status, 403, 'non-owner: tenant fallback never applies');
     eq(tenantCalls, callsBefore, 'non-owner: tenant lookup not even called');

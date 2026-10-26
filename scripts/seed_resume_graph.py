@@ -28,6 +28,8 @@ from dotenv import load_dotenv
 # Add scripts directory to path so date_utils can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from date_utils import parse_date_range, parse_single_date  # noqa: E402
+from schema_guard import SEED_BUILTIN_VOCABULARY_LABELS  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # scripts/ (career-graph promotion)
 
 load_dotenv('.env', override=True)
 
@@ -789,41 +791,27 @@ def seed_resume_graph():
             print(f"  -> Authoritative Identity confirmed: tenant={tenant_id}, owner={owner_id}")
             print("  -> Stamping graph with Zero-Trust identity tier (SYSTEM / PUBLIC / PRIVATE).")
 
-            # Tier 1: SYSTEM — globally visible structural landmarks
-            # Technology, Concept, Year are semantic primitives shared across all tenants —
-            # they must be SYSTEM tier so virtual bridge discovery can traverse them globally.
+            # Visibility tiers (S2-44, documents/architecture/visibility-tiers-design-2026-10-23.md).
+            # Only nodes this run just created (no tenant_id yet) are stamped; a node that already has a
+            # tier is never touched. Until 2026-10-26 these were unscoped `MATCH (n) ... SET` statements
+            # that re-tiered EVERY tenant's nodes (pulling org vocabulary into SYSTEM and other orgs'
+            # people/projects into the founder's tenant).
+            #   SYSTEM  = curated built-in vocabulary only (Invariant 9)
+            #   tenant  = everything else this seeder writes (the founder's org), then
+            #   PUBLIC  = the founder's career graph, promoted with the approved boundary (§4)
             session.run(
                 """
                 MATCH (n)
-                WHERE any(label IN labels(n) WHERE label IN [
-                    'Company', 'Institution', 'Degree', 'Category',
-                    'Technology', 'Concept', 'Year'
-                ])
+                WHERE n.tenant_id IS NULL
+                  AND any(label IN labels(n) WHERE label IN $builtin_labels)
                 SET n.tenant_id = 'SYSTEM', n.owner_id = 'user_SYSTEM_ADMIN'
-                """
+                """,
+                builtin_labels=SEED_BUILTIN_VOCABULARY_LABELS,
             )
-
-            # Tier 2: PUBLIC — community benchmarks visible to any authenticated user
             session.run(
                 """
                 MATCH (n)
-                WHERE any(label IN labels(n) WHERE label IN [
-                    'ThoughtLeadership', 'Publication', 'Hackathon'
-                ])
-                SET n.tenant_id = 'PUBLIC', n.owner_id = 'user_SYSTEM_ADMIN'
-                """
-            )
-
-            # Tier 3: PRIVATE — personal professional memory, gated by owner + tenant
-            session.run(
-                """
-                MATCH (n)
-                WHERE any(label IN labels(n) WHERE label IN [
-                    'Person', 'Project', 'Startup', 'Community', 'PreparatoryNote',
-                    'Skill', 'Certification', 'ProfessionalEducation', 'OpenSource',
-                    'SocialLearning', 'ReferenceLink', '__MetaContext__', 'Outcome',
-                    'Achievement'
-                ])
+                WHERE n.tenant_id IS NULL
                 SET n.tenant_id = $tenant_id, n.owner_id = $owner_id
                 """,
                 tenant_id=tenant_id,
@@ -836,6 +824,10 @@ def seed_resume_graph():
                 "MATCH (n) WHERE n.node_id IS NULL SET n.node_id = randomUUID()"
             )
             print("  -> node_id backfill complete.")
+
+            # Founder's career graph → PUBLIC (same boundary and backup as the S2-44 migration).
+            from migrate_career_graph_public import promote_founder_career_graph
+            promote_founder_career_graph(driver, tenant_id)
 
             # Step 3a: Remove stale year-only duplicate relationships.
             # MERGE creates a NEW relationship when properties differ, so old year-only

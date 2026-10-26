@@ -685,3 +685,22 @@ def validate_upsert(label: str, data: Dict[str, Any]):
 # Cap on node ids per Bento /nodes_in_tenant request (gateway owner share checks, S2-43).
 # Matches MAX_NODES_PER_CHECK in cortex-gateway/utils/share_authz.js.
 NODES_IN_TENANT_MAX_IDS = 200
+
+# ── Founder's career graph → PUBLIC (S2-44, visibility-tiers-design-2026-10-23.md §4) ─────────────────
+# Relationships from the founder's Person node that define the career graph.
+CAREER_PUBLIC_FROM_PERSON_RELATIONSHIPS = [
+    'HELD_ROLE', 'WORKED_AT', 'CONTRIBUTED_TO', 'PARTICIPATED_IN', 'CREATED', 'CURRENTLY_BUILDING', 'LED',
+    'FEATURE_GUEST', 'HAS_SKILL', 'GRADUATED_FROM', 'STUDIED_AT', 'CERTIFIED_BY', 'AUTHORED', 'CO_AUTHORED',
+    'HAS_PORTFOLIO',
+]
+# One further hop from those career nodes (section Category → items, Company ↔ Project, reference links).
+CAREER_PUBLIC_DETAIL_RELATIONSHIPS = ['CONTAINS', 'AT', 'HAS_REFERENCE', 'AWARDED_FOR']
+# Never moved, whatever links them: private notes, ingested content, podcast content, other people.
+CAREER_PUBLIC_EXCLUDED_LABELS = [
+    'Person', 'PreparatoryNote', 'Chunk', 'Episode', 'Podcast', 'Source', 'WebsiteSource', 'DocumentSource',
+    'PageMetadata', 'ExternalSilo', 'Technology', 'Tool', 'Concept', 'Topic', 'Institution',
+]
+# Labels seed scripts may stamp as SYSTEM (curated built-in vocabulary, Invariant 9). Never customer data.
+SEED_BUILTIN_VOCABULARY_LABELS = ['Technology', 'Tool', 'Concept', 'Topic', 'Institution', 'Year']
+# Tiers visible to every caller (visibility rule, S2-44): built-in vocabulary and public content. Not shareable.
+VISIBLE_TO_EVERYONE_TENANTS = ['SYSTEM', 'PUBLIC']

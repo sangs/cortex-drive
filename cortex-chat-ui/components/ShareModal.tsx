@@ -98,6 +98,8 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const [active, setActive] = useState<ActiveGrant[]>([]);
     const [revoked, setRevoked] = useState<RevokedEntry[]>([]);
     const [tenantWide, setTenantWide] = useState(false);
+    // Public / built-in (SYSTEM) nodes are already visible to everyone and cannot be shared (S2-44).
+    const [everyoneVisible, setEveryoneVisible] = useState(false);
     const [historyLoading, setHistoryLoading] = useState(false);
     const [revoking, setRevoking] = useState<string | null>(null);
 
@@ -171,11 +173,25 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     }, [authHeaders]);
 
     useEffect(() => {
-        if (!open) return;
+        if (!open || !nodeId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const headers = await authHeaders();
+                const resp = await fetch(`${GATEWAY}/api/share/access/${encodeURIComponent(nodeId)}`, { headers });
+                const body = resp.status === 409 ? await resp.json() : null;
+                if (!cancelled) setEveryoneVisible(Boolean(body && body.everyone_visible));
+            } catch { if (!cancelled) setEveryoneVisible(false); }
+        })();
+        return () => { cancelled = true; };
+    }, [open, nodeId, authHeaders]);
+
+    useEffect(() => {
+        if (!open || everyoneVisible) return;
         if (tab === 'guest') loadGuestLinks();
         if (tab === 'group') loadGroups();
         if (tab === 'manage') loadHistory();
-    }, [open, tab, loadGuestLinks, loadGroups, loadHistory]);
+    }, [open, tab, everyoneVisible, loadGuestLinks, loadGroups, loadHistory]);
 
     // Reset per-tab state when switching tabs
     useEffect(() => {
@@ -361,8 +377,15 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                         ))}
                     </div>
 
+                    {everyoneVisible && (
+                        <div className="p-4 bg-white/3 border border-white/5 rounded-xl text-xs text-slate-300 leading-relaxed">
+                            <p className="font-medium text-white mb-1">Already visible to everyone</p>
+                            <p>This node is Public or built-in, so every organization, invited user and guest link can already see it. There is nothing to share.</p>
+                        </div>
+                    )}
+
                     {/* ── GUEST LINK TAB ── */}
-                    {tab === 'guest' && (
+                    {!everyoneVisible && tab === 'guest' && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2">
                                 <div className="flex items-center gap-1.5 flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
@@ -427,7 +450,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     )}
 
                     {/* ── SHARE WITH PERSON TAB ── */}
-                    {tab === 'person' && (
+                    {!everyoneVisible && tab === 'person' && (
                         <div className="space-y-4">
                             <div className="flex gap-2">
                                 <input
@@ -482,7 +505,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     )}
 
                     {/* ── SHARE WITH GROUP TAB ── */}
-                    {tab === 'group' && (
+                    {!everyoneVisible && tab === 'group' && (
                         <div className="space-y-4">
                             {groupsLoading ? (
                                 <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-500 animate-spin" /></div>
@@ -547,7 +570,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     )}
 
                     {/* ── MANAGE ACCESS TAB ── */}
-                    {tab === 'manage' && (
+                    {!everyoneVisible && tab === 'manage' && (
                         <div className="space-y-4">
                             {/* Tenant-wide toggle */}
                             <div className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">

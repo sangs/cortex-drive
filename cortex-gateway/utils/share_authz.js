@@ -19,18 +19,22 @@
  */
 
 const SHARE_PERMISSION = 'can_share';
+const EVERYONE_VISIBLE_ERROR = 'This node is already visible to everyone (Public or built-in), so it cannot be shared';
 const MAX_NODES_PER_CHECK = 200;
 
 function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = null, log = console }) {
-    // Owner: nodes of their own tenant are theirs to manage. Returns the subset confirmed in-tenant;
-    // on any error returns [] so the Permify check alone decides (fail closed).
+    // Owner: nodes of their own tenant are theirs to manage (`own`); SYSTEM/PUBLIC nodes are already
+    // visible to everyone and are not shareable (`everyone`, S2-44). On any lookup error both sets are
+    // empty, so the Permify check alone decides (fail closed).
     async function ownerTenantNodes(ids, userId, tenantId) {
-        if (!nodesInTenant || !tenantId || !isOwner(userId)) return new Set();
+        const none = { own: new Set(), everyone: new Set() };
+        if (!nodesInTenant || !tenantId || !isOwner(userId)) return none;
         try {
-            return new Set(((await nodesInTenant(ids, tenantId)) || []).map(String));
+            const found = (await nodesInTenant(ids, tenantId)) || {};
+            return { own: new Set((found.own || []).map(String)), everyone: new Set((found.everyone || []).map(String)) };
         } catch (err) {
             log.error('[SHARE-AUTHZ] tenant lookup failed:', err.message);
-            return new Set();
+            return none;
         }
     }
 
@@ -40,8 +44,11 @@ function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = 
         if (ids.length === 0) return { ok: false, status: 400, error: 'node id required' };
         if (ids.length > MAX_NODES_PER_CHECK) return { ok: false, status: 400, error: `at most ${MAX_NODES_PER_CHECK} nodes per request` };
         try {
-            const inTenant = await ownerTenantNodes(ids, userId, tenantId);
-            const rest = ids.filter(id => !inTenant.has(id));
+            const { own, everyone } = await ownerTenantNodes(ids, userId, tenantId);
+            if (everyone.size) {
+                return { ok: false, status: 409, error: EVERYONE_VISIBLE_ERROR, everyone_visible: true };
+            }
+            const rest = ids.filter(id => !own.has(id));
             const results = await Promise.all(rest.map(id => permify.checkPermission(id, userId, SHARE_PERMISSION)));
             const denied = rest.filter((_, i) => !results[i]);
             if (denied.length) return { ok: false, status: 403, error: 'Only the owner of a node can share it or manage its access', denied };
@@ -56,7 +63,7 @@ function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = 
         if (verdict.status === 403) {
             log.warn(`[SHARE-AUTHZ] refused ${what}${verdict.denied ? ` nodes=${verdict.denied.length}` : ''}`);
         }
-        return res.status(verdict.status).json({ error: verdict.error });
+        return res.status(verdict.status).json({ error: verdict.error, ...(verdict.everyone_visible ? { everyone_visible: true } : {}) });
     }
 
     /** Middleware: the caller must be able to share every node returned by getNodeIds(req). */
@@ -111,4 +118,4 @@ function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = 
     return { canShareAll, requireNodeShare, requireGrantIssuer, requireGroupCreator };
 }
 
-module.exports = { createShareAuthz, SHARE_PERMISSION, MAX_NODES_PER_CHECK };
+module.exports = { createShareAuthz, SHARE_PERMISSION, MAX_NODES_PER_CHECK, EVERYONE_VISIBLE_ERROR };

@@ -70,11 +70,17 @@ the only thing stopping contamination, fix the Cypher.
 call. The LLM must not be the first system deciding domain. `domain_signal` is injected
 into the system prompt and returned in the response JSON.
 
-### 9. SYSTEM Tenant Is for Ontological Primitives Only
+### 9. Visibility Tiers: PUBLIC, Built-in SYSTEM, Organization, Private
 
-`Technology`, `Concept`, `Topic`, `Category` nodes may be SYSTEM-tenant (globally
-visible landmarks). `Company`, `Startup`, `Project`, `Role`, `Hackathon`, `Person`
-nodes are always org-tenant. Never `MERGE` a career node with `tenant_id = 'SYSTEM'`.
+Hierarchy: Platform → Organization (= tenant = Clerk org) → (future) Workspace → Groups → Users.
+- `PUBLIC` — visible to everyone (all orgs, invited users, guest links); platform-owner content only,
+  incl. the founder's career graph (moved 2026-10-26, `scripts/migrate_career_graph_public.py`).
+- `SYSTEM` — curated built-in vocabulary only (`schema_guard.SEED_BUILTIN_VOCABULARY_LABELS`), read-only for
+  orgs; never customer data. Only seed scripts write it, and only for nodes they just created.
+- Org tenant — everything an organization creates: **Private** by default (owner + explicit shares),
+  **Organization**-wide only via Permify `tenant_viewer @org#member`. Ingestion never MERGEs into SYSTEM/PUBLIC.
+- SYSTEM/PUBLIC nodes are not shareable (409). Check: `scripts/neo4j_diagnostics/check_invariant9_violations.py`.
+Design: `documents/architecture/visibility-tiers-design-2026-10-23.md`.
 
 ### 10. Post-Commit Query Verification Is a Hard Gate
 
@@ -195,7 +201,7 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-11** — `get_cluster_context` neighbor hop must block SYSTEM non-primitives; apply the same WHERE guard as `_fragment_neighbor_aggregation`
 - **AP-12** — Post-commit: run one query per domain pattern before pushing; this is a hard gate
 - **AP-13** — Before running any seeder, query the live graph for name collisions: `MATCH (n {name: "<target>"}) RETURN labels(n), n.tenant_id`
-- **AP-14** — SYSTEM tier is ontological primitives only; career nodes (Company/Project/Role/Startup) are always org-tenant; `buildLlmToolContent` deduplicates by `name::type` as permanent contract
+- **AP-14** — SYSTEM is curated built-in vocabulary only, never customer data; career nodes are org-tenant except the founder's career graph, which is PUBLIC (decision 2026-10-26, S2-44); seed scripts stamp tiers only on nodes they just created (`tenant_id IS NULL`), never with an unscoped `MATCH (n) SET n.tenant_id`; `buildLlmToolContent` deduplicates by `name::type` as permanent contract
 - **AP-15** — Every URL in a response must appear verbatim in a tool result from that turn; `auditResponseUrls()` strips violations; `[GROUNDING]` in gateway console = hallucinated URL
 - **AP-16** — Tool shortcuts that return backbone-only results must be gated on an explicit signal (`wants_visual_map=True`), never on keyword content; keyword content is unpredictable and will eventually match the wrong condition
 - **AP-17** — Use `res.on('close')` with `!res.writableEnded` to detect client disconnect; `req.on('close')` fires on TCP half-close (client done sending) and is a false positive during long-running async handlers
