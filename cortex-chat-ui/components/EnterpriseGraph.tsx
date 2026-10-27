@@ -28,10 +28,40 @@ function hasVisiblePin(nodes: { id: string }[], pinned: Map<string, { x: number,
     return nodes.some(n => pinned.has(n.id));
 }
 
-// Zoom scales inversely with node count so a freshly-bloomed graph keeps all nodes on screen.
-// Isolated from the effect below so the formula can be read/changed on its own.
-function computeAutoFitZoom(nodeCount: number): number {
-    return Math.max(0.35, 1 / Math.sqrt(Math.max(nodeCount, 1) / 3));
+// Zoom limits and fit padding (shared by the zoom buttons, reset and auto-fit).
+const GRAPH_ZOOM_MIN = 0.05;
+const GRAPH_ZOOM_MAX = 6;
+const GRAPH_ZOOM_STEP = 1.3;
+const GRAPH_FIT_PADDING = 0.85;          // the fitted graph fills 85% of the canvas
+// A press/release on a node only pins it if the pointer moved at least this far (pixels), i.e. a
+// real drag. Before 2026-10-27 every mouseup pinned the node, so a click or double-click pinned it,
+// which disabled auto-fit (hasVisiblePin) and let an expanded graph drift off-screen.
+const PIN_DRAG_MIN_PX = 4;
+
+// Fit the view to where the nodes ACTUALLY are (their current layout), not to a node-count formula or
+// a fixed centre: the force layout can spread or drift, and ECharts derives its viewport from whatever
+// nodes carry preset x/y. Sets centre (layout coordinates) + zoom so every node is visible.
+// Returns the new zoom, or null when there is nothing to fit.
+function fitToContent(e: any, currentZoom: number): number | null {
+    const series = e.getModel()?.getSeriesByIndex(0);
+    if (!series) return null;
+    const data = series.getData();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    data.each((i: number) => {
+        const l = data.getItemLayout(i);
+        if (!l || isNaN(l[0]) || isNaN(l[1])) return;
+        minX = Math.min(minX, l[0]); maxX = Math.max(maxX, l[0]);
+        minY = Math.min(minY, l[1]); maxY = Math.max(maxY, l[1]);
+    });
+    if (!isFinite(minX)) return null;
+    const a = e.convertToPixel({ seriesIndex: 0 }, [minX, minY]);
+    const b = e.convertToPixel({ seriesIndex: 0 }, [maxX, maxY]);
+    if (!a || !b) return null;
+    const pixelW = Math.max(Math.abs(b[0] - a[0]), 1), pixelH = Math.max(Math.abs(b[1] - a[1]), 1);
+    const factor = GRAPH_FIT_PADDING * Math.min(e.getWidth() / pixelW, e.getHeight() / pixelH);
+    const zoom = Math.min(Math.max(currentZoom * factor, GRAPH_ZOOM_MIN), GRAPH_ZOOM_MAX);
+    e.setOption({ series: [{ type: 'graph', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom }] }, false);
+    return zoom;
 }
 
 interface EnterpriseGraphProps {
@@ -414,20 +444,22 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
     const handleZoomIn = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
-        graphZoomRef.current = Math.min(graphZoomRef.current * 1.3, 6);
+        graphZoomRef.current = Math.min(graphZoomRef.current * GRAPH_ZOOM_STEP, GRAPH_ZOOM_MAX);
         e.setOption({ series: [{ type: 'graph', zoom: graphZoomRef.current }] });
     };
     const handleZoomOut = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
-        graphZoomRef.current = Math.max(graphZoomRef.current / 1.3, 0.15);
+        graphZoomRef.current = Math.max(graphZoomRef.current / GRAPH_ZOOM_STEP, GRAPH_ZOOM_MIN);
         e.setOption({ series: [{ type: 'graph', zoom: graphZoomRef.current }] });
     };
+    // "Reset" = fit the whole graph on screen (was zoom 1 at a fixed centre, which left a drifted
+    // graph off-screen).
     const handleZoomReset = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
-        graphZoomRef.current = 1;
-        e.setOption({ series: [{ type: 'graph', zoom: 1, center: ['50%', '50%'] }] });
+        const zoom = fitToContent(e, graphZoomRef.current);
+        if (zoom !== null) graphZoomRef.current = zoom;
     };
 
     // Auto-fit: after each bloom (node count changes), wait for force to settle then re-fit zoom —
@@ -442,9 +474,8 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             const timer = setTimeout(() => {
                 const e = chartRef.current?.getEchartsInstance();
                 if (!e || e.isDisposed()) return;
-                const targetZoom = computeAutoFitZoom(currentCount);
-                graphZoomRef.current = targetZoom;
-                e.setOption({ series: [{ type: 'graph', zoom: targetZoom }] }, false);
+                const zoom = fitToContent(e, graphZoomRef.current);
+                if (zoom !== null) graphZoomRef.current = zoom;
             }, 900);
             return () => clearTimeout(timer);
         }
@@ -455,8 +486,20 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
         const e = chartRef.current.getEchartsInstance();
 
         // Handle Mouseup for Pinning: High-Fidelity Capture from Model
+        // Pin only after a real drag (PIN_DRAG_MIN_PX). A click or double-click must not pin: a pin
+        // disables auto-fit, so an expansion could then drift the graph off-screen.
+        let pressStart: { id: string, x: number, y: number } | null = null;
+        const handleMouseDown = (params: any) => {
+            const ev = params?.event;
+            pressStart = (params.dataType === 'node' && ev) ? { id: params.data?.id, x: ev.offsetX, y: ev.offsetY } : null;
+        };
         const handleMouseUp = (params: any) => {
-            if (params.dataType === 'node' && viewMode === 'brain') {
+            const ev = params?.event;
+            const start = pressStart;
+            pressStart = null;
+            const dragged = !!(start && ev && start.id === params.data?.id
+                && Math.hypot(ev.offsetX - start.x, ev.offsetY - start.y) >= PIN_DRAG_MIN_PX);
+            if (params.dataType === 'node' && viewMode === 'brain' && dragged) {
                 // ECharts force layout updates the model internally.
                 // We use getItemLayout to get the actual projected coordinates.
                 const seriesModel = e.getModel().getSeriesByIndex(0);
@@ -475,6 +518,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             }
         };
 
+        e.on('mousedown', handleMouseDown);
         e.on('mouseup', handleMouseUp);
 
         // Handle Selection Persistence
@@ -488,6 +532,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
 
         return () => {
             if (e && !e.isDisposed()) {
+                e.off('mousedown', handleMouseDown);
                 e.off('mouseup', handleMouseUp);
             }
         };
