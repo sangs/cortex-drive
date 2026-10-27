@@ -1,6 +1,6 @@
 import os
 
-from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES, DOCUMENT_GRAPH_NODES
+from schema_guard import CORTEX_DRIVE_NODES, PROJECT_GRAPH_NODES, DOCUMENT_GRAPH_NODES, DOCUMENT_ENTITY_LABELS, SEED_BUILTIN_VOCABULARY_LABELS
 
 # Node-metadata embedding eligibility (2026-09-04) — single source of truth for "which node
 # types get a metadata_embedding" (schema_guard.EmbeddableNodeMixin) and "which types the
@@ -370,3 +370,28 @@ def get_realm_for_label(label: str) -> str:
     
     manifest = get_manifest_for_label(label)
     return manifest.get("realm", "INTERNAL")
+
+
+# ── Shared-entity isolation by provenance (M5-4, design §1.3.5; Invariant 7, S2-16 class) ──────────────
+# Labels any content domain may create (a Technology from a PDF, a Person from a podcast). In a
+# single-domain search such a node qualifies for domain D only if it is SYSTEM/PUBLIC or linked to a node
+# whose label is EXCLUSIVE to D.
+SHARED_ENTITY_LABELS = list(DOCUMENT_ENTITY_LABELS)
+# The content domains whose node sets are compared to find each one's exclusive labels. "structural" and
+# "federated" are views over other domains' labels, not content domains, so they're left out.
+CONTENT_DOMAINS = ["professional", "podcast", "website", "document"]
+# Never evidence of a domain: built-in vocabulary and the section headers (SYSTEM/PUBLIC landmarks).
+_NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
+
+
+def get_exclusive_labels(domain: str) -> list:
+    """Labels that exist only in this content domain (e.g. podcast → Episode, Podcast, Chunk, Source)."""
+    domain = (domain or "").lower()
+    if domain not in CONTENT_DOMAINS:
+        return []
+    own = set(DOMAIN_MANIFESTS[domain]["node_set"])
+    others = set()
+    for d in CONTENT_DOMAINS:
+        if d != domain:
+            others |= set(DOMAIN_MANIFESTS[d]["node_set"])
+    return sorted(own - others - set(SHARED_ENTITY_LABELS) - _NOT_PROVENANCE_LABELS)

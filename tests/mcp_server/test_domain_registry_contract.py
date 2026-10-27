@@ -60,5 +60,49 @@ class VisualDenyListTest(unittest.TestCase):
             self.assertEqual(reg.get_visual_deny_list(d), reg.BRIDGE_LABELS)
 
 
+class ProvenanceIsolationTest(unittest.TestCase):
+    """M5-4 (design §1.3.5): shared-label nodes qualify for a single domain only by provenance."""
+
+    def test_exclusive_labels(self):
+        self.assertEqual(reg.get_exclusive_labels("podcast"), ["Chunk", "Episode", "Podcast", "Source"])
+        self.assertEqual(reg.get_exclusive_labels("website"), ["SourceSnapshot", "WebsiteSource"])
+        self.assertEqual(reg.get_exclusive_labels("document"), ["ContentBlock", "DocumentSource", "Section"])
+        self.assertIn("Project", reg.get_exclusive_labels("professional"))
+        for d in ("podcast", "professional", "website", "document"):
+            ex = set(reg.get_exclusive_labels(d))
+            self.assertFalse(ex & set(reg.SHARED_ENTITY_LABELS), d)
+            self.assertFalse(ex & {"Category", "Technology", "Tool", "Concept", "Topic", "Institution", "Year"}, d)
+        self.assertEqual(reg.get_exclusive_labels("all"), [])
+        self.assertEqual(reg.get_exclusive_labels("federated"), [])
+
+    def _main_query(self, domain):
+        import re
+        from unittest import mock
+        from expert_tools import ExpertTools
+        t = ExpertTools.__new__(ExpertTools)
+        t.tenant_id, t.requesting_user_id, t.guest_share_anchor, t.allowed_ids = "org_x", "", "", None
+        t.driver = mock.MagicMock()
+        t.driver.execute_query.return_value = mock.MagicMock(records=[])
+        t.get_embedding = mock.MagicMock(return_value=None)
+        with mock.patch.dict(os.environ, {"OWNER_USER_ID": "user_owner"}):
+            t.search_enterprise_graph("graph databases", domain_intent=domain)
+        q, kw = t.driver.execute_query.call_args_list[0][0][0], t.driver.execute_query.call_args_list[0][1]
+        return q, kw, set(re.findall(r"\$(\w+)", q))
+
+    def test_single_domain_query_has_clause_and_params(self):  # AP-2
+        q, kw, used = self._main_query("podcast")
+        self.assertIn("EXISTS { MATCH (node)--(prov)", q)
+        self.assertIn("EXISTS { MATCH (neighbor)--(prov)", q)
+        self.assertEqual(kw["exclusive_labels"], ["Chunk", "Episode", "Podcast", "Source"])
+        self.assertTrue({"shared_labels", "exclusive_labels"} <= used)
+        self.assertEqual(used - set(kw), set())
+
+    def test_universal_search_unchanged(self):
+        q, kw, used = self._main_query("all")
+        self.assertNotIn("(prov)", q)
+        self.assertNotIn("exclusive_labels", kw)
+        self.assertNotIn("shared_labels", kw)
+
+
 if __name__ == "__main__":
     unittest.main()

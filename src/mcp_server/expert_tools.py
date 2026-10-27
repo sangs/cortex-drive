@@ -156,7 +156,24 @@ class ExpertTools:
         """
         return query.replace("{sec_anchor}", self._get_security_clause("anchor")).replace("{sec_expanded}", self._get_security_clause("expandedNode")).replace("{sec_parent}", self._get_security_clause("parentEpisode"))
 
-    def _fragment_neighbor_aggregation(self) -> str:
+    def _provenance_clause(self, var: str, domain: str) -> str:
+        """M5-4 (design §1.3.5): in a single-domain search a shared-label node (Concept, Technology,
+        Person, Topic, ReferenceLink) qualifies for the domain only if it is SYSTEM/PUBLIC or linked to a
+        node whose label is exclusive to that domain. Returns "" for "all"/unknown domains (universal
+        discovery unchanged). Uses $shared_labels / $exclusive_labels — pass _provenance_params()."""
+        from domain_registry import get_exclusive_labels
+        if not get_exclusive_labels(domain):
+            return ""
+        return (f"AND ({var}.tenant_id IN ['SYSTEM', 'PUBLIC']"
+                f" OR NOT any(l IN labels({var}) WHERE l IN $shared_labels)"
+                f" OR EXISTS {{ MATCH ({var})--(prov) WHERE any(l IN labels(prov) WHERE l IN $exclusive_labels) }})")
+
+    def _provenance_params(self, domain: str) -> dict:
+        from domain_registry import get_exclusive_labels, SHARED_ENTITY_LABELS
+        exclusive = get_exclusive_labels(domain)
+        return {"shared_labels": SHARED_ENTITY_LABELS, "exclusive_labels": exclusive} if exclusive else {}
+
+    def _fragment_neighbor_aggregation(self, provenance: str = "") -> str:
         import json
         from domain_registry import get_bridge_label_string
         from schema_guard import TRAVERSAL_RELATIONSHIPS
@@ -170,6 +187,7 @@ class ExpertTools:
           AND ({security_clause})
           AND NOT neighbor:{bridge_labels}
           AND ($allowed_labels IS NULL OR any(label IN labels(neighbor) WHERE label IN $allowed_labels))
+          {provenance}
 
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
 
@@ -192,7 +210,8 @@ class ExpertTools:
              collect(DISTINCT tech.name) AS technologies,
              collect(DISTINCT (CASE WHEN r.start IS NOT NULL OR r.end IS NOT NULL OR r.date IS NOT NULL THEN {rel_start: r.start, rel_end: r.end, rel_date: r.date, rel_title: coalesce(r.title, r.role)} ELSE null END)) AS relDates
         """
-        return query.replace("{whitelist}", whitelist).replace("{security_clause}", self._get_security_clause("neighbor")).replace("{bridge_labels}", bridge_labels)
+        return (query.replace("{whitelist}", whitelist).replace("{security_clause}", self._get_security_clause("neighbor"))
+                .replace("{bridge_labels}", bridge_labels).replace("{provenance}", provenance))
 
     def _fragment_narrative_aggregation(self) -> str:
         # NOTE (2026-08-03): `:Note`/`HAS_NOTE` are never created anywhere in this codebase —
@@ -1629,6 +1648,7 @@ class ExpertTools:
 
         MATCH (node:{match_label_string})
         WHERE ({self._get_security_clause("node")})
+          {self._provenance_clause("node", domain_intent)}
           AND (
                 elementId(node) IN expanded_ids
                 OR toLower(node.name) CONTAINS toLower($keyword) 
@@ -1637,7 +1657,7 @@ class ExpertTools:
                 OR any(word IN $keywords WHERE toLower(word) = toLower(labels(node)[0]))
           )
         
-        {self._fragment_neighbor_aggregation()}
+        {self._fragment_neighbor_aggregation(self._provenance_clause("neighbor", domain_intent))}
         {self._fragment_narrative_aggregation()}
         
         WITH collect(DISTINCT node) AS matchedNodes,
@@ -1834,7 +1854,8 @@ class ExpertTools:
                 owner_id=os.environ.get("OWNER_USER_ID"),
                 neighbor_limit=neighbor_limit,
                 expansion_limit=expansion_limit,
-                semantic_seed_ids=semantic_seed_ids
+                semantic_seed_ids=semantic_seed_ids,
+                **self._provenance_params(domain_intent),
             )
 
             # --- SELF-CORRECTION FALLBACK (Chunk-only — see comment above embedding=None) ---
