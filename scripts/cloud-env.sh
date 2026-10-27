@@ -39,6 +39,25 @@ export CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:cortex-openfga-db"
 # Current version loaded: 2026-06-30
 export PERMIFY_SCHEMA_VERSION="d922hd29io6g008ivglg"
 
+# --- Document sources (S2-19; documents/architecture/document-sources-capability-and-operations.md) ---
+# One switch for the whole capability. "true" = Add Source → Document, the ingest queue, and document
+# questions (search, citations, graph). Switched on 2026-10-27 (user-approved). To switch off, set
+# "false" and redeploy cortex-mcp, the worker, cortex-gateway and cortex-ui.
+export DOCUMENTS_ENABLED="${DOCUMENTS_ENABLED:-true}"
+# Queue settings the MCP server and the worker use to start ingest jobs (worker/enqueue.py).
+export DOCUMENT_INGEST_QUEUE="cortex-document-ingest"
+export DOCUMENT_INGEST_JOB="cortex-ingest-worker"
+export DOCUMENT_INGEST_INVOKER_SA="377406326936-compute@developer.gserviceaccount.com"
+if [ "$DOCUMENTS_ENABLED" = "true" ]; then
+    export DOCUMENT_INGEST_MODE="cloud_tasks"
+    export ENABLE_DOCUMENT_DOMAIN="true"
+else
+    export DOCUMENT_INGEST_MODE=""
+    export ENABLE_DOCUMENT_DOMAIN="false"
+fi
+# Plain env vars shared by cortex-mcp and the worker (appended to their NEW_ENV_VARS).
+export DOCUMENT_ENV_VARS="DOCUMENT_INGEST_MODE=${DOCUMENT_INGEST_MODE},DOCUMENT_INGEST_PROJECT=${PROJECT_ID},DOCUMENT_INGEST_REGION=${REGION},DOCUMENT_INGEST_QUEUE=${DOCUMENT_INGEST_QUEUE},DOCUMENT_INGEST_JOB=${DOCUMENT_INGEST_JOB},DOCUMENT_INGEST_INVOKER_SA=${DOCUMENT_INGEST_INVOKER_SA},ENABLE_DOCUMENT_DOMAIN=${ENABLE_DOCUMENT_DOMAIN}"
+
 # ── Clerk publishable key (read from gitignored clerk-prod env file) ──────────
 # Never hardcoded here — sourced from the existing file on this machine.
 CLERK_ENV_FILE="${REPO}/cortex-chat-ui/.env.local.clerk-prod"

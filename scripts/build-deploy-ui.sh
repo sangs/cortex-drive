@@ -41,6 +41,8 @@ steps:
     - 'NEXT_PUBLIC_GATEWAY_URL=${API_DOMAIN}'
     - '--build-arg'
     - 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PK}'
+    - '--build-arg'
+    - 'NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES=${DOCUMENTS_ENABLED:?run: source scripts/cloud-env.sh}'
     - '-t'
     - '${REGISTRY}/cortex-ui:latest'
     - '.'

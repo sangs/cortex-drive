@@ -26,7 +26,8 @@ gcloud builds submit \
 # it, so anything live but missing from this string is silently dropped on deploy.
 NEW_ENV_VARS="PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
 ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true},\
-ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH=${ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH:-true}"
+ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH=${ENABLE_SEMANTIC_SEARCH_ENTERPRISE_GRAPH:-true},\
+${DOCUMENT_ENV_VARS:?run: source scripts/cloud-env.sh}"
 
 # --- Env-var drift guard --------------------------------------------------
 # Same incident class as cortex-gateway's build-deploy-gateway.sh (2026-09-08):

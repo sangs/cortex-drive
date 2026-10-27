@@ -5,6 +5,8 @@ RUN npm ci
 COPY . .
 ARG NEXT_PUBLIC_GATEWAY_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# Document sources switch (S2-19), inlined at build time; set from scripts/cloud-env.sh DOCUMENTS_ENABLED.
+ARG NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES=false
 RUN npm run build
 
 FROM node:20-alpine AS runner
