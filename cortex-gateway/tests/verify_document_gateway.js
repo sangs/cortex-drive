@@ -81,7 +81,8 @@ const intentEnum = tools => tools.find(t => t.function.name === 'search_enterpri
         block(7, 'A chart of latency.', { label: 'AI-generated figure description (from the figure on p. 7)' })], cited_sources: [] });
     const content = buildDocumentEvidenceContent(payload);
     ok(content.startsWith('Document search returned 2 evidence block(s).'), 'deduplicated per source::page::text');
-    ok(content.includes('[1] [Kafka Report, version 2026-10-20, p. 3, section "Results"] cite_url: https://example.com/k.pdf#page=3'), 'citation line');
+    ok(content.includes('- Cite as: [Kafka Report, version 2026-10-20, p. 3, section "Results"](https://example.com/k.pdf#page=3)'), 'citation line');
+    ok(!/\[\d+\]/.test(content), 'no [n] numbering for the LLM to copy');
     ok(content.includes('(AI-generated figure description (from the figure on p. 7))'), 'vlm label carried to the LLM');
     ok(!content.includes('"cited_sources"'), 'never the raw payload (AP-4)');
     eq(buildDocumentEvidenceContent(JSON.stringify({ blocks: [] })), 'Document search returned 0 evidence blocks.', 'empty');
@@ -108,6 +109,11 @@ const intentEnum = tools => tools.find(t => t.function.name === 'search_enterpri
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'), 'utf8');
     ok(/register_website_source', authMiddleware, requireSourceWriter, requireVisibilityChoice/.test(src), 'website route checks visibility');
     ok(/register_document_source', authMiddleware, requireSourceWriter, requireVisibilityChoice/.test(src), 'document route checks visibility');
+
+    const { countsAsEvidenceOnTurn } = require('../utils/document_evidence.js');
+    eq([countsAsEvidenceOnTurn('document', 'search_document_blocks'), countsAsEvidenceOnTurn('document', 'search_enterprise_graph'),
+        countsAsEvidenceOnTurn('podcast', 'search_enterprise_graph')], [true, false, true], 'document turns: only passages count as evidence (AP-25)');
+    ok(/countsAsEvidenceOnTurn\(domainSignal, toolName\) && toolResultHasEvidence/.test(src), 'index.js applies it to the backstop');
 
     console.log(`verify_document_gateway: ${passed} checks passed`);
 })().catch(err => { console.error('FAIL:', err.message); process.exit(1); });

@@ -38,12 +38,12 @@ def row(bid, source="d1", page=1, text="passage", derived_by="text", mime="appli
             "revision_date": "2026-10-20T00:00:00Z", "section": "Intro", "score": 0.9}
 
 
-def tools(user=OWNER, guest="", allowed=None, vector=(), keyword=(), fail=False):
+def tools(user=OWNER, guest="", allowed=None, vector=(), keyword=(), any_word=(), fail=False):
     t = ExpertTools.__new__(ExpertTools)
     t.tenant_id, t.requesting_user_id, t.guest_share_anchor, t.allowed_ids = TEST_TENANT_ID, user, guest, allowed
     t.get_embedding = mock.MagicMock(return_value=[0.1] * 3)
     t.driver = mock.MagicMock()
-    results = [mock.MagicMock(records=list(vector)), mock.MagicMock(records=list(keyword))]
+    results = [mock.MagicMock(records=list(vector)), mock.MagicMock(records=list(keyword)), mock.MagicMock(records=list(any_word))]
     if fail:
         t.driver.execute_query.side_effect = RuntimeError("index missing")
     else:
@@ -90,8 +90,23 @@ class QueryShapeTest(unittest.TestCase):
 
     def test_keyword_syntax_escaped(self):
         t = tools()
-        t.search_document_blocks('What is "Kafka: Streams"? (v2) [beta]')
-        self.assertEqual(calls(t)[1][1]["lucene"], "What is Kafka Streams v2 beta")
+        t.search_document_blocks('What is "Kafka: Streams"? (v2) [beta-feature]')
+        # meaningful words only, syntax characters removed, hyphenated words split; all words required first
+        self.assertEqual(calls(t)[1][1]["lucene"], "kafka AND streams AND beta AND feature")
+        self.assertEqual(calls(t)[2][1]["lucene"], "kafka OR streams OR beta OR feature")  # fallback (no all-word hit)
+
+    def test_fragments_excluded_in_both_queries(self):  # A
+        from schema_guard import DOCUMENT_EVIDENCE_MIN_CHARS
+        t = tools(keyword=[row("k")])
+        t.search_document_blocks("kafka throughput")
+        for query, kwargs in calls(t):
+            self.assertIn("size(coalesce(b.text, '')) >= $min_chars OR b.description IS NOT NULL", query)
+            self.assertEqual(kwargs["min_chars"], DOCUMENT_EVIDENCE_MIN_CHARS)
+
+    def test_any_word_fallback_only_when_no_all_word_match(self):  # B
+        t = tools(keyword=[row("k")])
+        t.search_document_blocks("kafka throughput")
+        self.assertEqual(len(calls(t)), 2, "all-word match found → no any-word query")
 
     def test_question_of_only_symbols_skips_keyword_query(self):
         t = tools(vector=[row("a")])
@@ -103,7 +118,7 @@ class QueryShapeTest(unittest.TestCase):
 class FusionAndCitationTest(unittest.TestCase):
     def test_rrf_prefers_blocks_found_by_both(self):
         t = tools(vector=[row("a"), row("b")], keyword=[row("b"), row("c")])
-        out = t.search_document_blocks("q")
+        out = t.search_document_blocks("kafka streams")
         self.assertEqual(out["blocks"][0]["citation"]["source_id"], "d1")
         order = [b["score"] for b in out["blocks"]]
         self.assertEqual(order, sorted(order, reverse=True))
@@ -133,6 +148,17 @@ class FusionAndCitationTest(unittest.TestCase):
         self.assertEqual(b["label"], "AI-generated figure description (from the figure on p. 4)")
         self.assertEqual(len(b["text"]), DOCUMENT_EVIDENCE_MAX_CHARS)
 
+    def test_relevance_floor(self):  # C
+        import schema_guard
+        low = dict(row("v-low"), score=0.40)
+        high = dict(row("v-high", source="d2"), score=0.95)
+        with mock.patch.object(schema_guard, "DOCUMENT_VECTOR_MIN_SIMILARITY", 0.66):
+            out = tools(vector=[high, low], any_word=[row("or-only", source="d3")]).search_document_blocks("kafka throughput")
+            self.assertEqual([b["citation"]["source_id"] for b in out["blocks"]], ["d2"], "below-floor and any-word-only passages dropped")
+            out = tools(vector=[low], keyword=[row("k", source="d4")]).search_document_blocks("kafka throughput")
+            self.assertEqual([b["citation"]["source_id"] for b in out["blocks"]], ["d4"], "an all-word match qualifies regardless of the floor")
+            self.assertEqual(tools(vector=[low]).search_document_blocks("quantum cryptography")["blocks"], [], "unrelated → no blocks")
+
     def test_failures_in_band(self):
         self.assertIn("error", tools(fail=True).search_document_blocks("q"))
         self.assertIn("error", tools().search_document_blocks("   "))
@@ -144,11 +170,12 @@ class FakeNode(dict):
         self.element_id, self.labels = eid, frozenset(labels) if len(labels) > 1 else labels
 
 
-def graph_tools(records, user=OWNER, allowed=None):
+def graph_tools(records, user=OWNER, allowed=None, ranked=("d1",)):
     t = ExpertTools.__new__(ExpertTools)
     t.tenant_id, t.requesting_user_id, t.guest_share_anchor, t.allowed_ids = TEST_TENANT_ID, user, "", allowed
     t.driver = mock.MagicMock()
     t.driver.execute_query.return_value = mock.MagicMock(records=records)
+    t._rank_documents = mock.MagicMock(return_value=list(ranked))
     return t
 
 
@@ -177,15 +204,43 @@ class DocumentGraphTest(unittest.TestCase):
         ids = {n["id"] for n in out["nodes"]}
         self.assertTrue(all(l["source"] in ids and l["target"] in ids for l in out["links"]))
 
-    def test_query_params_and_security_per_role(self):
+    def test_no_ranked_documents_means_empty_graph(self):
+        t = graph_tools([], ranked=())
+        self.assertEqual(t._search_document_graph("kafka"), {"nodes": [], "links": []})
+        t.driver.execute_query.assert_not_called()
+
+    def test_details_query_params_and_security_per_role(self):
         t = graph_tools([], user=INVITEE, allowed=["x"])
         t._search_document_graph("Kafka  Report")
         query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
         self.assertEqual(set(re.findall(r"\$(\w+)", query)), set(kwargs))  # AP-2
-        self.assertEqual(kwargs["keyword"], "kafka report")
+        self.assertEqual((kwargs["words"], kwargs["doc_ids"]), (["kafka"], ["d1"]))  # "report" is generic
         for var in ("d", "s", "e"):
             self.assertIn(f"({var}.node_id IN $allowed_ids OR {var}.tenant_id IN ['SYSTEM', 'PUBLIC'])", query)
         self.assertIn("s.revision_id = d.current_snapshot_id", query)
+
+    def test_keyword_words(self):
+        t = graph_tools([], user=OWNER)
+        for kw, words in [("Gradle build configuration", ["gradle", "build", "configuration"]),
+                          ("What does the document say about the masked language model?", ["masked", "language", "model"]),
+                          ("document", []), ("", []), ("On page 2, the table", [])]:
+            t._rank_documents.reset_mock()
+            t._search_document_graph(kw)
+            self.assertEqual(t._rank_documents.call_args[0][0], words, kw)
+
+    def test_rank_puts_cited_documents_first(self):
+        t = ExpertTools.__new__(ExpertTools)
+        t.tenant_id, t.requesting_user_id, t.guest_share_anchor, t.allowed_ids = TEST_TENANT_ID, OWNER, "", None
+        t.search_document_blocks = mock.MagicMock(return_value={"blocks": [
+            {"citation": {"source_id": "dB"}}, {"citation": {"source_id": "dB"}}, {"citation": {"source_id": "dA"}}]})
+        t.driver = mock.MagicMock()
+        t.driver.execute_query.return_value = mock.MagicMock(records=[{"id": "dC"}, {"id": "dA"}])
+        self.assertEqual(t._rank_documents(["kafka"]), ["dB", "dA", "dC"])
+        query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
+        self.assertEqual(set(re.findall(r"\$(\w+)", query)), set(kwargs))  # AP-2
+        t.search_document_blocks.reset_mock()
+        t._rank_documents([])
+        t.search_document_blocks.assert_not_called()  # no words → recency only, no embedding call
 
 
 class McpToolFlagTest(unittest.TestCase):

@@ -624,6 +624,18 @@ class ExpertTools:
     # ── Phase B M5: document evidence (phase-b-m5-document-query-design-2026-10-21.md §1.3.2/§1.3.4) ──
     _LUCENE_SPECIAL = re.compile(r'[+\-&|!(){}\[\]^"~*?:\\/]')
 
+    @staticmethod
+    def _meaningful_words(text: str) -> list:
+        """Lower-case words of a question/keyword, minus filler and generic document words
+        (DOCUMENT_GRAPH_IGNORED_WORDS) and very short words. Shared by the evidence tool's keyword search
+        and the document graph view, so both read a question the same way."""
+        from schema_guard import DOCUMENT_GRAPH_IGNORED_WORDS, DOCUMENT_GRAPH_MIN_WORD_CHARS
+        ignored, words = set(DOCUMENT_GRAPH_IGNORED_WORDS), []
+        for w in re.findall(r"[\w\-]+", (text or "").lower()):
+            if len(w) >= DOCUMENT_GRAPH_MIN_WORD_CHARS and w not in ignored and w not in words:
+                words.append(w)
+        return words
+
     def _document_block_scope(self) -> str:
         """Shared tail of both document searches: the block must sit in the document's CURRENT revision,
         and the caller must be allowed to see both the block and its DocumentSource (security clause on
@@ -631,6 +643,7 @@ class ExpertTools:
         return f"""
             MATCH (d:DocumentSource)-[:HAS_SECTION]->(sec:Section)-[:HAS_BLOCK]->(b)
             WHERE b.revision_id = d.current_snapshot_id
+              AND (size(coalesce(b.text, '')) >= $min_chars OR b.description IS NOT NULL)
               AND {self._get_security_clause("b")}
               AND {self._get_security_clause("d")}
             OPTIONAL MATCH (d)-[:HAS_SNAPSHOT]->(snap:SourceSnapshot {{node_id: d.current_snapshot_id}})
@@ -651,7 +664,7 @@ class ExpertTools:
         Failures are returned in-band as {"error": ...} (AP-22)."""
         from schema_guard import (DOCUMENT_SEARCH_TOP_K, DOCUMENT_SEARCH_MAX_PER_SOURCE, DOCUMENT_EVIDENCE_MAX_CHARS,
                                   DOCUMENT_SEARCH_RRF_K, DOCUMENT_BLOCK_VECTOR_INDEX, DOCUMENT_BLOCK_TEXT_INDEX,
-                                  DOCUMENT_PDF_MIME_TYPES)
+                                  DOCUMENT_PDF_MIME_TYPES, DOCUMENT_EVIDENCE_MIN_CHARS, DOCUMENT_VECTOR_MIN_SIMILARITY)
         from domain_registry import SEMANTIC_OVERFETCH_MULTIPLIER
         question = (question or "").strip()
         if not question:
@@ -663,22 +676,36 @@ class ExpertTools:
                         "YIELD node AS b, score " + scope + " LIMIT $candidates")
         keyword_query = ("CALL db.index.fulltext.queryNodes($text_index, $lucene) YIELD node AS b, score "
                          "WITH b, score LIMIT $candidates " + scope)
-        lucene = " ".join(self._LUCENE_SPECIAL.sub(" ", question).split())
+        # B: keyword search requires ALL meaningful words; ANY word is a fallback used only for ranking.
+        words = [part for w in self._meaningful_words(question) for part in self._LUCENE_SPECIAL.sub(" ", w).split()]
         try:
             embedding = self.get_embedding(question)
-            ranked = [self._exec_query(vector_query, vector_index=DOCUMENT_BLOCK_VECTOR_INDEX, candidates=candidates,
-                                       embedding=embedding, **self._security_params()).records]
-            if lucene:
-                ranked.append(self._exec_query(keyword_query, text_index=DOCUMENT_BLOCK_TEXT_INDEX, lucene=lucene,
-                                               candidates=candidates, **self._security_params()).records)
+            vector = self._exec_query(vector_query, vector_index=DOCUMENT_BLOCK_VECTOR_INDEX, candidates=candidates,
+                                      embedding=embedding, min_chars=DOCUMENT_EVIDENCE_MIN_CHARS,
+                                      **self._security_params()).records
+            all_words, any_word = [], []
+            if words:
+                all_words = self._exec_query(keyword_query, text_index=DOCUMENT_BLOCK_TEXT_INDEX, lucene=" AND ".join(words),
+                                             candidates=candidates, min_chars=DOCUMENT_EVIDENCE_MIN_CHARS,
+                                             **self._security_params()).records
+                if not all_words and len(words) > 1:
+                    any_word = self._exec_query(keyword_query, text_index=DOCUMENT_BLOCK_TEXT_INDEX, lucene=" OR ".join(words),
+                                                candidates=candidates, min_chars=DOCUMENT_EVIDENCE_MIN_CHARS,
+                                                **self._security_params()).records
         except Exception as e:
             print(f"[DOCS] search_document_blocks failed: {e}")
             return {"error": f"document search failed: {e}"}
 
+        # C: relevance floor — a passage qualifies only if it matched all the words, or its vector similarity
+        # reaches DOCUMENT_VECTOR_MIN_SIMILARITY. Unrelated questions therefore return no blocks, and the
+        # gateway's "No data found in Cortex-Drive" backstop (AP-25) applies to documents too.
+        qualified = {r["block_id"] for r in all_words} | {r["block_id"] for r in vector if r["score"] >= DOCUMENT_VECTOR_MIN_SIMILARITY}
         fused, rows = {}, {}
-        for records in ranked:
+        for records in (vector, all_words or any_word):
             for rank, r in enumerate(records):
                 bid = r["block_id"]
+                if bid not in qualified:
+                    continue
                 fused[bid] = fused.get(bid, 0.0) + 1.0 / (rank + 1 + DOCUMENT_SEARCH_RRF_K)
                 rows.setdefault(bid, r)
 
@@ -1509,41 +1536,70 @@ class ExpertTools:
     def _inject_federated_demo_boost(self) -> str:
         return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
 
+    def _rank_documents(self, words: list) -> list:
+        """Document node_ids for the graph view, best first (step 9 finding, 2026-10-27). First the documents
+        whose passages the evidence tool cites for the same words (same hybrid search as
+        search_document_blocks, so the graph matches the chat's citations), then documents whose title /
+        current section titles / linked entity names contain any of the words, then by recency.
+        No words → the most recent documents. Visibility rule on every document and passage."""
+        from schema_guard import DOCUMENT_GRAPH_MAX_DOCS, DOCUMENT_ENTITY_RELATIONSHIPS
+        cited = []
+        if words:
+            evidence = self.search_document_blocks(" ".join(words))
+            for b in evidence.get("blocks", []):
+                sid = b["citation"]["source_id"]
+                if sid not in cited:
+                    cited.append(sid)
+        hits_query = f"""
+            MATCH (d:DocumentSource)
+            WHERE {self._get_security_clause("d")}
+            WITH d, [w IN $words WHERE toLower(coalesce(d.name, '')) CONTAINS w
+                       OR EXISTS {{ MATCH (d)-[:HAS_SECTION]->(s0:Section)
+                                    WHERE s0.revision_id = d.current_snapshot_id
+                                      AND toLower(coalesce(s0.title, '')) CONTAINS w }}
+                       OR EXISTS {{ MATCH (d)-[r0]->(e0) WHERE type(r0) IN $entity_rels
+                                      AND toLower(coalesce(e0.name, '')) CONTAINS w }}] AS hits
+            WHERE size($words) = 0 OR size(hits) > 0
+            RETURN d.node_id AS id, size(hits) AS hits, toString(d.last_synced_at) AS synced
+            ORDER BY hits DESC, synced DESC
+        """
+        others = [r["id"] for r in self._exec_query(hits_query, words=words, entity_rels=DOCUMENT_ENTITY_RELATIONSHIPS,
+                                                     **self._security_params()).records]
+        ranked = cited + [d for d in others if d not in cited]
+        return ranked[:DOCUMENT_GRAPH_MAX_DOCS]
+
     def _search_document_graph(self, keyword: str) -> dict:
         """Graph view for the document domain (§1.3.6): matched DocumentSources (title, a current section
         title, or a linked entity name contains the keyword; none given = most recent), their matching
         current Sections and up to DOCUMENT_GRAPH_MAX_ENTITIES linked entities of THAT document only.
         ContentBlocks are never returned (their text goes to the chat with citations). The caller's
         visibility rule applies to every node (AP-1)."""
-        from schema_guard import (DOCUMENT_GRAPH_MAX_NODES, DOCUMENT_GRAPH_MAX_ENTITIES, DOCUMENT_GRAPH_MAX_DOCS,
+        from schema_guard import (DOCUMENT_GRAPH_MAX_NODES, DOCUMENT_GRAPH_MAX_ENTITIES,
                                   DOCUMENT_GRAPH_MAX_SECTIONS, DOCUMENT_ENTITY_RELATIONSHIPS, DOCUMENT_ENTITY_LABELS)
-        kw = " ".join((keyword or "").lower().split())
-        query = f"""
-            MATCH (d:DocumentSource)
-            WHERE {self._get_security_clause("d")}
-              AND ($keyword = '' OR toLower(coalesce(d.name, '')) CONTAINS $keyword
-                   OR EXISTS {{ MATCH (d)-[:HAS_SECTION]->(s0:Section)
-                                WHERE s0.revision_id = d.current_snapshot_id
-                                  AND toLower(coalesce(s0.title, '')) CONTAINS $keyword }}
-                   OR EXISTS {{ MATCH (d)-[r0]->(e0) WHERE type(r0) IN $entity_rels
-                                  AND toLower(coalesce(e0.name, '')) CONTAINS $keyword }})
-            WITH d ORDER BY d.last_synced_at DESC LIMIT $max_docs
-            OPTIONAL MATCH (d)-[:HAS_SECTION]->(s:Section)
-              WHERE s.revision_id = d.current_snapshot_id AND $keyword <> ''
-                AND toLower(coalesce(s.title, '')) CONTAINS $keyword
-                AND {self._get_security_clause("s")}
-            WITH d, collect(DISTINCT s)[..$max_sections] AS sections
-            OPTIONAL MATCH (d)-[r]->(e)
-              WHERE type(r) IN $entity_rels AND any(l IN labels(e) WHERE l IN $entity_labels)
-                AND {self._get_security_clause("e")}
-            WITH d, sections, collect(DISTINCT {{node: e, rel: type(r)}})[..$max_entities] AS entities
-            RETURN d, sections, entities
-        """
+        words = self._meaningful_words(keyword)
         try:
-            records = self._exec_query(query, keyword=kw, entity_rels=DOCUMENT_ENTITY_RELATIONSHIPS,
-                                       entity_labels=DOCUMENT_ENTITY_LABELS, max_docs=DOCUMENT_GRAPH_MAX_DOCS,
-                                       max_sections=DOCUMENT_GRAPH_MAX_SECTIONS, max_entities=DOCUMENT_GRAPH_MAX_ENTITIES,
-                                       **self._security_params()).records
+            doc_ids = self._rank_documents(words)
+            if not doc_ids:
+                return {"nodes": [], "links": []}
+            query = f"""
+                MATCH (d:DocumentSource)
+                WHERE d.node_id IN $doc_ids AND {self._get_security_clause("d")}
+                OPTIONAL MATCH (d)-[:HAS_SECTION]->(s:Section)
+                  WHERE s.revision_id = d.current_snapshot_id AND size($words) > 0
+                    AND any(w IN $words WHERE toLower(coalesce(s.title, '')) CONTAINS w)
+                    AND {self._get_security_clause("s")}
+                WITH d, collect(DISTINCT s)[..$max_sections] AS sections
+                OPTIONAL MATCH (d)-[r]->(e)
+                  WHERE type(r) IN $entity_rels AND any(l IN labels(e) WHERE l IN $entity_labels)
+                    AND {self._get_security_clause("e")}
+                WITH d, sections, collect(DISTINCT {{node: e, rel: type(r)}})[..$max_entities] AS entities
+                RETURN d, sections, entities
+            """
+            records = self._exec_query(query, doc_ids=doc_ids, words=words, entity_rels=DOCUMENT_ENTITY_RELATIONSHIPS,
+                                       entity_labels=DOCUMENT_ENTITY_LABELS, max_sections=DOCUMENT_GRAPH_MAX_SECTIONS,
+                                       max_entities=DOCUMENT_GRAPH_MAX_ENTITIES, **self._security_params()).records
+            order = {d: i for i, d in enumerate(doc_ids)}
+            records = sorted(records, key=lambda r: order.get(dict(r["d"]).get("node_id"), len(order)))
         except Exception as e:
             print(f"[DOCS] document graph failed: {e}")
             return {"error": f"document graph failed: {e}"}

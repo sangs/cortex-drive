@@ -6,7 +6,7 @@ const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } 
 const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
 const { fetchWithColdStartRetry } = require('./utils/upstream_fetch.js');
 
-const { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls, documentResultHasEvidence } = require('./utils/document_evidence');
+const { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls, documentResultHasEvidence, countsAsEvidenceOnTurn } = require('./utils/document_evidence');
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
@@ -3644,7 +3644,7 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                         // toolContent here is post-domain-guard — exactly what the LLM receives.
                         dataToolCalls++;
-                        if (toolResultHasEvidence(toolName, toolContent)) groundingEvidence++;
+                        if (countsAsEvidenceOnTurn(domainSignal, toolName) && toolResultHasEvidence(toolName, toolContent)) groundingEvidence++;
 
                         messages.push({
                             role: "tool",

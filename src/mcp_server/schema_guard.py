@@ -728,3 +728,22 @@ SOURCE_VISIBILITY_DEFAULT = SOURCE_VISIBILITY_PRIVATE
 # IngestionEngine's default when a caller doesn't say (podcast/seed scripts): unchanged pre-M5 behaviour.
 INGESTION_ENGINE_DEFAULT_VISIBILITY = SOURCE_VISIBILITY_ORGANIZATION
 PUBLIC_TENANT_ID = 'PUBLIC'
+# Words ignored when matching the document graph view's keyword (step 9 finding, 2026-10-27: the LLM passes
+# phrases such as "Gradle build configuration"; matching the whole phrase found nothing). Filler words plus
+# generic document words — a document is matched if ANY remaining word appears in its title, a current
+# section title, or a linked entity name; no remaining word → the most recent documents.
+DOCUMENT_GRAPH_IGNORED_WORDS = [
+    'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'to', 'for', 'with', 'by', 'from', 'about', 'what', 'how',
+    'does', 'do', 'is', 'are', 'say', 'says', 'said', 'show', 'shows', 'document', 'documents', 'pdf', 'report',
+    'paper', 'deck', 'slides', 'slide', 'whitepaper', 'manual', 'page', 'pages', 'table', 'figure', 'section',
+]
+DOCUMENT_GRAPH_MIN_WORD_CHARS = 3
+# Step 9 retrieval fixes (user-approved 2026-10-27):
+DOCUMENT_EVIDENCE_MIN_CHARS = 30          # A: blocks shorter than this (code tokens, list items) are not evidence,
+                                          #    unless they carry a figure description
+DOCUMENT_VECTOR_MIN_SIMILARITY = 0.70     # C: relevance floor — a passage qualifies if it matched ALL the question's
+                                          #    meaningful words, or its vector similarity is >= this. Calibrated 2026-10-27
+                                          #    on 9 documents / 26 questions: relevant typed/scanned 0.75–0.90, unrelated
+                                          #    0.58–0.70, handwritten 0.64–0.68 (below: tracked as S2-57). Same value as
+                                          #    SEMANTIC_CANDIDATE_MIN_SIMILARITY. Evidence:
+                                          #    documents/eval/document-relevance-floor-calibration-2026-10-27.md

@@ -29,9 +29,10 @@ function buildDocumentEvidenceContent(toolContent) {
         const where = [`${c.source_name || 'document'}`, c.revision_date ? `version ${String(c.revision_date).slice(0, 10)}` : null,
             c.page ? `p. ${c.page}` : null, c.section ? `section "${c.section}"` : null].filter(Boolean).join(', ');
         const label = b.label ? ` (${b.label})` : '';
-        lines.push(`[${lines.length + 1}] [${where}]${label} cite_url: ${c.cite_url || ''}\n${b.text || ''}`);
+        // No [n] numbering: the LLM copied the numbers instead of the citation (M5 step 9 finding).
+        lines.push(`- Cite as: [${where}](${c.cite_url || ''})${label}\n  ${b.text || ''}`);
     }
-    return `Document search returned ${lines.length} evidence block(s). Cite each fact with its bracketed citation and cite_url exactly as given:\n${lines.join('\n\n')}`;
+    return `Document search returned ${lines.length} evidence block(s). Cite every fact with the "Cite as" text and link exactly as given (never a number):\n${lines.join('\n\n')}`;
 }
 
 
@@ -45,8 +46,16 @@ function documentEvidenceUrls(parsed) {
     return urls;
 }
 
+/**
+ * AP-25 for document turns (M5 step 9 finding): only passages support a document answer. A graph result
+ * (the DocumentSource node and its terms) alone must not count, or the LLM fills the gap from training data.
+ */
+function countsAsEvidenceOnTurn(domainSignal, toolName) {
+    return domainSignal !== 'document' || toolName === DOCUMENT_SEARCH_TOOL;
+}
+
 function documentResultHasEvidence(parsed) {
     return Boolean(parsed && !parsed.error && Array.isArray(parsed.blocks) && parsed.blocks.length > 0);
 }
 
-module.exports = { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls, documentResultHasEvidence };
+module.exports = { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls, documentResultHasEvidence, countsAsEvidenceOnTurn };
