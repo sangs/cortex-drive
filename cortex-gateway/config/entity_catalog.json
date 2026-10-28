@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-27T22:57:03.142915+00:00",
-  "node_count": 46,
+  "generated_at": "2026-10-28T00:24:06.732491+00:00",
+  "node_count": 47,
   "domains": {
     "career": [
       "Capital Attribution & Market Risk Data Platform",
@@ -54,7 +54,9 @@
       "Apache Iceberg",
       "Graph database"
     ],
-    "document": []
+    "document": [
+      "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+    ]
   },
   "persons": [
     "Ben Lorica",
@@ -64,9 +66,14 @@
     "David Soria Parra",
     "Edgar F. Codd",
     "Hannes M\u00fchleisen",
+    "Hendrycks and Gimpel",
+    "Jacob Devlin",
     "Jordi Mon Companys",
+    "Kenton Lee",
+    "Kristina Toutanova",
     "Lee Atchison",
     "Mark Raasveldt",
+    "Ming-Wei Chang",
     "Prashanth Rao",
     "Ryan Blue",
     "Sangeetha Ramadurai",
