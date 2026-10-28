@@ -8,6 +8,7 @@
  * Pure functions only (utils/graphConstants.ts); the collapse step mirrors handleNodeDoubleClick.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
     finalizeGraphForRender, mergeFragmentNodes, clampZoom,
     GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM,
@@ -96,5 +97,16 @@ const fragment = {
 eq(clampZoom(6, GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM), 1, 'small graph: never zoomed in past normal size');
 eq(clampZoom(0.08, GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM), 0.35, 'large graph: never below the readable floor');
 eq(clampZoom(0.6, GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM), 0.6, 'in range: unchanged');
+
+// ── collapse reads its refs before scheduling the state update (event-order loophole) ───────────
+{
+    const src = readFileSync(new URL('../app/dashboard/page.tsx', import.meta.url), 'utf8');
+    const start = src.indexOf('if (expandedNodes.current.has(nodeKey)) {');
+    const block = src.slice(start, src.indexOf('expansionContributions.current.delete(nodeKey);', start));
+    ok(start > 0 && block.indexOf('const toRemove') > 0 && block.indexOf('const toRemove') < block.indexOf('setGraphData('),
+       'collapse computes what to remove before setGraphData (its updater may run after the refs are cleared)');
+    ok(src.indexOf('if (expandedNodes.current.has(nodeKey)) {') < src.indexOf('if (!freshNode.isGrouper && !freshNode.isExpandable)'),
+       'collapse is checked before the expandability check');
+}
 
 console.log(`verify_graph_expand_collapse: ${passed} checks passed`);

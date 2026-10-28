@@ -810,15 +810,20 @@ export default function DashboardPage() {
         // Checked FIRST, before the expandability check (2026-10-28): an expansion re-derives the
         // node's flags, so an expanded node must collapse whatever its flags say now.
         if (expandedNodes.current.has(nodeKey)) {
+            // Work out what to remove NOW, from the refs, before they are cleared below (2026-10-28).
+            // setGraphData's updater runs later, at render time, whenever other updates are already
+            // queued (a double-click always follows two clicks) — it used to read the refs there,
+            // after the deletes, find nothing and remove nothing. It only worked when React happened
+            // to run the updater eagerly.
+            const contributed = expansionContributions.current.get(nodeKey) || new Set<string>();
+            // Nodes shared with other expanded nodes must not be removed
+            const sharedIds = new Set<string>();
+            expandedNodes.current.forEach(otherId => {
+                if (otherId === nodeKey) return;
+                (expansionContributions.current.get(otherId) || new Set()).forEach(id => sharedIds.add(id));
+            });
+            const toRemove = new Set([...contributed].filter(id => !sharedIds.has(id)));
             setGraphData(prev => {
-                const contributed = expansionContributions.current.get(nodeKey) || new Set<string>();
-                // Nodes shared with other expanded nodes must not be removed
-                const sharedIds = new Set<string>();
-                expandedNodes.current.forEach(otherId => {
-                    if (otherId === nodeKey) return;
-                    (expansionContributions.current.get(otherId) || new Set()).forEach(id => sharedIds.add(id));
-                });
-                const toRemove = new Set([...contributed].filter(id => !sharedIds.has(id)));
                 const newNodes = prev.nodes
                     .filter((n: any) => !toRemove.has(n.id))
                     .map((n: any) => n.id === nodeKey ? { ...n, isExpanded: false } : n);
