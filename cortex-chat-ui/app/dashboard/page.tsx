@@ -57,6 +57,7 @@ import {
     domainToBackbone,
     applyAffordanceFlags,
     finalizeGraphForRender,
+    mergeFragmentNodes,
 } from "@/utils/graphConstants";
 
 export default function DashboardPage() {
@@ -90,6 +91,8 @@ export default function DashboardPage() {
     const [focusedNodeIds, setFocusedNodeIds] = useState<Set<string> | null>(null);
     const expansionCache = useRef<Map<string, any>>(new Map());
     const expandedNodes = useRef<Set<string>>(new Set());
+    // Node keys whose server expansion is in progress (double-click guard, 2026-10-28).
+    const expansionInFlight = useRef<Set<string>>(new Set());
     const expansionContributions = useRef<Map<string, Set<string>>>(new Map());
     const isResizing = useRef(false);
 
@@ -221,6 +224,8 @@ export default function DashboardPage() {
             // Start with existing data for additive hydration
             const nodes = existingData ? [...existingData.nodes] : [];
             const links = existingData ? [...existingData.links] : [];
+            // Nodes already on screen are never regrouped by this merge (finalizeGraphForRender keepIds).
+            const alreadyOnScreen = new Set<string>(nodes.map((n: any) => n.id));
 
             // Identity key for recognizing "is this the same entity" across separate fetches
             // (e.g. a node re-queried after a historical conversation snapshot was reloaded).
@@ -257,16 +262,13 @@ export default function DashboardPage() {
 
             // Direct Graph Fragment Handling (e.g. from get_cluster_context / expand_node_topology)
             if (parsedRaw.nodes && Array.isArray(parsedRaw.nodes)) {
-                const allowedIds = new Set<string>();
-                parsedRaw.nodes.forEach((n: any) => {
-                    if (!n.id) return;
-                    if (GRAPH_VISUAL_EXCLUDE.has(n.type)) return;
-                    if (!isAllowed(n.type, n.id)) return;
-                    allowedIds.add(n.id);
-                    const existingIdx = nodes.findIndex(node => nodeKey(node) === nodeKey(n));
-                    if (existingIdx === -1) nodes.push(n);
-                    else nodes[existingIdx] = { ...nodes[existingIdx], ...n };
-                });
+                const incoming = parsedRaw.nodes.filter((n: any) =>
+                    n.id && !GRAPH_VISUAL_EXCLUDE.has(n.type) && isAllowed(n.type, n.id));
+                // A node already on screen keeps its id (2026-10-28): expansion/collapse state is keyed
+                // on it. Fetched links are remapped onto the on-screen ids.
+                const idRemap = mergeFragmentNodes(nodes, incoming);
+                const onScreenId = (id: string) => idRemap.get(id) || id;
+                const allowedIds = new Set<string>(incoming.map((n: any) => onScreenId(n.id)));
 
                 const addLinkToArray = (l: any) => {
                     const exists = links.some(link =>
@@ -281,13 +283,15 @@ export default function DashboardPage() {
                 };
 
                 if (parsedRaw.links && Array.isArray(parsedRaw.links)) {
-                    parsedRaw.links.forEach((l: any) => {
+                    parsedRaw.links.forEach((raw: any) => {
+                        const l = { ...raw, source: onScreenId(raw.source), target: onScreenId(raw.target) };
                         if (backboneOnly && (!allowedIds.has(l.source) || !allowedIds.has(l.target))) return;
                         addLinkToArray(l);
                     });
                 }
                 if (parsedRaw.virtual_links && Array.isArray(parsedRaw.virtual_links)) {
-                    parsedRaw.virtual_links.forEach((l: any) => {
+                    parsedRaw.virtual_links.forEach((raw: any) => {
+                        const l = { ...raw, source: onScreenId(raw.source), target: onScreenId(raw.target) };
                         // Same backbone-membership guard as regular links above (2026-08-29) —
                         // without it, a virtual link whose endpoint didn't survive the type
                         // filter (e.g. a bridge target that's a Topic, not in any backbone set)
@@ -322,7 +326,7 @@ export default function DashboardPage() {
                 // — see graphConstants.ts for the three-case behavior this replaces (previously
                 // duplicated, with a real behavioral inconsistency, across four call sites in
                 // this function).
-                return finalizeGraphForRender(nodes, links, backboneOnly, backboneSet);
+                return finalizeGraphForRender(nodes, links, backboneOnly, backboneSet, alreadyOnScreen);
             }
 
             const rawResults = Array.isArray(parsedRaw) ? parsedRaw : [parsedRaw];
@@ -511,7 +515,7 @@ export default function DashboardPage() {
             // missing the `|| n.highlighted` exception the other branch had, which the
             // "targeted career query answer" feature (gateway sets highlighted:true on the
             // answer node) depends on to survive the filter.
-            return finalizeGraphForRender(nodes, finalLinks, backboneOnly, backboneSet);
+            return finalizeGraphForRender(nodes, finalLinks, backboneOnly, backboneSet, alreadyOnScreen);
         } catch (e) {
             console.error("Failed to parse graph data", e);
             return existingData || { nodes: [], links: [] };
@@ -800,17 +804,11 @@ export default function DashboardPage() {
         // Resolve fresh affordance flags from React state — ECharts params.data can be stale.
         const freshNode = graphData.nodes.find(n => n.id === node.id) ?? node;
 
-        // Non-expandable node: open bento if eligible, otherwise ignore double-click.
-        if (!freshNode.isGrouper && !freshNode.isExpandable) {
-            if (freshNode.isBentoEligible) setSelectedNode(freshNode);
-            return;
-        }
-
         const nodeKey = freshNode.id || freshNode.name;
 
         // TOGGLE COLLAPSE: node already expanded → remove contributed children, reset isExpanded.
-        // Checked FIRST so a second double-click on any expanded node (grouper or server-expanded)
-        // always collapses rather than re-entering the expansion path.
+        // Checked FIRST, before the expandability check (2026-10-28): an expansion re-derives the
+        // node's flags, so an expanded node must collapse whatever its flags say now.
         if (expandedNodes.current.has(nodeKey)) {
             setGraphData(prev => {
                 const contributed = expansionContributions.current.get(nodeKey) || new Set<string>();
@@ -834,6 +832,16 @@ export default function DashboardPage() {
             setFocusedNodeIds(() => computeFocusedIds());
             return;
         }
+
+        // Non-expandable node: open bento if eligible, otherwise ignore double-click.
+        if (!freshNode.isGrouper && !freshNode.isExpandable) {
+            if (freshNode.isBentoEligible) setSelectedNode(freshNode);
+            return;
+        }
+
+        // A second double-click while this node's expansion is still loading must not start
+        // another one (it used to re-fetch and re-merge the same expansion).
+        if (expansionInFlight.current.has(nodeKey)) return;
 
         // GROUPER EXPANSION: bloom children from the grouper node — node always stays in graph.
         // All grouper types (Company, ThoughtLeadership, Hackathon, etc.) use the same path:
@@ -889,6 +897,7 @@ export default function DashboardPage() {
         if (freshNode.type === 'Category' && freshNode.name === PROFESSIONAL_EXPERIENCE_CATEGORY) {
             console.log("[DIAG] Professional Experience branch entered. nodeKey:", nodeKey);
             try {
+                expansionInFlight.current.add(nodeKey);
                 setIsProcessing(true);
                 setExpandingNodeKey(nodeKey);
                 const toolResponse = await callTool("get_cluster_context", {
@@ -937,6 +946,7 @@ export default function DashboardPage() {
             } catch (e) {
                 console.error("[DIAG] Professional Experience expansion failed:", e);
             } finally {
+                expansionInFlight.current.delete(nodeKey);
                 setIsProcessing(false);
                 setExpandingNodeKey(null);
             }
@@ -946,6 +956,7 @@ export default function DashboardPage() {
         // EXPAND FROM SERVER: fetch and cache
         try {
             console.log("Expanding topology for:", nodeKey);
+            expansionInFlight.current.add(nodeKey);
             setIsProcessing(true);
             setExpandingNodeKey(nodeKey);
             const toolResponse = await callTool("get_cluster_context", {
@@ -975,6 +986,7 @@ export default function DashboardPage() {
         } catch (e) {
             console.error("Node expansion failed:", e);
         } finally {
+            expansionInFlight.current.delete(nodeKey);
             setIsProcessing(false);
             setExpandingNodeKey(null);
         }

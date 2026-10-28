@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-strip-types --no-warnings tests/verify_graph_expand_collapse.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.38.3",

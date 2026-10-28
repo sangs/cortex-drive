@@ -255,12 +255,15 @@ function isGroupingProtected(n: GraphNode): boolean {
  */
 export function collapseToGroupers(
     nodes: GraphNode[],
-    links: GraphLink[]
+    links: GraphLink[],
+    keepIds?: Set<string>
 ): { nodes: GraphNode[]; links: GraphLink[] } {
     const byType = new Map<string, GraphNode[]>();
     const ungrouped: GraphNode[] = [];
     nodes.forEach(n => {
-        if (n.type && !isGroupingProtected(n)) {
+        // keepIds: nodes already on screen when an expansion merges in (2026-10-28). They are never
+        // folded into a grouper, or the node the user just expanded disappears and can't collapse.
+        if (n.type && !isGroupingProtected(n) && !(keepIds && keepIds.has(n.id))) {
             if (!byType.has(n.type)) byType.set(n.type, []);
             byType.get(n.type)!.push(n);
         } else {
@@ -357,14 +360,21 @@ export function applyAffordanceFlags(nodeList: GraphNode[], linkList: GraphLink[
  *  2. backboneOnly + CAREER_BACKBONE + no Category nodes: fall back to virtual (type-based)
  *     groupers via collapseToGroupers.
  *  3. Everything else (non-career backboneOnly, or backboneOnly=false entirely): always
- *     collapseToGroupers — safe to call unconditionally, it only collapses types actually
- *     present at >= GROUPER_MIN_COUNT and passes everything else through unchanged.
+ *     collapseToGroupers — it only collapses types actually present at >= GROUPER_MIN_COUNT.
+ *
+ * keepIds (2026-10-28): when new data merges into a graph already on screen (a double-click
+ * expansion, an accumulated query), pass the ids already shown: only the newly added nodes may be
+ * grouped. Regression from 7a3f525 (2026-09-17): this unification began running case 3 over the
+ * WHOLE merged graph on every expansion (the old fragment branch returned an expansion unchanged),
+ * so e.g. expanding one of the 5 career categories folded all of them, the expanded one included,
+ * into "Categories (5)" and the second double-click had nothing to collapse.
  */
 export function finalizeGraphForRender(
     nodes: GraphNode[],
     links: GraphLink[],
     backboneOnly: boolean,
-    backboneSet: Set<string> | undefined
+    backboneSet: Set<string> | undefined,
+    keepIds?: Set<string>
 ): { nodes: GraphNode[]; links: GraphLink[] } {
     let processedNodes = nodes;
     let processedLinks = links;
@@ -382,13 +392,46 @@ export function finalizeGraphForRender(
         // Covers: CAREER_BACKBONE with no Category nodes, any other backboneOnly set, and
         // backboneOnly=false entirely — collapseToGroupers is a safe no-op when nothing
         // qualifies for grouping.
-        const collapsed = collapseToGroupers(nodes, links);
+        const collapsed = collapseToGroupers(nodes, links, keepIds);
         processedNodes = collapsed.nodes;
         processedLinks = collapsed.links;
     }
 
     applyAffordanceFlags(processedNodes, processedLinks);
     return { nodes: processedNodes, links: processedLinks };
+}
+
+/**
+ * Merge fetched nodes into the node list in place, matching by the stable node_id (falling back to
+ * id). A matched node keeps its existing `id`, so expansion state, selection and collapse keyed on
+ * it survive the merge; fields from the fetch are taken over. Returns the remap (fetched id →
+ * existing id) to apply to the fetched links, so they still point at the node on screen.
+ */
+export function mergeFragmentNodes(nodes: GraphNode[], incoming: GraphNode[]): Map<string, string> {
+    const keyOf = (n: GraphNode) => (n as any).node_id || n.id;
+    const remap = new Map<string, string>();
+    incoming.forEach(n => {
+        const idx = nodes.findIndex(existing => keyOf(existing) === keyOf(n));
+        if (idx === -1) {
+            nodes.push(n);
+            return;
+        }
+        const existingId = nodes[idx].id;
+        nodes[idx] = { ...nodes[idx], ...n, id: existingId };
+        if (n.id !== existingId) remap.set(n.id, existingId);
+    });
+    return remap;
+}
+
+// Auto-fit after a bloom (2026-10-28): fit the graph, but never zoom in past normal size (a small
+// graph was blown up to 6x by S2-58's fit) nor out past a readable level (the pre-S2-58 floor).
+// The reset button may zoom out further to show everything (GRAPH_RESET_MIN_ZOOM).
+export const GRAPH_AUTOFIT_MIN_ZOOM = 0.35;
+export const GRAPH_AUTOFIT_MAX_ZOOM = 1;
+export const GRAPH_RESET_MIN_ZOOM = 0.05;
+
+export function clampZoom(zoom: number, min: number, max: number): number {
+    return Math.min(Math.max(zoom, min), max);
 }
 
 /**

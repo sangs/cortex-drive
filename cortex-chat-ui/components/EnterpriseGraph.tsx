@@ -3,7 +3,7 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { getThemeForType } from '@/utils/GraphTheme';
-import { deduplicateNodes } from '@/utils/graphConstants';
+import { deduplicateNodes, clampZoom, GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM, GRAPH_RESET_MIN_ZOOM } from '@/utils/graphConstants';
 
 const BACKBONE_LANDMARKS = [
     'Category', 'Company', 'Startup', 'Hackathon', 'ThoughtLeadership',
@@ -40,9 +40,11 @@ const PIN_DRAG_MIN_PX = 4;
 
 // Fit the view to where the nodes ACTUALLY are (their current layout), not to a node-count formula or
 // a fixed centre: the force layout can spread or drift, and ECharts derives its viewport from whatever
-// nodes carry preset x/y. Sets centre (layout coordinates) + zoom so every node is visible.
+// nodes carry preset x/y. Sets centre (layout coordinates) + zoom so every node is visible, within
+// [minZoom, maxZoom]: since 2026-10-28 it never zooms in past normal size (a 6-node career map was
+// blown up to fill the canvas) — see GRAPH_AUTOFIT_* in graphConstants.ts.
 // Returns the new zoom, or null when there is nothing to fit.
-function fitToContent(e: any, currentZoom: number): number | null {
+function fitToContent(e: any, currentZoom: number, minZoom: number, maxZoom: number): number | null {
     const series = e.getModel()?.getSeriesByIndex(0);
     if (!series) return null;
     const data = series.getData();
@@ -59,7 +61,7 @@ function fitToContent(e: any, currentZoom: number): number | null {
     if (!a || !b) return null;
     const pixelW = Math.max(Math.abs(b[0] - a[0]), 1), pixelH = Math.max(Math.abs(b[1] - a[1]), 1);
     const factor = GRAPH_FIT_PADDING * Math.min(e.getWidth() / pixelW, e.getHeight() / pixelH);
-    const zoom = Math.min(Math.max(currentZoom * factor, GRAPH_ZOOM_MIN), GRAPH_ZOOM_MAX);
+    const zoom = clampZoom(currentZoom * factor, minZoom, maxZoom);
     e.setOption({ series: [{ type: 'graph', center: [(minX + maxX) / 2, (minY + maxY) / 2], zoom }] }, false);
     return zoom;
 }
@@ -458,7 +460,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
     const handleZoomReset = () => {
         const e = chartRef.current?.getEchartsInstance();
         if (!e) return;
-        const zoom = fitToContent(e, graphZoomRef.current);
+        const zoom = fitToContent(e, graphZoomRef.current, GRAPH_RESET_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM);
         if (zoom !== null) graphZoomRef.current = zoom;
     };
 
@@ -474,7 +476,7 @@ const EnterpriseGraph: React.FC<EnterpriseGraphProps> = ({
             const timer = setTimeout(() => {
                 const e = chartRef.current?.getEchartsInstance();
                 if (!e || e.isDisposed()) return;
-                const zoom = fitToContent(e, graphZoomRef.current);
+                const zoom = fitToContent(e, graphZoomRef.current, GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM);
                 if (zoom !== null) graphZoomRef.current = zoom;
             }, 900);
             return () => clearTimeout(timer);
