@@ -30,7 +30,7 @@ function createShareAuthz({ db, permify, isOwner = () => false, nodesInTenant = 
         const none = { own: new Set(), everyone: new Set() };
         if (!nodesInTenant || !tenantId || !isOwner(userId)) return none;
         try {
-            const found = (await nodesInTenant(ids, tenantId)) || {};
+            const found = (await nodesInTenant(ids, tenantId, userId)) || {};
             return { own: new Set((found.own || []).map(String)), everyone: new Set((found.everyone || []).map(String)) };
         } catch (err) {
             log.error('[SHARE-AUTHZ] tenant lookup failed:', err.message);

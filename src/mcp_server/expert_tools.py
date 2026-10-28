@@ -51,23 +51,35 @@ class ExpertTools:
         Authorization clause.
         - Owner / internal: Permify allowlist + tenant_id fallback (defense-in-depth against nodes
           missing Permify tuples, S2-41); tenant_id only when Permify is not configured or failed
-          (allowed_ids=None).
+          (allowed_ids=None). For the owner the fallback skips nodes another user added
+          (`owner_id` set and not the owner): their Private content is reachable only through
+          Permify, like for anyone else (2026-10-28, roles doc §4). Internal calls keep the full tenant.
         - Everyone else: strictly the Permify allowlist + SYSTEM/PUBLIC landmarks. allowed_ids=None
           (Permify unconfigured or failed) means nothing — fail closed (S2-42).
         """
         if not self._has_tenant_visibility():
             return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC'])"
+        if not self.requesting_user_id:   # internal call: the whole tenant
+            if self.allowed_ids is None:
+                return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+            return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+        everyone = f"{node_var}.tenant_id IN ['SYSTEM', 'PUBLIC']"
+        tenant_fallback = (f"({node_var}.tenant_id = $tenant_id AND "
+                           f"({node_var}.owner_id IS NULL OR {node_var}.owner_id = $fallback_owner_id))")
         if self.allowed_ids is None:
-            return f"({node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
-        return f"({node_var}.node_id IN $allowed_ids OR {node_var}.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+            return f"({everyone} OR {tenant_fallback})"
+        return f"({node_var}.node_id IN $allowed_ids OR {everyone} OR {tenant_fallback})"
 
     def _security_params(self) -> dict:
         """Returns the kwargs for _exec_query matched to _get_security_clause."""
         if not self._has_tenant_visibility():
             return {"allowed_ids": self.allowed_ids or []}
-        if self.allowed_ids is None:
-            return {"tenant_id": self.tenant_id}
-        return {"allowed_ids": self.allowed_ids, "tenant_id": self.tenant_id}
+        params = {"tenant_id": self.tenant_id}
+        if self.requesting_user_id:
+            params["fallback_owner_id"] = self.requesting_user_id
+        if self.allowed_ids is not None:
+            params["allowed_ids"] = self.allowed_ids
+        return params
 
     def _apply_security(self, query: str, *node_vars: str) -> str:
         """Replace hardcoded $allowed_ids clauses (originally written for OpenFGA) with the dual-mode security clause.
@@ -90,6 +102,12 @@ class ExpertTools:
         cast() satisfies Pylance's LiteralString requirement — all user values are $params.
         """
         q = self._apply_security(query, *self._INLINE_NODE_VARS)
+        # The owner's fallback clause references $fallback_owner_id; supply it wherever the clause landed
+        # (inline substitutions included) and only there, so no call site can miss it or orphan it (AP-2).
+        if "$fallback_owner_id" in q:
+            kwargs.setdefault("fallback_owner_id", self.requesting_user_id)
+        else:
+            kwargs.pop("fallback_owner_id", None)
         return self.driver.execute_query(cast(LiteralString, q), **kwargs)
 
     def _fragment_taxonomy_expansion(self) -> str:
@@ -3219,9 +3237,11 @@ class ExpertTools:
         private_node_ids = [r["node_id"] for r in result.records if r.get("is_private")]
         return {"child_node_ids": child_node_ids, "private_node_ids": private_node_ids}
 
-    def nodes_in_tenant(self, node_ids: list) -> dict:
+    def nodes_in_tenant(self, node_ids: list, owner_id: str = "") -> dict:
         """Classify node_ids for the gateway's owner share checks (S2-43, S2-44):
-        `own` = in this tenant (the owner may manage them, incl. nodes with no Permify owner tuple, S2-41);
+        `own` = in this tenant (the owner may manage them, incl. nodes with no Permify owner tuple, S2-41),
+        except nodes another user added (`owner_id` set and not `owner_id`, 2026-10-28): those go through
+        Permify `can_share` like for anyone else;
         `everyone` = SYSTEM/PUBLIC (already visible to everyone, so not shareable).
         Internal call only (Bento, no end-user identity)."""
         from schema_guard import NODES_IN_TENANT_MAX_IDS, VISIBLE_TO_EVERYONE_TENANTS
@@ -3230,11 +3250,12 @@ class ExpertTools:
             return {"own": [], "everyone": []}
         result = self._exec_query(
             "MATCH (n) WHERE n.node_id IN $node_ids AND (n.tenant_id = $tenant_id OR n.tenant_id IN $everyone_tenants) "
-            "RETURN DISTINCT n.node_id AS node_id, n.tenant_id = $tenant_id AS own",
-            node_ids=ids, tenant_id=self.tenant_id, everyone_tenants=VISIBLE_TO_EVERYONE_TENANTS,
+            "RETURN DISTINCT n.node_id AS node_id, n.tenant_id = $tenant_id AS in_tenant, "
+            "n.owner_id IS NULL OR n.owner_id = $owner_id AS by_owner",
+            node_ids=ids, tenant_id=self.tenant_id, everyone_tenants=VISIBLE_TO_EVERYONE_TENANTS, owner_id=owner_id,
         )
-        return {"own": [r["node_id"] for r in result.records if r["own"]],
-                "everyone": [r["node_id"] for r in result.records if not r["own"]]}
+        return {"own": [r["node_id"] for r in result.records if r["in_tenant"] and r["by_owner"]],
+                "everyone": [r["node_id"] for r in result.records if not r["in_tenant"]]}
 
     def close(self):
         """Close the Neo4j driver"""

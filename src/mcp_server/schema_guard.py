@@ -736,6 +736,20 @@ SOURCE_VISIBILITY_DEFAULT = SOURCE_VISIBILITY_PRIVATE
 # IngestionEngine's default when a caller doesn't say (podcast/seed scripts): unchanged pre-M5 behaviour.
 INGESTION_ENGINE_DEFAULT_VISIBILITY = SOURCE_VISIBILITY_ORGANIZATION
 PUBLIC_TENANT_ID = 'PUBLIC'
+
+# ── User types (2026-10-28; documents/security/user-roles-and-access-model.md §1) ────────────────────
+# Assigned by the gateway only (x-user-type, GATEWAY_ASSIGNED_HEADERS, AP-23); mirrored in
+# cortex-gateway/utils/identity.js USER_TYPES. Groups/workspaces will add fields, not new types here.
+USER_TYPE_OWNER = 'owner'
+USER_TYPE_ORG_ADMIN = 'org_admin'
+USER_TYPE_ORG_MEMBER = 'org_member'
+USER_TYPE_COLLABORATOR = 'collaborator'
+USER_TYPE_GUEST = 'guest'
+USER_TYPE_TRIAL = 'trial'
+# Who may add sources (roles doc §3): organization people, never collaborators, guests or the trial key.
+SOURCE_WRITER_USER_TYPES = [USER_TYPE_OWNER, USER_TYPE_ORG_ADMIN, USER_TYPE_ORG_MEMBER]
+# Who may choose `organization` visibility for a new source (public stays platform-owner only).
+ORGANIZATION_VISIBILITY_USER_TYPES = [USER_TYPE_OWNER, USER_TYPE_ORG_ADMIN]
 # Words ignored when matching the document graph view's keyword (step 9 finding, 2026-10-27: the LLM passes
 # phrases such as "Gradle build configuration"; matching the whole phrase found nothing). Filler words plus
 # generic document words — a document is matched if ANY remaining word appears in its title, a current

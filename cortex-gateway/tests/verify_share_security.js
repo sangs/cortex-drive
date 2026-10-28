@@ -165,7 +165,8 @@ function run(mw, req) {
     // ── 4. index.js wiring ─────────────────────────────────────────────────────────────────────
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     ok(!/process\.env\.OWNER_USER_ID\s*\|\|\s*decoded\.sub/.test(src), 'no unconditional owner mapping (S2-42)');
-    ok(src.includes("req.headers['x-user-id'] = resolveUserId(decoded.sub)"), 'authMiddleware uses resolveUserId');
+    // resolvePrincipal → resolveUserId since 2026-10-28 (S2-48); covered in verify_user_types.js.
+    ok(src.includes("req.headers['x-user-id'] = principal.userId"), 'authMiddleware takes the user id from resolvePrincipal (resolveUserId)');
     ok(!/revokeNodeAccess\([^;]*\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src), 'no swallowed revoke (S2-39)');
     ok(!/`group:\$\{[^`]*\}#member`/.test(src), 'no string-built audience subjects left');
     const routeRe = /app\.(get|post|put|patch|delete)\('(\/api\/(?:share|groups)[^']*)',([^\n]*)/g;

@@ -152,8 +152,13 @@ function _shortNamePattern(shortName) {
  * @param {{isOwner?: boolean, allowedIds?: string[]|null}} [viewer]  omitted → every entry (static default)
  */
 function buildRoutingLookups(catalog, viewer) {
-    const allowed = viewer && !viewer.isOwner && Array.isArray(viewer.allowedIds) ? new Set(viewer.allowedIds) : null;
-    const canOpen = e => !allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id));
+    const allowedIds = viewer && Array.isArray(viewer.allowedIds) ? new Set(viewer.allowedIds) : null;
+    const allowed = viewer && !viewer.isOwner ? allowedIds : null;
+    // The owner opens every tenant title except sources another user added (`owner_id`), which they
+    // reach only through Permify like anyone else (2026-10-28, roles doc §4).
+    const ownerCanOpen = e => !e.owner_id || e.owner_id === viewer.userId || Boolean(allowedIds && allowedIds.has(e.node_id));
+    const canOpen = e => (viewer && viewer.isOwner ? ownerCanOpen(e)
+        : (!allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id))));
     const entity = new Map();   // lowerCaseName → domain
     const person = new Map();   // lowerCaseName → original-case name
     const short = [];           // [{ pattern, domain, matched }]

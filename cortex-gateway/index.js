@@ -638,18 +638,19 @@ if (!global.fetch) {
 // --- Permify + Cloud SQL clients ---
 const permify = require('./utils/permify_gateway');
 const db      = require('./utils/db');
-const { resolveUserId, isOwner } = require('./utils/identity');
+const { isOwner, resolvePrincipal, routingTenantFor, USER_TYPES } = require('./utils/identity');
+const { createOrgMembershipSync, membershipFromClerkEvent } = require('./utils/org_membership_sync');
 const { createShareAuthz } = require('./utils/share_authz');
 const { createVisibilityGuard } = require('./utils/source_visibility');
 // Owner share checks also accept nodes of the owner's own tenant (most nodes have no Permify owner
 // tuple, S2-41). One Bento query per request; Gateway→Bento via direct fetch + OIDC (AP-18, Flow 5).
-async function bentoNodesInTenant(nodeIds, tenantId) {
+async function bentoNodesInTenant(nodeIds, tenantId, ownerId = '') {
     const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     const token = await getCloudRunToken(bentoBase);
     const res = await fetch(`${bentoBase}/nodes_in_tenant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, ...(token ? { Authorization: token } : {}) },
-        body: JSON.stringify({ node_ids: nodeIds }),
+        body: JSON.stringify({ node_ids: nodeIds, owner_id: ownerId }),
     });
     if (!res.ok) throw new Error(`Bento /nodes_in_tenant → ${res.status}`);
     const body = await res.json();
@@ -775,6 +776,43 @@ initClassifier(openai).catch(e => console.warn('[CLASSIFY] initClassifier failed
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 const crypto = require('crypto');
 
+// ─── Organization membership (S2-46 / S2-48, 2026-10-28) ─────────────────────────────────────────
+// Clerk is the single source of truth. Each user's memberships are cached briefly for tenant
+// resolution; the Clerk webhook clears the cache and updates Permify org#member / org#admin
+// (utils/org_membership_sync.js); scripts/reconcile_org_membership.js catches anything missed.
+const ORG_MEMBERSHIPS_CACHE_PREFIX = 'org_memberships:';
+const ORG_MEMBERSHIPS_CACHE_TTL_SECONDS = 600;
+
+/** [{ orgId, role }] for a Clerk user. On a Clerk error: [] (collaborator, least privilege), not cached. */
+async function clerkOrgMemberships(clerkSub) {
+    if (!clerkSub) return [];
+    const cacheKey = `${ORG_MEMBERSHIPS_CACHE_PREFIX}${clerkSub}`;
+    try {
+        const cached = await redis.get(cacheKey);
+        if (cached !== null) return JSON.parse(cached);
+    } catch (err) {
+        console.warn('[AUTH] membership cache read failed:', err.message);
+    }
+    try {
+        const list = await clerkClient.users.getOrganizationMembershipList({ userId: clerkSub });
+        const memberships = (list.data || []).map(m => ({ orgId: m.organization.id, role: m.role }));
+        redis.setex(cacheKey, ORG_MEMBERSHIPS_CACHE_TTL_SECONDS, JSON.stringify(memberships)).catch(() => {});
+        return memberships;
+    } catch (err) {
+        console.error('[AUTH] Clerk membership lookup failed; treating as collaborator for this request:', err.message);
+        return [];
+    }
+}
+
+const orgMembershipSync = createOrgMembershipSync({
+    permify,
+    clearUserCaches: async (userId, clerkSub) => {
+        const keys = [`perm:${userId}`];
+        if (clerkSub) keys.push(`${ORG_MEMBERSHIPS_CACHE_PREFIX}${clerkSub}`);
+        await redis.del(...keys);
+    },
+});
+
 /**
  * Stateless Guest Share Token Utilities
  * Uses HMAC-SHA256 for tamper-proof node sharing.
@@ -819,7 +857,7 @@ app.use(cors({ origin: _corsOrigin }));
  * x-user-id: guest-auth (+ any x-tenant-id) to skip authentication entirely on every
  * authMiddleware route. The frontend's own x-tenant-id is safe to drop: every auth path sets it.
  */
-const GATEWAY_ASSIGNED_HEADERS = ['x-user-id', 'x-tenant-id', 'x-raw-user-id', 'x-schema-readable', 'x-guest-share-anchor'];
+const GATEWAY_ASSIGNED_HEADERS = ['x-user-id', 'x-tenant-id', 'x-raw-user-id', 'x-schema-readable', 'x-guest-share-anchor', 'x-user-type'];
 
 function stripClientIdentityHeaders(req) {
     for (const h of GATEWAY_ASSIGNED_HEADERS) delete req.headers[h];
@@ -853,6 +891,7 @@ const guestTokenMiddleware = async (req, res, next) => {
             req.guestAuth = true;
             req.headers['x-tenant-id'] = verified.tenantId;
             req.headers['x-user-id'] = 'guest-auth';
+            req.headers['x-user-type'] = USER_TYPES.GUEST;
             req.headers['x-guest-share-anchor'] = verified.nodeId;
             return next();
         } else {
@@ -939,26 +978,27 @@ const authMiddleware = async (req, res, next) => {
         try {
             // Standardizing for @clerk/backend standalone verification
             const decoded = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
-            
-            // TENANT_ID env var wins — handles dev/prod Clerk split where dev JWT carries
-            // a different org_id than the Neo4j tenant (migrated to prod org_id in Phase 1).
-            const tenantId = process.env.TENANT_ID || decoded.org_id || decoded.sub;
-            console.log(`[AUTH] Resolved Tenant ID: ${tenantId} (EnvOverride: ${!!process.env.TENANT_ID}, JwtOrg: ${decoded.org_id || 'none'})`);
-            
-            req.headers['x-tenant-id'] = tenantId;
+
+            // User type and tenant (S2-48, 2026-10-28; roles doc §1). Owner → TENANT_ID (the env
+            // override applies to the owner only); member of an organization → that organization
+            // (the JWT's active org, else Clerk's membership list, cached); anyone else → collaborator in
+            // a personal scope. Until 2026-10-28 every signed-in user got TENANT_ID.
+            const memberships = decoded.org_id ? [] : await clerkOrgMemberships(decoded.sub);
+            const principal = resolvePrincipal({ clerkSub: decoded.sub, jwtOrgId: decoded.org_id || '',
+                                                 jwtOrgRole: decoded.org_role || '', memberships });
+            req.headers['x-tenant-id'] = principal.tenantId;
             // Only the owner's own Clerk ids map to OWNER_USER_ID (S2-42, utils/identity.js). Until
             // 2026-10-23 this was `OWNER_USER_ID || decoded.sub`, i.e. every signed-in user was the owner.
             req.headers['x-raw-user-id'] = decoded.sub || ''; // always the real Clerk sub — used by activate-pending
-            req.headers['x-user-id'] = resolveUserId(decoded.sub);
-            
-            // Check for admin role to grant 'Schema Readable' permission (Founder/Owner)
-            const isAdmin = decoded.org_role === 'org:admin' || decoded.org_role === 'admin';
-            if (isAdmin) {
+            req.headers['x-user-id'] = principal.userId;
+            req.headers['x-user-type'] = principal.type;
+            // Organization admins (and the owner, an admin of the platform org) get 'Schema Readable'.
+            if (principal.isOrgAdmin) {
                 req.headers['x-schema-readable'] = 'true';
             }
-            
+
             delete req.headers['authorization'];
-            console.log('JWT Auth verified for tenant:', tenantId, 'user:', decoded.sub, 'admin:', isAdmin);
+            console.log(`[AUTH] user=${decoded.sub} type=${principal.type} tenant=${principal.tenantId} admin=${principal.isOrgAdmin}`);
             return next();
         } catch (err) {
             console.error('JWT verification failed:', err.message);
@@ -975,6 +1015,7 @@ const authMiddleware = async (req, res, next) => {
         }
         req.headers['x-tenant-id'] = trial.tenantId;
         req.headers['x-user-id'] = trial.userId;
+        req.headers['x-user-type'] = USER_TYPES.TRIAL;
         console.log('Trial API key access granted for tenant:', trial.tenantId);
         return next();
     }
@@ -1273,6 +1314,21 @@ app.post('/api/webhooks/clerk', async (req, res) => {
     } catch (err) {
         console.error('[webhook/clerk] Signature verification failed:', err.message);
         return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    if (event.type && event.type.startsWith('organizationMembership.')) {
+        // Membership changed in Clerk → Permify follows (S2-46). A failure answers 500 so Clerk
+        // retries; the reconciler at the next deploy is the backstop.
+        const membership = membershipFromClerkEvent(event.data);
+        if (!membership) return res.status(400).json({ error: 'Membership event without organization or user' });
+        try {
+            if (event.type === 'organizationMembership.deleted') await orgMembershipSync.removeMembership(membership);
+            else await orgMembershipSync.applyMembership(membership);
+        } catch (err) {
+            console.error(`[webhook/clerk] ${event.type} sync failed:`, err.message);
+            return res.status(500).json({ error: 'Membership sync failed' });
+        }
+        return res.status(200).json({ received: true });
     }
 
     if (event.type === 'user.created') {
@@ -2448,6 +2504,7 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
         "x-tenant-id": tenantId,
         "x-user-id": userId,
         "x-schema-readable": schemaReadable ? "true" : "false",
+        "x-user-type": reqHeaders['x-user-type'] || '',
         "x-guest-share-anchor": reqHeaders['x-guest-share-anchor'] || '',
         ...(oidcToken ? { "Authorization": oidcToken } : {}),
     };
@@ -3384,8 +3441,9 @@ app.post('/query', authMiddleware, async (req, res) => {
         // context, response payload) — unchanged. See
         // documents/architecture/universal-discovery-fallback-design-2026-09-18.md.
         // Names route only for sources this asker can open (S2-60 §8, AP-30).
-        const routingLookups = buildRoutingLookups(await entityCatalogStore.getCatalog(tenantId),
-                                                   { isOwner: isOwner(userId), allowedIds });
+        const routingTenant = routingTenantFor(req.headers['x-user-type'], tenantId);
+        const routingLookups = buildRoutingLookups(await entityCatalogStore.getCatalog(routingTenant),
+                                                   { isOwner: isOwner(userId), allowedIds, userId });
         if (routingLookups.withheld) console.log(`[CLASSIFY] ${routingLookups.withheld} catalog name(s) withheld (not visible to this user)`);
         const { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai, routingLookups);
         console.log(`[QUERY] domain_signal=${domainSignal} confident=${domainConfident}`);
@@ -4105,12 +4163,13 @@ app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('co
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 
-// Adding sources (websites, documents) is owner-only (2026-10-23, with S2-42). Ingested nodes are
-// registered to OWNER_USER_ID, and invited users were only able to add sources because every
-// signed-in user used to be mapped to the owner. Guests and the trial identity were already refused.
+// Who may add sources (2026-10-28, roles doc §3): the owner and organization admins/members. Never
+// collaborators, guests or the trial key. Ingested nodes are owned (Permify + owner_id) by whoever
+// added them, Private by default. The MCP tools apply the same rule (x-user-type).
+const SOURCE_WRITER_USER_TYPES = new Set([USER_TYPES.OWNER, USER_TYPES.ORG_ADMIN, USER_TYPES.ORG_MEMBER]);
 const requireSourceWriter = (req, res, next) => {
-    if (req.guestAuth === true || !isOwner(req.headers['x-user-id'] || '')) {
-        return res.status(403).json({ error: 'Only the owner can add sources.' });
+    if (req.guestAuth === true || !SOURCE_WRITER_USER_TYPES.has(req.headers['x-user-type'] || '')) {
+        return res.status(403).json({ error: 'Only members of an organization can add sources.' });
     }
     return next();
 };

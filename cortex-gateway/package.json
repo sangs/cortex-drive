@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/verify_intent_classification.js && node tests/verify_tool_policy.js && node tests/verify_upstream_fetch.js && node tests/verify_permify_share.js && node tests/verify_share_security.js && node tests/verify_document_gateway.js && node tests/verify_entity_catalog.js"
+    "test": "node tests/verify_intent_classification.js && node tests/verify_tool_policy.js && node tests/verify_upstream_fetch.js && node tests/verify_permify_share.js && node tests/verify_share_security.js && node tests/verify_document_gateway.js && node tests/verify_entity_catalog.js && node tests/verify_user_types.js"
   },
   "keywords": [],
   "author": "",

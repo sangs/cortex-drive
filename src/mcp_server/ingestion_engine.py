@@ -32,6 +32,10 @@ class IngestionEngine:
         # inherit through parent tuples); public = written in the PUBLIC tier (caller passes
         # tenant_id='PUBLIC'). Default keeps the pre-M5 behaviour for podcast/seed callers.
         self.visibility = visibility or INGESTION_ENGINE_DEFAULT_VISIBILITY
+        # Who added the source being ingested (2026-10-28, roles doc): becomes the Permify owner and
+        # is stamped as `owner_id` on every node this source creates. Empty = the platform owner
+        # (podcast/seed callers). Set by process_web_source / process_document_source.
+        self.owner_id = ""
         if self.visibility not in SOURCE_VISIBILITIES:
             raise ValueError(f"unknown visibility {self.visibility!r}")
         self.expert = ExpertTools(tenant_id=tenant_id)
@@ -368,6 +372,27 @@ class IngestionEngine:
 
         return node_ids
 
+    def _owner_or_none(self) -> Optional[str]:
+        """`owner_id` for nodes this run creates (None when the platform owner's pipelines run)."""
+        return self.owner_id or None
+
+    def _stamp_owner(self, node_ids: list) -> None:
+        """Stamp `owner_id` on structure nodes this run just created (snapshot, sections, blocks), so the
+        platform owner's tenant fallback can't reach another user's Private source (roles doc §4)."""
+        ids = [i for i in node_ids if i]
+        if not self.owner_id or not ids:
+            return
+        with self.driver.session() as session:
+            session.run("MATCH (n) WHERE n.node_id IN $ids AND n.tenant_id = $tenant_id SET n.owner_id = $owner_id",
+                        ids=ids, tenant_id=self.tenant_id, owner_id=self.owner_id)
+
+    def _source_owner_id(self, source_node_id: str) -> str:
+        """The `owner_id` of a source node (who added it), or '' if unset."""
+        with self.driver.session() as session:
+            rec = session.run("MATCH (d {tenant_id: $tenant_id, node_id: $id}) RETURN d.owner_id AS owner_id",
+                              tenant_id=self.tenant_id, id=source_node_id).single()
+        return (rec and rec["owner_id"]) or ""
+
     def _register_with_permify(self, node_ids: list[str], tenant_wide_ids: list[str] = None) -> None:
         """Register newly ingested nodes in Permify. Idempotent — existing tuples are no-ops.
 
@@ -384,9 +409,9 @@ class IngestionEngine:
             return
         org_wide = set(node_ids if tenant_wide_ids is None else tenant_wide_ids) \
             if self.visibility == SOURCE_VISIBILITY_ORGANIZATION else set()
-        owner_sub = os.environ.get("OWNER_USER_ID", "")
+        owner_sub = self.owner_id or os.environ.get("OWNER_USER_ID", "")
         if not owner_sub:
-            print("[ingestion] OWNER_USER_ID not set — skipping Permify registration")
+            print("[ingestion] no owner (OWNER_USER_ID not set) — skipping Permify registration")
             return
 
         import sys
@@ -487,6 +512,7 @@ class IngestionEngine:
         -> register in Permify), applied to a WebsiteSource anchor instead of an Episode.
         """
         print(f"Starting web-source ingestion for {url}...")
+        self.owner_id = owner_id or ""
 
         # 1. LLM extraction (title, description, entities, relationships)
         extraction = b.ExtractWebPage(content=content, url=url)
@@ -509,6 +535,7 @@ class IngestionEngine:
         # 3. Upsert WebsiteSource + create new SourceSnapshot (flip old is_current)
         source_node_id = self._upsert_website_source(validated_source, url, content_hash, image_urls or [])
         snapshot_id = self._current_snapshot_id('WebsiteSource', source_node_id)
+        self._stamp_owner([snapshot_id])
 
         # 4. Upsert extracted entities + relationships, linked to the WebsiteSource and tagged with
         #    this snapshot (S2-30).
@@ -622,10 +649,11 @@ class IngestionEngine:
             for concept in extraction.concepts:
                 query = """
                 MERGE (c:Concept {tenant_id: $tenant_id, name: $name})
-                ON CREATE SET c.node_id = randomUUID(), c.description = $description
+                ON CREATE SET c.node_id = randomUUID(), c.description = $description, c.owner_id = $owner_id
                 RETURN c.node_id AS node_id
                 """
-                result = session.run(query, tenant_id=self.tenant_id, name=concept.name, description=concept.description)
+                result = session.run(query, tenant_id=self.tenant_id, name=concept.name, description=concept.description,
+                                     owner_id=self._owner_or_none())
                 record = result.single()
                 node_ids.append(record["node_id"] if record else None)
 
@@ -633,10 +661,10 @@ class IngestionEngine:
             for tech in extraction.technologies:
                 query = """
                 MERGE (t:Technology {tenant_id: $tenant_id, name: $name})
-                ON CREATE SET t.node_id = randomUUID()
+                ON CREATE SET t.node_id = randomUUID(), t.owner_id = $owner_id
                 RETURN t.node_id AS node_id
                 """
-                result = session.run(query, tenant_id=self.tenant_id, name=tech.name)
+                result = session.run(query, tenant_id=self.tenant_id, name=tech.name, owner_id=self._owner_or_none())
                 record = result.single()
                 node_ids.append(record["node_id"] if record else None)
 
@@ -644,10 +672,11 @@ class IngestionEngine:
             for person in extraction.people:
                 query = """
                 MERGE (p:Person {tenant_id: $tenant_id, name: $name})
-                ON CREATE SET p.node_id = randomUUID(), p.role = $role
+                ON CREATE SET p.node_id = randomUUID(), p.role = $role, p.owner_id = $owner_id
                 RETURN p.node_id AS node_id
                 """
-                result = session.run(query, tenant_id=self.tenant_id, name=person.name, role=person.role)
+                result = session.run(query, tenant_id=self.tenant_id, name=person.name, role=person.role,
+                                     owner_id=self._owner_or_none())
                 record = result.single()
                 node_ids.append(record["node_id"] if record else None)
 
@@ -656,13 +685,13 @@ class IngestionEngine:
                 query = """
                 MATCH (s:WebsiteSource {tenant_id: $tenant_id, node_id: $source_node_id})
                 MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
-                ON CREATE SET l.node_id = randomUUID(), l.text = $text
+                ON CREATE SET l.node_id = randomUUID(), l.text = $text, l.owner_id = $owner_id
                 MERGE (s)-[r:HAS_REFERENCE]->(l)
                 SET r.snapshot_id = $snapshot_id
                 RETURN l.node_id AS node_id
                 """
                 result = session.run(query, tenant_id=self.tenant_id, source_node_id=source_node_id, url=link.url, text=link.text,
-                                     snapshot_id=snapshot_id)
+                                     snapshot_id=snapshot_id, owner_id=self._owner_or_none())
                 record = result.single()
                 node_ids.append(record["node_id"] if record else None)
 
@@ -693,6 +722,7 @@ class IngestionEngine:
         ContentBlocks (from the L1 parser's `parsed` ParsedDocument) + BAML entities with
         snapshot-scoped links, grounding, and stale-link/orphan cleanup. Called only when the
         adapter's has_changed() says this content is new. Never parses or fetches."""
+        self.owner_id = owner_id or ""
         text = self._document_text(parsed)
         title = title_hint or filename or uri
         extraction = self._extract_document_entities(text, title, self._existing_topic_names())
@@ -715,6 +745,7 @@ class IngestionEngine:
         # document). Organization-wide = the document root + its entities; snapshot, sections and blocks
         # inherit through parent tuples, so one toggle on the root changes the whole source.
         section_ids = self._current_section_ids(source_node_id, snapshot_id)
+        self._stamp_owner([snapshot_id] + section_ids + block_ids)
         self._register_with_permify([nid for nid in [source_node_id, snapshot_id] + section_ids + block_ids + entity_ids if nid],
                                     tenant_wide_ids=[source_node_id] + [e for e in entity_ids if e])
         return {'source_node_id': source_node_id, 'snapshot_id': snapshot_id, 'blocks': len(block_ids),
@@ -748,6 +779,7 @@ class IngestionEngine:
         descriptions = {k: v for k, v in descriptions.items() if v and v.strip()}
         if not descriptions:
             return {'described': 0, 'entities': 0, 'grounded_links': 0}
+        self.owner_id = self._source_owner_id(source_node_id)
         with self.driver.session() as session:
             texts = {r['id']: r['text'] or '' for r in session.run(
                 "MATCH (b:ContentBlock {tenant_id: $tenant_id}) WHERE b.node_id IN $ids RETURN b.node_id AS id, b.text AS text",
@@ -988,13 +1020,13 @@ class IngestionEngine:
                 rec = session.run(
                     f"""MATCH (d:DocumentSource {{tenant_id: $tenant_id, node_id: $source_id}})
                         MERGE (e:{label} {{tenant_id: $tenant_id, name: $name}})
-                        ON CREATE SET e.node_id = randomUUID(), e += $props
+                        ON CREATE SET e.node_id = randomUUID(), e += $props, e.owner_id = $owner_id
                         MERGE (d)-[r:{rel}]->(e)
                         SET r.snapshot_id = $snapshot_id, r.derived_by = coalesce(r.derived_by, $derived_by)
                         RETURN e.node_id AS id""",
                     tenant_id=self.tenant_id, source_id=source_node_id, name=name.strip(),
                     props={k: v for k, v in props.items() if v is not None}, snapshot_id=snapshot_id,
-                    derived_by=derived_by).single()
+                    derived_by=derived_by, owner_id=self._owner_or_none()).single()
                 ids.append(rec['id'] if rec else None)
             for link in extraction.reference_links:
                 if not link.url:
@@ -1002,12 +1034,12 @@ class IngestionEngine:
                 rec = session.run(
                     """MATCH (d:DocumentSource {tenant_id: $tenant_id, node_id: $source_id})
                        MERGE (l:ReferenceLink {tenant_id: $tenant_id, url: $url})
-                       ON CREATE SET l.node_id = randomUUID(), l.text = $text
+                       ON CREATE SET l.node_id = randomUUID(), l.text = $text, l.owner_id = $owner_id
                        MERGE (d)-[r:HAS_REFERENCE]->(l)
                        SET r.snapshot_id = $snapshot_id, r.derived_by = coalesce(r.derived_by, $derived_by)
                        RETURN l.node_id AS id""",
                     tenant_id=self.tenant_id, source_id=source_node_id, url=link.url, text=link.text,
-                    snapshot_id=snapshot_id, derived_by=derived_by).single()
+                    snapshot_id=snapshot_id, derived_by=derived_by, owner_id=self._owner_or_none()).single()
                 ids.append(rec['id'] if rec else None)
         return ids, before
 

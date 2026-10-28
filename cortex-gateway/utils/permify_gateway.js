@@ -205,8 +205,48 @@ async function removeGroupMember(groupId, userSub) {
   });
 }
 
+/**
+ * Organization membership tuples (org:<orgId>#member|admin @user). Written ONLY by
+ * utils/org_membership_sync.js, which derives them from Clerk (S2-46, 2026-10-28).
+ */
+async function writeOrgRelation(orgId, relation, userId) {
+  return _post('/relationships/write', {
+    metadata: { schema_version: '' },
+    tuples: [{ entity: { type: 'org', id: orgId }, relation, subject: { type: 'user', id: userId } }],
+  });
+}
+
+async function deleteOrgRelation(orgId, relation, userId) {
+  return _post('/relationships/delete', {
+    filter: exactTupleFilter('org', orgId, relation, { type: 'user', id: userId }),
+  });
+}
+
+/** Every org#member / org#admin tuple of one org, as [{ relation, userId }]. Pages through. */
+async function listOrgRelations(orgId) {
+  if (!orgId) throw new Error('refusing an unscoped org relationship read');
+  const out = [];
+  let token = '';
+  do {
+    const data = await _post('/data/relationships/read', {
+      metadata:         { schema_version: '', snap_token: '' },
+      filter:           { entity: { type: 'org', ids: [String(orgId)] }, relation: '' },
+      page_size:        100,
+      continuous_token: token,
+    });
+    for (const t of data.tuples || []) {
+      if (t.subject && t.subject.type === 'user') out.push({ relation: t.relation, userId: t.subject.id });
+    }
+    token = data.continuous_token || '';
+  } while (token);
+  return out;
+}
+
 module.exports = {
   configured,
+  writeOrgRelation,
+  deleteOrgRelation,
+  listOrgRelations,
   makeNodeTenantWide,
   removeNodeTenantWide,
   audienceSubject,

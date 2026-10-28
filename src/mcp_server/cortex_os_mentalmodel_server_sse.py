@@ -29,6 +29,8 @@ tenant_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("tenant_id",
 user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", default="")
 # Contextvar to hold the 'Schema Readable' permission state
 schema_readable_var: contextvars.ContextVar[bool] = contextvars.ContextVar("schema_readable", default=False)
+# Contextvar to hold the gateway-assigned user type (x-user-type; schema_guard USER_TYPE_*)
+user_type_var: contextvars.ContextVar[str] = contextvars.ContextVar("user_type", default="")
 # Contextvar to hold the authorized node ID for Guest Share Tokens
 guest_share_anchor_var: contextvars.ContextVar[str] = contextvars.ContextVar("guest_share_anchor", default="")
 # Log prefix for all permission cache operations (Redis hit/miss/error)
@@ -457,28 +459,58 @@ async def view_source_live(
         expert.close()
 
 def _visibility_error(visibility: str) -> str | None:
-    """S2-44 / M5-11: validate the visibility chosen when adding a source. `public` and `organization`
-    need the owner (or an internal call) here; the gateway additionally lets organization admins choose
-    `organization` once non-owners may add sources."""
-    from schema_guard import SOURCE_VISIBILITIES, SOURCE_VISIBILITY_PRIVATE
+    """S2-44 / M5-11: validate the visibility chosen when adding a source (same rule as the gateway's
+    source_visibility.js): private for every source writer, organization for the owner or an
+    organization admin, public for the platform owner only. Empty user id = internal call."""
+    from schema_guard import (SOURCE_VISIBILITIES, SOURCE_VISIBILITY_PRIVATE, SOURCE_VISIBILITY_ORGANIZATION,
+                              ORGANIZATION_VISIBILITY_USER_TYPES)
     if visibility not in SOURCE_VISIBILITIES:
         return json.dumps({"error": f"visibility must be one of {SOURCE_VISIBILITIES}"})
     requester = user_id_var.get() or ""
-    owner = os.environ.get("OWNER_USER_ID", "")
-    if visibility != SOURCE_VISIBILITY_PRIVATE and requester and requester != owner:
-        return json.dumps({"error": f"Only the owner can choose '{visibility}' visibility."})
-    return None
+    if not requester or requester == os.environ.get("OWNER_USER_ID", "") or visibility == SOURCE_VISIBILITY_PRIVATE:
+        return None
+    if visibility == SOURCE_VISIBILITY_ORGANIZATION:
+        if user_type_var.get() in ORGANIZATION_VISIBILITY_USER_TYPES:
+            return None
+        return json.dumps({"error": "Only the owner or an organization admin can choose 'organization' visibility."})
+    return json.dumps({"error": f"Only the owner can choose '{visibility}' visibility."})
 
 
 def _source_writer_error() -> str | None:
-    """Adding sources is owner-only (2026-10-23, with S2-42). Enforced here as well as in the gateway
-    (requireSourceWriter), because the gateway's /api catch-all proxies the MCP protocol itself, so a
-    signed-in user could call these tools directly. An empty user id means an internal call."""
+    """Who may add sources (2026-10-28, roles doc §3): the owner and organization admins/members; never
+    collaborators, guests or the trial key. Enforced here as well as in the gateway (requireSourceWriter),
+    because the gateway's /api catch-all proxies the MCP protocol itself, so a signed-in user could call
+    these tools directly. An empty user id means an internal call."""
+    from schema_guard import SOURCE_WRITER_USER_TYPES
     requester = user_id_var.get() or ""
-    owner = os.environ.get("OWNER_USER_ID", "")
-    if requester and requester != owner:
-        print(f"[AUTHZ/MCP] refused source registration by non-owner user={requester[:12]}")
-        return json.dumps({"error": "Only the owner can add sources."})
+    if not requester or requester == os.environ.get("OWNER_USER_ID", ""):
+        return None
+    if user_type_var.get() in SOURCE_WRITER_USER_TYPES:
+        return None
+    print(f"[AUTHZ/MCP] refused source registration by user={requester[:12]} type={user_type_var.get() or 'none'}")
+    return json.dumps({"error": "Only members of an organization can add sources."})
+
+
+def _foreign_source_error(label: str, key_prop: str, key_value: str, graph_tenant: str, requester: str) -> str | None:
+    """A source with this address already exists in the tenant and someone else added it: refuse without
+    saying more (no existence leak, and never a new revision of another person's source). Sources from
+    before 2026-10-28 have no owner_id; they belong to the platform owner."""
+    if not requester or requester == os.environ.get("OWNER_USER_ID", ""):
+        return None
+    from schema_guard import SOURCE_CONNECTOR_LABELS
+    if label not in SOURCE_CONNECTOR_LABELS:
+        raise ValueError(f"not a source label: {label}")
+    driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
+                                  auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+    try:
+        rec = driver.execute_query(
+            f"MATCH (s:{label} {{tenant_id: $tenant_id}}) WHERE s[$key_prop] = $key_value RETURN s.owner_id AS owner_id LIMIT 1",
+            tenant_id=graph_tenant, key_prop=key_prop, key_value=key_value).records
+    finally:
+        driver.close()
+    if rec and rec[0]["owner_id"] != requester:
+        print(f"[AUTHZ/MCP] refused re-adding a source added by someone else (user={requester[:12]})")
+        return json.dumps({"error": "This source can't be added."})
     return None
 
 
@@ -526,6 +558,9 @@ async def register_website_source(
     neo4j_password = os.environ.get("NEO4J_PASSWORD")
     if not neo4j_uri or not neo4j_user or not neo4j_password:
         return json.dumps({"error": "Server misconfiguration: missing Neo4j credentials."})
+    foreign_error = await asyncio.to_thread(_foreign_source_error, "WebsiteSource", "base_url", url, graph_tenant, user_id_var.get() or "")
+    if foreign_error:
+        return foreign_error
 
     def _ingest() -> dict:
         adapter = WebUrlAdapter(url, neo4j_uri, neo4j_user, neo4j_password, graph_tenant, user_id)
@@ -586,7 +621,7 @@ async def register_document_source(
     owner_error = _source_writer_error()
     if owner_error:
         return owner_error
-    from schema_guard import SOURCE_VISIBILITY_DEFAULT
+    from schema_guard import SOURCE_VISIBILITY_DEFAULT, SOURCE_VISIBILITY_PUBLIC, PUBLIC_TENANT_ID
     visibility = (visibility or SOURCE_VISIBILITY_DEFAULT).strip().lower()
     visibility_error = _visibility_error(visibility)
     if visibility_error:
@@ -599,6 +634,10 @@ async def register_document_source(
         validate_public_url(url)
     except ValueError as e:
         return json.dumps({"error": str(e)})
+    graph_tenant = PUBLIC_TENANT_ID if visibility == SOURCE_VISIBILITY_PUBLIC else tenant_id
+    foreign_error = await asyncio.to_thread(_foreign_source_error, "DocumentSource", "uri", url, graph_tenant, user_id_var.get() or "")
+    if foreign_error:
+        return foreign_error
     try:
         result = await enqueue_document_ingestion(build_task(url, tenant_id, user_id, visibility=visibility))
     except EnqueueError as e:
@@ -937,6 +976,9 @@ class TenantASGIMiddleware:
             query_params.get("user_id")
         )
 
+        # Gateway-assigned user type (owner | org_admin | org_member | collaborator | guest | trial)
+        user_type = headers.get("x-user-type") or ""
+
         # Extract guest share anchor for URL-based stateless discovery
         guest_share_anchor = (
             headers.get("x-guest-share-anchor") or
@@ -951,6 +993,7 @@ class TenantASGIMiddleware:
         tenant_token = tenant_id_var.set(tenant_id) if tenant_id else None
         user_token = user_id_var.set(user_id) if user_id else None
         schema_token = schema_readable_var.set(schema_readable)
+        user_type_token = user_type_var.set(user_type)
         guest_anchor_token = guest_share_anchor_var.set(guest_share_anchor) if guest_share_anchor else None
         allowed_ids_token = allowed_ids_var.set(resolved_allowed_ids)
         perm_version_token = perm_version_var.set(perm_version)
@@ -967,6 +1010,7 @@ class TenantASGIMiddleware:
             allowed_ids_var.reset(allowed_ids_token)
             perm_version_var.reset(perm_version_token)
             schema_readable_var.reset(schema_token)
+            user_type_var.reset(user_type_token)
 
 app.add_middleware(TenantASGIMiddleware)
 app.add_middleware(

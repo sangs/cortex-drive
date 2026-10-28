@@ -33,6 +33,7 @@ ORG = "org_test"
 
 def engine(tenant=ORG, visibility=None):
     e = IngestionEngine.__new__(IngestionEngine)
+    e.owner_id = ""   # platform-owner pipelines (podcast/seed); per-source owners tested below
     e.tenant_id = tenant
     e.visibility = visibility or INGESTION_ENGINE_DEFAULT_VISIBILITY
     e._fetch_node_metadata = mock.MagicMock(return_value=({}, [("root", "sec1"), ("sec1", "blk1")], []))
@@ -109,13 +110,14 @@ class WorkerTaskTest(unittest.TestCase):
 
 @mock.patch.dict(os.environ, {"OWNER_USER_ID": OWNER})
 class McpVisibilityTest(unittest.TestCase):
-    def check(self, user, visibility):
+    def check(self, user, visibility, user_type=""):
         import cortex_os_mentalmodel_server_sse as sse
-        token = sse.user_id_var.set(user)
+        token, type_token = sse.user_id_var.set(user), sse.user_type_var.set(user_type)
         try:
             err = sse._visibility_error(visibility)
         finally:
             sse.user_id_var.reset(token)
+            sse.user_type_var.reset(type_token)
         return json.loads(err)["error"] if err else None
 
     def test_rules(self):
@@ -125,7 +127,13 @@ class McpVisibilityTest(unittest.TestCase):
         self.assertIsNone(self.check("", "public"))                        # internal call
         self.assertIsNone(self.check("user_member", "private"))
         self.assertEqual(self.check("user_member", "public"), "Only the owner can choose 'public' visibility.")
-        self.assertEqual(self.check("user_member", "organization"), "Only the owner can choose 'organization' visibility.")
+        self.assertEqual(self.check("user_member", "organization", "org_member"),
+                         "Only the owner or an organization admin can choose 'organization' visibility.")
+        # 2026-10-28: organization admins may choose organization, never public (roles doc §3)
+        self.assertIsNone(self.check("user_admin", "organization", "org_admin"))
+        self.assertIsNone(self.check("user_admin", "private", "org_admin"))
+        self.assertEqual(self.check("user_admin", "public", "org_admin"), "Only the owner can choose 'public' visibility.")
+        self.assertIsNotNone(self.check("user_collab", "organization", "collaborator"))
         self.assertIn("visibility must be one of", self.check(OWNER, "everyone"))
 
 

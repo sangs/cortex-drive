@@ -34,6 +34,10 @@ INVITEE = "user_invitee_test"
 STRICT = "(n.node_id IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC'])"
 DUAL = "(n.node_id IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
 TENANT_ONLY = "(n.tenant_id IN ['SYSTEM', 'PUBLIC', $tenant_id])"
+# The owner's tenant fallback skips nodes another user added (owner_id), 2026-10-28 (roles doc §4)
+OWNER_FALLBACK = "(n.tenant_id = $tenant_id AND (n.owner_id IS NULL OR n.owner_id = $fallback_owner_id))"
+OWNER_DUAL = f"(n.node_id IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC'] OR {OWNER_FALLBACK})"
+OWNER_TENANT_ONLY = f"(n.tenant_id IN ['SYSTEM', 'PUBLIC'] OR {OWNER_FALLBACK})"
 
 
 def tools(user="", guest="", allowed=None):
@@ -50,8 +54,11 @@ def params_used(clause):
 class VisibilityClauseTest(unittest.TestCase):
     CASES = [
         # (label, user, guest, allowed_ids, expected clause, expected params)
-        ("owner, Permify ok", OWNER, "", ["a"], DUAL, {"allowed_ids": ["a"], "tenant_id": TEST_TENANT_ID}),
-        ("owner, Permify unavailable", OWNER, "", None, TENANT_ONLY, {"tenant_id": TEST_TENANT_ID}),
+        ("owner, Permify ok", OWNER, "", ["a"], OWNER_DUAL,
+         {"allowed_ids": ["a"], "tenant_id": TEST_TENANT_ID, "fallback_owner_id": OWNER}),
+        ("owner, Permify unavailable", OWNER, "", None, OWNER_TENANT_ONLY,
+         {"tenant_id": TEST_TENANT_ID, "fallback_owner_id": OWNER}),
+        ("internal call (no user), Permify ok", "", "", ["a"], DUAL, {"allowed_ids": ["a"], "tenant_id": TEST_TENANT_ID}),
         ("internal call (no user)", "", "", None, TENANT_ONLY, {"tenant_id": TEST_TENANT_ID}),
         ("invitee, Permify ok", INVITEE, "", ["a"], STRICT, {"allowed_ids": ["a"]}),
         ("invitee, Permify unavailable → nothing", INVITEE, "", None, STRICT, {"allowed_ids": []}),
@@ -70,6 +77,18 @@ class VisibilityClauseTest(unittest.TestCase):
                 self.assertEqual(t._security_params(), params)
                 # AP-2: every parameter the clause uses is supplied, and nothing extra is passed
                 self.assertEqual(params_used(clause), set(params))
+
+    def test_exec_query_supplies_fallback_owner_only_where_used(self):
+        """AP-2: $fallback_owner_id reaches every query whose (inline-substituted) clause uses it, and no other."""
+        t = tools(OWNER, "", ["a"])
+        t.driver = mock.MagicMock()
+        legacy = "MATCH (e:Episode) WHERE (elementId(e) IN $allowed_ids OR e.tenant_id IN ['SYSTEM', 'PUBLIC']) RETURN e"
+        t._exec_query(legacy, allowed_ids=["a"], tenant_id=TEST_TENANT_ID)
+        query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
+        self.assertEqual(params_used(query), set(kwargs))
+        self.assertEqual(kwargs["fallback_owner_id"], OWNER)
+        t._exec_query("MATCH (n) RETURN n", fallback_owner_id=OWNER)
+        self.assertNotIn("fallback_owner_id", t.driver.execute_query.call_args[1])
 
     def test_no_owner_configured_means_no_tenant_visibility_for_users(self):
         with mock.patch.dict(os.environ, {"OWNER_USER_ID": ""}):
@@ -120,11 +139,15 @@ class NodesInTenantTest(unittest.TestCase):
     def test_query_and_params(self):
         t = tools()
         t.driver = mock.MagicMock()
-        t.driver.execute_query.return_value = mock.MagicMock(records=[{"node_id": "a", "own": True}, {"node_id": "p", "own": False}])
-        self.assertEqual(t.nodes_in_tenant(["a", "", None, "b", "p"]), {"own": ["a"], "everyone": ["p"]})
+        t.driver.execute_query.return_value = mock.MagicMock(records=[
+            {"node_id": "a", "in_tenant": True, "by_owner": True},
+            {"node_id": "m", "in_tenant": True, "by_owner": False},     # another user's source (2026-10-28)
+            {"node_id": "p", "in_tenant": False, "by_owner": True}])
+        self.assertEqual(t.nodes_in_tenant(["a", "", None, "m", "p"], owner_id=OWNER), {"own": ["a"], "everyone": ["p"]})
         query, kwargs = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
-        self.assertEqual(params_used(query), {"node_ids", "tenant_id", "everyone_tenants"})  # AP-2
-        self.assertEqual(kwargs, {"node_ids": ["a", "b", "p"], "tenant_id": TEST_TENANT_ID, "everyone_tenants": ["SYSTEM", "PUBLIC"]})
+        self.assertEqual(params_used(query), {"node_ids", "tenant_id", "everyone_tenants", "owner_id"})  # AP-2
+        self.assertEqual(kwargs, {"node_ids": ["a", "m", "p"], "tenant_id": TEST_TENANT_ID,
+                                  "everyone_tenants": ["SYSTEM", "PUBLIC"], "owner_id": OWNER})
 
     def test_empty_and_cap(self):
         from schema_guard import NODES_IN_TENANT_MAX_IDS
@@ -189,18 +212,50 @@ class PermifyDeleteFilterTest(unittest.TestCase):
 
 @mock.patch.dict(os.environ, {"OWNER_USER_ID": OWNER})
 class SourceWriterTest(unittest.TestCase):
-    def test_only_owner_or_internal_may_add_sources(self):
+    def test_owner_and_organization_people_may_add_sources(self):
+        """2026-10-28 (roles doc §3): owner, org admins and org members add sources; collaborators,
+        guests and the trial key never, whatever user id they carry."""
         import cortex_os_mentalmodel_server_sse as sse
-        for user, refused in [(OWNER, False), ("", False), (INVITEE, True), ("trial-user", True), ("guest-auth", True)]:
-            with self.subTest(user=user):
-                token = sse.user_id_var.set(user)
+        cases = [(OWNER, "", False), ("", "", False), ("user_member", "org_member", False), ("user_admin", "org_admin", False),
+                 (INVITEE, "", True), (INVITEE, "collaborator", True), ("trial-user", "trial", True),
+                 ("guest-auth", "guest", True), ("user_x", "made_up", True)]
+        for user, user_type, refused in cases:
+            with self.subTest(user=user, user_type=user_type):
+                token, type_token = sse.user_id_var.set(user), sse.user_type_var.set(user_type)
                 try:
                     err = sse._source_writer_error()
                 finally:
                     sse.user_id_var.reset(token)
+                    sse.user_type_var.reset(type_token)
                 self.assertEqual(err is not None, refused)
                 if refused:
-                    self.assertEqual(json.loads(err)["error"], "Only the owner can add sources.")
+                    self.assertEqual(json.loads(err)["error"], "Only members of an organization can add sources.")
+
+
+@mock.patch.dict(os.environ, {"OWNER_USER_ID": OWNER})
+class ForeignSourceTest(unittest.TestCase):
+    """Re-adding an address someone else already added is refused, without saying more (2026-10-28)."""
+
+    def check(self, requester, existing_owner):
+        import cortex_os_mentalmodel_server_sse as sse
+        records = [] if existing_owner is False else [{"owner_id": existing_owner}]
+        driver = mock.MagicMock()
+        driver.execute_query.return_value = mock.MagicMock(records=records)
+        with mock.patch.object(sse.GraphDatabase, "driver", return_value=driver), \
+                mock.patch.dict(os.environ, {"NEO4J_URI": "bolt://x", "NEO4J_USERNAME": "u", "NEO4J_PASSWORD": "p"}):
+            err = sse._foreign_source_error("DocumentSource", "uri", "https://x/a.pdf", TEST_TENANT_ID, requester)
+        return json.loads(err)["error"] if err else None
+
+    def test_rules(self):
+        self.assertIsNone(self.check("user_member", False))                      # new address
+        self.assertIsNone(self.check("user_member", "user_member"))              # their own source: new revision
+        self.assertEqual(self.check("user_member", "user_other"), "This source can't be added.")
+        self.assertEqual(self.check("user_member", None), "This source can't be added.")   # pre-2026-10-28 = owner's
+        self.assertIsNone(self.check(OWNER, "user_other"))                       # owner/internal not checked here
+        self.assertIsNone(self.check("", "user_other"))
+        with self.assertRaises(ValueError):
+            import cortex_os_mentalmodel_server_sse as sse
+            sse._foreign_source_error("Episode", "uri", "x", TEST_TENANT_ID, "user_member")
 
 
 if __name__ == "__main__":

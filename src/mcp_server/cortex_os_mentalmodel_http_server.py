@@ -131,7 +131,7 @@ class ToolHandler(BaseHTTPRequestHandler):
                     return
                 expert = ExpertTools(tenant_id=tenant_id)
                 try:
-                    classified = expert.nodes_in_tenant(params.get("node_ids") or [])
+                    classified = expert.nodes_in_tenant(params.get("node_ids") or [], owner_id=params.get("owner_id") or "")
                 finally:
                     expert.close()
                 self.send_response(200)

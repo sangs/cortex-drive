@@ -73,7 +73,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             MATCH (n)
             WHERE n.name IS NOT NULL AND n.tenant_id IN $tiers
               AND any(l IN labels(n) WHERE l IN $labels)
-            RETURN n.name AS name, labels(n) AS labels, n.node_id AS node_id, n.tenant_id AS tenant
+            RETURN n.name AS name, labels(n) AS labels, n.node_id AS node_id, n.tenant_id AS tenant,
+                   n.owner_id AS owner_id
             """,
             tiers=tiers, labels=label_list).data()
         for r in rows:
@@ -87,6 +88,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                 continue
             seen.add(key)
             entry = {"name": name, "domain": domain, "node_id": r["node_id"], "tier": tier}
+            if r["owner_id"]:
+                entry["owner_id"] = r["owner_id"]   # who added it: the owner's routing skips others' (2026-10-28)
             if domain in ROUTING_SOURCE_DOMAINS:
                 sn = short_name(name)
                 if sn:

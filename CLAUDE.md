@@ -128,6 +128,19 @@ writing code. If a change alters one of these paths, update the corresponding YA
 objects/connections and Flow step table in the same change — an unsynced diagram is worse than
 no diagram.
 
+### 13. Every Feature Is Designed for Every User Type and Visibility Tier
+
+User types: platform owner, organization admin, organization member, external collaborator,
+guest link. Reference: `documents/security/user-roles-and-access-model.md` (people) with
+`documents/architecture/visibility-tiers-design-2026-10-23.md` (content); access = type × tier.
+- Every feature design fills in the reference's §7 table: behaviour, enforcement point and a test
+  for each user type, plus which tier its content lands in and what happens on revoke/removal.
+  A design without it is not approved.
+- Access decisions are deterministic code (Permify, tier rules, gateway/MCP checks), never an LLM
+  or a prompt. Agents act on behalf of a user and never above that user's access.
+- New hierarchy levels (groups, workspaces) are added as new Permify relations and new table
+  columns, never by rewriting existing checks.
+
 ---
 
 ## File Ownership Map
@@ -144,6 +157,7 @@ no diagram.
 | Architecture decisions | `documents/architecture/` | Code comments |
 | Anti-pattern full narratives | `documents/architecture/anti-pattern-catalog.md` | This file (one-liners only here) |
 | Security / GACL decisions | `documents/security/` | Code comments |
+| User types and what each may do (Invariant 13) | `documents/security/user-roles-and-access-model.md` | Feature designs (they link and fill §7, never redefine roles) |
 | Sprint / pending work | `documents/daily_logs/daily_log-<date>.md` | This file |
 | Features and guardrails (demo, pitch, architecture reference) | `documents/cortex-drive-reference.md`; update it in the same change that adds or changes a feature or guardrail | Pitch decks, demo scripts |
 | IcePanel diagram index (C4 model + Flows) | `documents/architecture/icepanel-diagrams.md` | IcePanel UI (Flows only — model is YAML-sourced from `documents/architecture/icepanel/landscape-2026-09-21.yaml`) |

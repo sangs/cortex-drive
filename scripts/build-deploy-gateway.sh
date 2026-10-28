@@ -189,6 +189,24 @@ DB_PASSWORD=CORTEX_APP_DB_PASSWORD:latest,\
 CLERK_WEBHOOK_SECRET=CLERK_WEBHOOK_SECRET:latest,\
 RESEND_API_KEY=RESEND_API_KEY:latest${OPTIONAL_SECRETS}"
 
+# --- Organization membership reconcile (S2-46, 2026-10-28) -------------------
+# Clerk is the source of truth; Permify org#member/org#admin must match it. The Clerk webhook keeps
+# them in step; this catches any missed event. Secrets are read into this subshell only, never echoed.
+echo "--- Reconciling organization membership (Clerk → Permify)..."
+if ! (
+    export CLERK_SECRET_KEY="$(gcloud secrets versions access latest --secret=CLERK_SECRET_KEY --project "${PROJECT_ID}")"
+    export PERMIFY_API_URL="$(gcloud secrets versions access latest --secret=PERMIFY_API_URL --project "${PROJECT_ID}")"
+    export OWNER_USER_ID="$(gcloud secrets versions access latest --secret=OWNER_USER_ID --project "${PROJECT_ID}")"
+    export OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS}"
+    export PERMIFY_API_TOKEN="$(gcloud auth print-identity-token --audiences="${PERMIFY_API_URL}" 2>/dev/null || gcloud auth print-identity-token)"
+    cd "${REPO}/cortex-gateway" && node scripts/reconcile_org_membership.js --apply
+); then
+    echo "❌ Membership reconcile failed (the gateway is deployed). Re-run:"
+    echo "   cd cortex-gateway && node scripts/reconcile_org_membership.js --apply  (with the env above)"
+    exit 1
+fi
+echo "✓ Organization membership reconciled"
+
 echo ""
 echo "✓ cortex-gateway deployed"
 echo "  Custom domain: https://api.cortex-drive.com"
