@@ -50,6 +50,7 @@ const intentEnum = tools => tools.find(t => t.function.name === 'search_enterpri
         const r = await classifyDomain(q, null);
         ok(r.domain !== 'document', `flag off: never 'document' (${q})`);
     }
+    ok((await classifyDomain('According to the paper, how does BERT perform?', null)).domain !== 'document', 'flag off: the ambiguous entry never routes to document');
     const offOwner = toolsOfferedFor({ isGuest: false }, DEFS);
     eq(names(offOwner), ['search_enterprise_graph', 'query_relevant_chunks_hybrid_tool'], 'flag off: no document tool, no raw cypher');
     eq(intentEnum(offOwner), ['all', 'professional', 'podcast', 'website', 'federated'], 'flag off: domain_intent enum exactly as before M5');
@@ -61,6 +62,10 @@ const intentEnum = tools => tools.find(t => t.function.name === 'search_enterpri
         const r = await classifyDomain(q, null);
         eq([r.domain, r.confident], ['document', true], `flag on: routes to document (${q})`);
     }
+    // S2-61: ambiguous phrasing ("according to the paper") → document, unless the question names a known
+    // entity of a deferTo domain (career), in which case that evidence wins.
+    eq((await classifyDomain('According to the paper, how does BERT perform on the GLUE benchmark?', null)).domain, 'document', 'ambiguous phrasing, no career entity → document');
+    eq((await classifyDomain('According to the paper about Cortex-Drive, what was built?', null)).domain, 'career', 'ambiguous phrasing + career entity (Cortex-Drive) → career');
     for (const q of NON_DOC_QUESTIONS) {
         const r = await classifyDomain(q, null);
         ok(r.domain !== 'document', `flag on: non-document question not captured (${q})`);

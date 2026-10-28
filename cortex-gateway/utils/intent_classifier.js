@@ -69,7 +69,7 @@ function _wrapPhrase(escapedLiteral) {
 // where the "no ambiguous single-word Phase R triggers" discipline is actually enforced, not
 // just documented.
 function _buildIntentPatterns(config) {
-    return config.domains.map(({ domain_signal, patternSource, keywords }) => {
+    return config.domains.map(({ domain_signal, patternSource, keywords, deferTo }) => {
         const parts = [];
         if (patternSource) parts.push(patternSource);
         for (const kw of (keywords || [])) {
@@ -80,7 +80,7 @@ function _buildIntentPatterns(config) {
             parts.push(_wrapPhrase(_escapeRegex(kw)));
         }
         try {
-            return { domain_signal, pattern: new RegExp(parts.join('|'), 'i') };
+            return { domain_signal, pattern: new RegExp(parts.join('|'), 'i'), deferTo: deferTo || [] };
         } catch (e) {
             console.error(`[CLASSIFY] intent_keywords.js: malformed pattern for domain=${domain_signal}, this domain's Phase R entry is disabled:`, e.message);
             return null;
@@ -90,10 +90,12 @@ function _buildIntentPatterns(config) {
 
 const INTENT_PATTERNS = _buildIntentPatterns(INTENT_KEYWORDS_CONFIG);
 
+// Returns { domain_signal, deferTo } for the first matching entry, or null. `deferTo` (config) marks an
+// ambiguous phrasing: the caller lets named-entity evidence for one of those domains win (S2-61).
 function _regexClassify(q) {
-    for (const { domain_signal, pattern } of INTENT_PATTERNS) {
+    for (const { domain_signal, pattern, deferTo } of INTENT_PATTERNS) {
         if (domain_signal === DOCUMENT_DOMAIN && !documentDomainEnabled()) continue;
-        if (pattern.test(q)) return domain_signal;
+        if (pattern.test(q)) return { domain_signal, deferTo };
     }
     return null;
 }
@@ -402,10 +404,17 @@ async function classifyDomain(question, openaiClient) {
     }
 
     // Phase R: Regex — free, <1ms
-    const rxDomain = _regexClassify(q);
-    if (rxDomain) {
-        console.log(`[CLASSIFY] phase=R(regex) domain=${rxDomain}`);
-        return { domain: rxDomain, confident: true };
+    const rx = _regexClassify(q);
+    if (rx) {
+        if (rx.deferTo.length) {
+            const entity = _entityClassify(q);
+            if (entity && rx.deferTo.includes(entity.domain)) {
+                console.log(`[CLASSIFY] phase=R(regex) ambiguous=${rx.domain_signal} deferred to phase=E domain=${entity.domain} matched="${entity.matched}"`);
+                return { domain: entity.domain, confident: true };
+            }
+        }
+        console.log(`[CLASSIFY] phase=R(regex) domain=${rx.domain_signal}`);
+        return { domain: rx.domain_signal, confident: true };
     }
 
     // Phase E: Entity catalog — free, <1ms

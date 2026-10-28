@@ -78,6 +78,18 @@ module.exports = {
             keywords: []
         },
         {
+            domain_signal: 'document',
+            // AMBIGUOUS phrasing (S2-61, 2026-10-27): "according to the paper" usually means an ingested
+            // document ("…how does BERT perform on GLUE?"), but can name a career publication ("…the paper
+            // Sangeetha published on InfoQ"). `deferTo` lists the domains it may also mean: when the question
+            // also names a known entity of one of them (Phase E entity catalog), that evidence wins; otherwise
+            // this entry applies. Use `deferTo` for any phrasing shared between domains, never widen a strict
+            // entry. Evidence: S2-19 first-document test (the GLUE question routed to career).
+            patternSource: '\\baccording\\s+to\\s+the\\s+paper\\b',
+            keywords: [],
+            deferTo: ['career']
+        },
+        {
             domain_signal: 'podcast',
             // "episode" (matches episode/episodes as a prefix) and "discuss" (matches
             // discuss/discussed/discussing/discussion as a substring) are evidence-backed but
