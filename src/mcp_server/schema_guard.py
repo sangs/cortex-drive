@@ -184,6 +184,14 @@ L2_MODE_AUTO = 'auto'
 L2_MODE_BATCH = 'batch'
 L2_MODE_OFF = 'off'
 L2_MODES = [L2_MODE_AUTO, L2_MODE_BATCH, L2_MODE_OFF]
+# Entity catalog freshness (S2-60): a per-tenant counter bumped whenever a source's title is added (and,
+# in future, removed). The gateway re-reads the routing catalog for a tenant when its counter changes.
+# Any code path that adds or removes a document/website source MUST bump it (entity_catalog.bump_version).
+ENTITY_CATALOG_VERSION_KEY_PREFIX = 'entcat_version'
+# Short names for sources (S2-60 §9): the title part before one of these separators ("BERT: Pre-training…"
+# → "BERT"), used for routing only next to a document word (gateway intent_keywords.js).
+SOURCE_SHORT_NAME_SEPARATORS = [':', ' - ', ' — ', ' – ']
+SOURCE_SHORT_NAME_MIN_CHARS = 3
 # Test tenants (tests/test_tenant.py): the worker never writes Permify tuples for them (user rule).
 TEST_TENANT_ID_PREFIX = 'cortex-test-'
 

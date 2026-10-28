@@ -48,6 +48,10 @@ module.exports = {
     // the live Neo4j graph, and 116 real historical gateway queries (30-day window). Do not add a
     // word here without equivalent verification; if evidence doesn't exist yet, the word belongs
     // in Phase S's territory, not Phase R's.
+    // Short names of sources route only right before one of these words (S2-60 §9, 2026-10-27):
+    // "the BERT paper's figure" → the document titled "BERT: Pre-training of…". Not Phase R keywords —
+    // used only by Phase E with a source's short name, so "paper" alone never routes anything.
+    documentReferenceWords: ['paper', 'document', 'report', 'deck', 'slides', 'whitepaper'],
     singleWordAllowlist: [
         'podcast',      // user_queries.md Q1; live Episode content references "Data Engineering Podcast"; 13 real historical queries
         'career',       // user_queries.md Q3 canonical text + domain_signal; 23 real historical queries. KNOWN RISK (documented, not mitigated): could theoretically misroute a podcast-guest-career-content question into this domain (see verify_intent_classification.js's KNOWN_GAPS) — zero real occurrences found across 30 days of historical logs as of this audit. Revisit only if actually observed live, not preemptively — see the Phase R keyword-precision audit discussion for why speculative mitigation was rejected.

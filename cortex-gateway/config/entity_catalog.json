@@ -1,5 +1,6 @@
 {
-  "generated_at": "2026-10-28T00:24:06.732491+00:00",
+  "generated_at": "2026-10-28T00:51:23.996468+00:00",
+  "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 47,
   "domains": {
     "career": [
@@ -108,5 +109,404 @@
       "website",
       "podcast"
     ]
-  }
+  },
+  "entries": [
+    {
+      "name": "Capital Attribution & Market Risk Data Platform",
+      "domain": "career",
+      "node_id": "56f93d7e-d370-43da-b3f3-946ef6b1870e",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Cloud-Native Platform Orchestration & Workflow System",
+      "domain": "career",
+      "node_id": "d4cd750f-83d7-4176-a6e7-0e5d12a0bb6b",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Corporate Action Report Automation",
+      "domain": "career",
+      "node_id": "ffc91b37-15aa-4ccb-a135-33a01314d100",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Cortex-Drive",
+      "domain": "career",
+      "node_id": "0892113f-9e16-49f3-9adb-48b1e0110f61",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Enterprise Access Control, Search, and Distributed Infrastructure",
+      "domain": "career",
+      "node_id": "38c3d01a-e69c-4e43-a727-89bfcb70d6be",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Executive Workflow Management Platform (Ten Thousand Women)",
+      "domain": "career",
+      "node_id": "e596be7f-1936-431c-ada6-fd53527fd418",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "GE Healthcare",
+      "domain": "career",
+      "node_id": "1eb1d92a-c531-4d5b-8a81-a437745531d7",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "GOLDMAN SACHS & CO.",
+      "domain": "career",
+      "node_id": "27d91550-d87c-4eeb-aabb-c616f8c6558e",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Gain/Loss Cloud Native Microservice",
+      "domain": "career",
+      "node_id": "0b200346-c697-4664-a390-930f69eb0dcd",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Global Hackathons @ JPMorgan Chase",
+      "domain": "career",
+      "node_id": "6f5774e5-6749-43d8-b2e2-05347bd16659",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
+      "domain": "career",
+      "node_id": "9497d7e3-7243-401b-9b9f-63fa92dd4337",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Ignite Social Learning Community @ JPMC",
+      "domain": "career",
+      "node_id": "af4be31e-283b-46bc-8909-f8db3884a590",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Illinois Institute of Technology",
+      "domain": "career",
+      "node_id": "f860af26-5651-4a60-b60d-11720042510c",
+      "tier": "SYSTEM"
+    },
+    {
+      "name": "Image Management & Distributed Event Processing System",
+      "domain": "career",
+      "node_id": "90deb9e3-cc64-40c0-ba2a-68c8d4206724",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Independent Ventures",
+      "domain": "career",
+      "node_id": "31e8d7d6-033f-4a80-91b6-f1b42333c0be",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+      "domain": "career",
+      "node_id": "71d3da73-0999-4d6e-a56b-967fd4f4fc51",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Infrastructure for Instrument Data on DataMesh",
+      "domain": "career",
+      "node_id": "3558073e-399d-4823-b4cd-79ca6194632f",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Instrument Data on DataMesh",
+      "domain": "career",
+      "node_id": "e5114522-12ad-4478-8f09-c14648a43982",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "JPMorgan Chase",
+      "domain": "career",
+      "node_id": "86d7493f-7687-42cf-9d24-3babc5b8b1d7",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "MCP server for internal news access",
+      "domain": "career",
+      "node_id": "89d4eeeb-14ae-413d-8f68-6199e87af781",
+      "tier": "org"
+    },
+    {
+      "name": "MIT Professional Education",
+      "domain": "career",
+      "node_id": "cf382942-bb3d-45f5-949e-134428a41c2f",
+      "tier": "SYSTEM"
+    },
+    {
+      "name": "Macmet India Pvt. Ltd.",
+      "domain": "career",
+      "node_id": "bb24f0a1-fda3-4310-adc9-01266c638195",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Metadata Agent Architecture",
+      "domain": "career",
+      "node_id": "bec2c109-865e-4d8f-83c2-5948fc5c6e76",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Mezocliq LLC",
+      "domain": "career",
+      "node_id": "82b682cb-9a92-44eb-bf40-96e258ea4fff",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "National Institute of Technology",
+      "domain": "career",
+      "node_id": "47008e74-0db8-419e-8056-fc41a47e8fff",
+      "tier": "SYSTEM"
+    },
+    {
+      "name": "Open-Source AI Agents Contribution @ JPMC",
+      "domain": "career",
+      "node_id": "d05b6adf-8034-4546-9d2b-7258fbf5c005",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Radiology Imaging Platform Integration",
+      "domain": "career",
+      "node_id": "d8406ea9-4d88-4a60-b6d7-b9d885814989",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Settlement Setup Instruction Verification System",
+      "domain": "career",
+      "node_id": "f6d4acf4-1d4c-4199-85bb-6f95473d8544",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Simulation systems development and evaluation (Macmet)",
+      "domain": "career",
+      "node_id": "7ed8895d-e6fc-4795-a892-aa7df3853008",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Start of Day Open Short Orders Microservice",
+      "domain": "career",
+      "node_id": "60e080d9-d54f-4803-bc9f-3f4c5568d228",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Volarisation Engine @ IBM Dev Day 2026",
+      "domain": "career",
+      "node_id": "fb202c0f-ed79-4420-a4ee-bbfe8377c094",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "[1997] Bachelor's Degree (B.E.) in Electronics and Communication",
+      "domain": "career",
+      "node_id": "1b276b5e-7e80-4b36-8351-c9788cd39b0f",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "[2011] Master's Degree in Computer Science",
+      "domain": "career",
+      "node_id": "775c2fe1-2d9c-4846-8415-2da0ee73e1ba",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "[2026] InfoQ Certified Architect",
+      "domain": "career",
+      "node_id": "7aaec524-d9fb-48e3-a06d-3e243bf91f79",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "domain": "document",
+      "node_id": "43abaf56-c75f-454a-aa1f-782dbe131c92",
+      "tier": "org",
+      "short_name": "BERT"
+    },
+    {
+      "name": "Ben Lorica",
+      "domain": "person",
+      "node_id": "1f560c27-ee2c-42e1-a395-08dc07cdffd6",
+      "tier": "org"
+    },
+    {
+      "name": "Dan Sotolongo",
+      "domain": "person",
+      "node_id": "a65c0781-4000-4e38-a659-b80c17a62dfd",
+      "tier": "org"
+    },
+    {
+      "name": "Daniel Weeks",
+      "domain": "person",
+      "node_id": "9d17b371-cb58-47ea-94ea-22b53fb1284b",
+      "tier": "org"
+    },
+    {
+      "name": "David Hughes",
+      "domain": "person",
+      "node_id": "49309b55-a7d6-422b-bc9a-b47c63f7b17d",
+      "tier": "org"
+    },
+    {
+      "name": "David Soria Parra",
+      "domain": "person",
+      "node_id": "9ee2c1cf-4ce6-4718-91f3-a6258d90aa0d",
+      "tier": "org"
+    },
+    {
+      "name": "Edgar F. Codd",
+      "domain": "person",
+      "node_id": "a515d5e0-61b7-4a7d-997a-ba2d7b6aff7e",
+      "tier": "org"
+    },
+    {
+      "name": "Hannes M\u00fchleisen",
+      "domain": "person",
+      "node_id": "b18e95d2-3795-47c6-964b-45e150ee2e55",
+      "tier": "org"
+    },
+    {
+      "name": "Hendrycks and Gimpel",
+      "domain": "person",
+      "node_id": "ba2195dd-defd-4c95-a62c-6fe2ff266823",
+      "tier": "org"
+    },
+    {
+      "name": "Jacob Devlin",
+      "domain": "person",
+      "node_id": "cb56ca6a-7a24-4512-93cf-e6171ded5f64",
+      "tier": "org"
+    },
+    {
+      "name": "Jordi Mon Companys",
+      "domain": "person",
+      "node_id": "cea7591b-6b27-4f78-b714-6da545fa38d3",
+      "tier": "org"
+    },
+    {
+      "name": "Kenton Lee",
+      "domain": "person",
+      "node_id": "2fdfe3be-0ba7-4a52-90a2-a842533462a6",
+      "tier": "org"
+    },
+    {
+      "name": "Kristina Toutanova",
+      "domain": "person",
+      "node_id": "713246db-2967-469a-84ec-e36e82c0dfea",
+      "tier": "org"
+    },
+    {
+      "name": "Lee Atchison",
+      "domain": "person",
+      "node_id": "fb77241a-443a-4456-81f0-e78123ebd45e",
+      "tier": "org"
+    },
+    {
+      "name": "Mark Raasveldt",
+      "domain": "person",
+      "node_id": "fb267ef1-c75e-4740-83b5-1c3655d4ad23",
+      "tier": "org"
+    },
+    {
+      "name": "Ming-Wei Chang",
+      "domain": "person",
+      "node_id": "54fcc35f-5820-4384-ace0-89ac317402f6",
+      "tier": "org"
+    },
+    {
+      "name": "Prashanth Rao",
+      "domain": "person",
+      "node_id": "d022b003-1a8c-45d3-8d2e-a1575edd890a",
+      "tier": "org"
+    },
+    {
+      "name": "Ryan Blue",
+      "domain": "person",
+      "node_id": "67e74269-b1bf-48f1-8f86-f15916019c4e",
+      "tier": "org"
+    },
+    {
+      "name": "Sangeetha Ramadurai",
+      "domain": "person",
+      "node_id": "87ecec17-df1d-4b84-baf6-1c8ea576abc0",
+      "tier": "PUBLIC"
+    },
+    {
+      "name": "Tobias Macey",
+      "domain": "person",
+      "node_id": "d885ccda-d469-45f4-bd0b-19ff0e1ba995",
+      "tier": "org"
+    },
+    {
+      "name": "Anthropic And Model Context Protocol (MCP) With David Soria Parra",
+      "domain": "podcast",
+      "node_id": "906c42ed-a7d0-4aea-8847-cc6c50518491",
+      "tier": "org"
+    },
+    {
+      "name": "Data Archives - Software Engineering Daily",
+      "domain": "podcast",
+      "node_id": "0835ad9c-0fd9-43f4-9cb1-ec52cc6461ca",
+      "tier": "org"
+    },
+    {
+      "name": "Data Engineering Podcast",
+      "domain": "podcast",
+      "node_id": "dad0ca75-0a93-44da-9c6f-3fd1b9a5908b",
+      "tier": "org"
+    },
+    {
+      "name": "Delayed View Semantics In Incremental Data Processing",
+      "domain": "podcast",
+      "node_id": "34c370c7-d68f-494f-9ccc-cd2ed4606eaa",
+      "tier": "org"
+    },
+    {
+      "name": "High Performance And Low Overhead Graphs With KuzuDB",
+      "domain": "podcast",
+      "node_id": "0ac5e5b7-04ca-4ee1-ba6b-51d6b96765fc",
+      "tier": "org"
+    },
+    {
+      "name": "Iceberg at Netflix and Beyond with Ryan Blue",
+      "domain": "podcast",
+      "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+      "tier": "org"
+    },
+    {
+      "name": "Prompts as Functions: The BAML Revolution in AI Engineering",
+      "domain": "podcast",
+      "node_id": "1c8a09c4-00b8-4810-81af-4845a592bf6f",
+      "tier": "org"
+    },
+    {
+      "name": "Simplifying Lakehouse Ecosystem With DuckLake",
+      "domain": "podcast",
+      "node_id": "9fd383fd-cb46-4f7a-9e90-a8465272aa0f",
+      "tier": "org"
+    },
+    {
+      "name": "Software Engineering Daily",
+      "domain": "podcast",
+      "node_id": "2446f4eb-bc98-4753-908c-51a169664113",
+      "tier": "org"
+    },
+    {
+      "name": "The Data Exchange with Ben Lorica",
+      "domain": "podcast",
+      "node_id": "0e80a8f7-a8f2-4df1-8ab7-5fb1ce886d72",
+      "tier": "org"
+    },
+    {
+      "name": "Apache Iceberg",
+      "domain": "website",
+      "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+      "tier": "org"
+    },
+    {
+      "name": "Graph database",
+      "domain": "website",
+      "node_id": "3d6a6c28-8f25-4d1b-9e10-edbceb7ea751",
+      "tier": "org"
+    }
+  ]
 }

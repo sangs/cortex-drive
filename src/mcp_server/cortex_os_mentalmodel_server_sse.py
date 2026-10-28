@@ -21,6 +21,7 @@ from typing import Optional
 # Local dependency
 from expert_tools import ExpertTools
 from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT
+from entity_catalog import version_key as entity_catalog_version_key
 
 # Contextvar to hold the tenant_id extracted from the request headers
 tenant_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("tenant_id", default="")
@@ -545,6 +546,11 @@ async def register_website_source(
         return json.dumps({"error": str(e)})
 
     if result.get("node_id"):
+        # S2-60: the new title routes from the next question (gateway refetches this tenant's catalog).
+        try:
+            await _redis.incr(entity_catalog_version_key(graph_tenant))
+        except Exception as e:  # noqa: BLE001 — a missed bump only delays routing by this title
+            print(f"[CATALOG] version bump failed for {graph_tenant}: {type(e).__name__}: {e}")
         allowed_ids = await _get_current_allowed_ids()
         expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
         try:

@@ -140,6 +140,25 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"node_ids": classified["own"], "everyone_ids": classified["everyone"]}).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/entity_catalog":
+            # Gateway routing catalog for the caller's tenant (S2-60): refetched when entcat_version changes.
+            try:
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                if not tenant_id:
+                    self.send_error(400, "x-tenant-id required")
+                    return
+                from entity_catalog import build_entity_catalog
+                expert = ExpertTools(tenant_id=tenant_id)
+                try:
+                    catalog = build_entity_catalog(expert.driver, tenant_id)
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(catalog).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/get_composition_subtree":
             try:
                 content_length = int(self.headers.get("Content-Length", 0))

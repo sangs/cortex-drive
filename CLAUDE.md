@@ -139,6 +139,7 @@ no diagram.
 | Traversal relationship whitelist | `src/mcp_server/schema_guard.py` (`TRAVERSAL_RELATIONSHIPS`) | Inline in any traversal method |
 | Gateway domain manifest (JS) | `cortex-gateway/config/domain_manifests.json` | Inline sets in `index.js` |
 | Intent classification patterns | `cortex-gateway/config/intent_registry.json` + `utils/intent_classifier.js` | System prompt |
+| Routing name catalog (Phase E names, persons, bridges) | `src/mcp_server/entity_catalog.py` (builder) + `domain_registry.ROUTING_NAME_LABELS`; gateway cache `utils/entity_catalog.js` | `scripts/generate_entity_catalog.py` (thin caller only), inline label lists |
 | System prompt | `prompts/gateway_system_assistant.md` | Inline strings in `index.js` |
 | Architecture decisions | `documents/architecture/` | Code comments |
 | Anti-pattern full narratives | `documents/architecture/anti-pattern-catalog.md` | This file (one-liners only here) |
@@ -216,6 +217,7 @@ One-line rules. Full incident details: `documents/architecture/anti-pattern-cata
 - **AP-26** — LLM-callable raw query tools must be read-only (database-enforced READ access mode), owner-only, and never in the chat or guest tool lists; guest restrictions are enforced in code (`cortex-gateway/utils/tool_policy.js` allowlist + per-call check), never by prompt alone. `run_cypher_query` was LLM- and guest-callable with write access until S2-20 (2026-10-20)
 - **AP-27** — Identity overrides are explicit allowlists, never `X || real_id`: only `OWNER_USER_ID` + `OWNER_CLERK_SUBS` map to the owner (`utils/identity.js`). Tenant-wide visibility (`tenant_id` fallback in `_get_security_clause`) is owner-only; every other user sees strictly the Permify allowlist and nothing when Permify fails. Share/group routes carry an ownership check (`utils/share_authz.js`). Until S2-42 (2026-10-23) every signed-in user was the owner
 - **AP-29** — In single-domain search, shared-type nodes (Concept, Technology, Person, Topic, ReferenceLink) qualify only if SYSTEM/PUBLIC or linked to a label exclusive to that domain. Exclusive labels are computed by `domain_registry.get_exclusive_labels()` from the manifests — never hand-list them (M5-4, 2026-10-27)
+- **AP-30** — Routing data obeys the same visibility as answers: a catalog name may route a question only if the asker can open that node (`buildRoutingLookups()`: owner, SYSTEM/PUBLIC, or Permify allowlist). Any code path that adds or removes a source must `INCR entcat_version:{tenant}` (`entity_catalog.bump_version`); the gateway refetches the catalog from Bento on change (S2-60, 2026-10-27)
 - **AP-28** — Authorization-store deletes go through exact-match builders (`exactTupleFilter` / `_exact_tuple_filter`; Permify filters take `ids` lists and silently ignore unknown keys, which widens a delete) and are tested against the real Permify image (`tests/integration/verify_permify_deletes_live.js`). Never swallow an authorization write/delete error
 
 ---

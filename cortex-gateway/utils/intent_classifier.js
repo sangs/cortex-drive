@@ -100,39 +100,88 @@ function _regexClassify(q) {
     return null;
 }
 
-// ─── Phase E: Entity catalog lookup ──────────────────────────────────────────
-// Populated at deploy time by scripts/generate_entity_catalog.py.
-// Loaded once at module init — zero per-query overhead.
+// ─── Routing lookups: Phase E (entities), Phase B (bridges), named persons ────
+// Built from an entity catalog (scripts/generate_entity_catalog.py → src/mcp_server/entity_catalog.py).
+// Two sources (S2-60, documents/architecture/entity-catalog-freshness-design-2026-10-27.md):
+//   - the static file baked into the image (cold-start fallback; the default below);
+//   - a fresh per-tenant catalog the gateway fetches when a source is added (utils/entity_catalog.js),
+//     compiled once per question by buildRoutingLookups() with the asker's visibility.
+// Visibility (design §8, AP-30): a name routes a question only if the asker can open that node —
+// owner: every entry; anyone else: SYSTEM/PUBLIC entries plus node ids in their Permify allowlist.
+// allowedIds === null (Permify not configured, local dev) means tenant-wide, as for answers.
 
-let _entityLookup = null;  // Map<lowerCaseName, domainSignal>
+const STATIC_CATALOG_PATH = path.join(__dirname, '../config/entity_catalog.json');
+const GLOBAL_TIERS = new Set(['SYSTEM', 'PUBLIC']);
+const PERSON_ENTRY_DOMAIN = 'person';
+const MIN_ROUTING_NAME_CHARS = 3;
+// Short names (design §9) route only next to one of these words: "the BERT paper" → the BERT document.
+const DOCUMENT_REFERENCE_WORDS = INTENT_KEYWORDS_CONFIG.documentReferenceWords || [];
 
-function _loadEntityCatalog() {
+function _loadStaticCatalog() {
     try {
-        const catalogPath = path.join(__dirname, '../config/entity_catalog.json');
-        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
-        const lookup = new Map();
-        for (const [domain, names] of Object.entries(raw.domains || {})) {
-            for (const name of names) {
-                if (name && name.length > 2) lookup.set(name.toLowerCase(), domain);
-            }
-        }
-        if (lookup.size > 0) {
-            console.log(`[CLASSIFY] Entity catalog loaded: ${lookup.size} entities (${raw.generated_at || 'unknown date'})`);
-        } else {
-            console.log('[CLASSIFY] Entity catalog is empty — Phase E will pass through. Run scripts/generate_entity_catalog.py.');
-        }
-        return lookup;
+        const raw = JSON.parse(fs.readFileSync(STATIC_CATALOG_PATH, 'utf-8'));
+        console.log(`[CLASSIFY] Static entity catalog loaded (${raw.generated_at || 'unknown date'})`);
+        return raw;
     } catch (e) {
-        console.warn('[CLASSIFY] Entity catalog unavailable — Phase E skipped:', e.message);
-        return new Map();
+        console.warn('[CLASSIFY] Entity catalog unavailable — Phases E/B skipped until a catalog is fetched:', e.message);
+        return {};
     }
 }
 
-// Shared by _entityClassify and _bridgeClassify below — both need "does any key in this
-// lookup map appear as a substring of the question, and if multiple do, which one is
-// longest" (longest-match wins to avoid false positives on short names, e.g. "AI" matching
-// inside an unrelated longer entity name). Extracted 2026-08-29 — the two call sites had
-// duplicated this loop almost verbatim, differing only in what value each map stores.
+// Pre-S2-60 files have no `entries`: rebuild them from `domains`/`persons` (no ids, so visible to all —
+// exactly the old behaviour).
+function _catalogEntries(catalog) {
+    if (Array.isArray(catalog.entries)) return catalog.entries;
+    const entries = [];
+    for (const [domain, names] of Object.entries(catalog.domains || {})) {
+        for (const name of names) entries.push({ name, domain, tier: 'PUBLIC' });
+    }
+    for (const name of catalog.persons || []) entries.push({ name, domain: PERSON_ENTRY_DOMAIN, tier: 'PUBLIC' });
+    return entries;
+}
+
+function _shortNamePattern(shortName) {
+    if (!DOCUMENT_REFERENCE_WORDS.length) return null;
+    const words = DOCUMENT_REFERENCE_WORDS.map(_escapeRegex).join('|');
+    return new RegExp(`\\b${_escapeRegex(shortName)}(?:'s)?\\s+(?:${words})\\b`, 'i');
+}
+
+/**
+ * Compile the routing lookups for one asker.
+ * @param {object} catalog  entity catalog JSON (static file or Bento /entity_catalog)
+ * @param {{isOwner?: boolean, allowedIds?: string[]|null}} [viewer]  omitted → every entry (static default)
+ */
+function buildRoutingLookups(catalog, viewer) {
+    const allowed = viewer && !viewer.isOwner && Array.isArray(viewer.allowedIds) ? new Set(viewer.allowedIds) : null;
+    const canOpen = e => !allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id));
+    const entity = new Map();   // lowerCaseName → domain
+    const person = new Map();   // lowerCaseName → original-case name
+    const short = [];           // [{ pattern, domain, matched }]
+    let withheld = 0;
+    for (const e of _catalogEntries(catalog || {})) {
+        if (!e.name || e.name.length < MIN_ROUTING_NAME_CHARS) continue;
+        if (!canOpen(e)) { withheld++; continue; }
+        if (e.domain === PERSON_ENTRY_DOMAIN) {
+            person.set(e.name.toLowerCase(), e.name);
+            continue;
+        }
+        entity.set(e.name.toLowerCase(), e.domain);
+        const pattern = e.short_name ? _shortNamePattern(e.short_name) : null;
+        if (pattern) short.push({ pattern, domain: e.domain, matched: e.short_name.toLowerCase() });
+    }
+    const bridge = new Map();   // lowerCaseName → candidate domains (concept names, no per-node tier)
+    for (const [name, domains] of Object.entries((catalog || {}).bridge_entities || {})) {
+        if (name && name.length >= MIN_ROUTING_NAME_CHARS && Array.isArray(domains) && domains.length > 1) {
+            bridge.set(name.toLowerCase(), domains);
+        }
+    }
+    return { entity, person, short, bridge, withheld };
+}
+
+const STATIC_LOOKUPS = buildRoutingLookups(_loadStaticCatalog());
+
+// "Does any key of this map appear in the question; if several, which is longest" (longest match wins,
+// so a short name like "AI" can't beat a longer entity it sits inside).
 function _longestMatchLookup(query, lookupMap) {
     if (!lookupMap || lookupMap.size === 0) return null;
     const lower = query.toLowerCase();
@@ -149,113 +198,44 @@ function _longestMatchLookup(query, lookupMap) {
     return bestValue !== null ? { value: bestValue, matched: bestName } : null;
 }
 
-function _entityClassify(q) {
-    const lookup = documentDomainEnabled() ? _entityLookup : _withoutDocumentEntries(_entityLookup);
-    const match = _longestMatchLookup(q, lookup);
-    return match ? { domain: match.value, matched: match.matched } : null;
+// Document entries never route while the document flag is off.
+function _routable(domain) {
+    return domain !== DOCUMENT_DOMAIN || documentDomainEnabled();
 }
 
-// Document titles from the entity catalog must not route anything while the flag is off.
-let _entityLookupNoDocs = null;
-let _entityLookupNoDocsSource = null;
-function _withoutDocumentEntries(lookup) {
-    if (!lookup) return lookup;
-    if (_entityLookupNoDocsSource !== lookup) {
-        _entityLookupNoDocs = new Map([...lookup].filter(([, domain]) => domain !== DOCUMENT_DOMAIN));
-        _entityLookupNoDocsSource = lookup;
+function _entityClassify(q, lookups = STATIC_LOOKUPS) {
+    const entity = documentDomainEnabled() ? lookups.entity
+        : new Map([...lookups.entity].filter(([, domain]) => _routable(domain)));
+    const match = _longestMatchLookup(q, entity);
+    if (match) return { domain: match.value, matched: match.matched };
+    for (const { pattern, domain, matched } of lookups.short) {
+        if (_routable(domain) && pattern.test(q)) return { domain, matched, short: true };
     }
-    return _entityLookupNoDocs;
+    return null;
 }
 
-// ─── Phase B: Bridge-entity lookup (added 2026-08-24) ────────────────────────
-// Separate from _entityLookup above by design — a distinct, deliberately narrow
-// structure (only entities empirically verified to connect 2+ domains, see
-// generate_entity_catalog.py's bridge_entities section), not a change to the existing
-// single-domain lookup's behavior or contract. See
-// website-domain-cross-domain-routing-design-2026-08-24.md §2.2/§2.3.
-
-let _bridgeEntityLookup = null;  // Map<lowerCaseName, string[]> (candidate domains)
-
-function _loadBridgeEntities() {
-    try {
-        const catalogPath = path.join(__dirname, '../config/entity_catalog.json');
-        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
-        const lookup = new Map();
-        for (const [name, domains] of Object.entries(raw.bridge_entities || {})) {
-            if (name && name.length > 2 && Array.isArray(domains) && domains.length > 1) {
-                lookup.set(name.toLowerCase(), domains);
-            }
-        }
-        if (lookup.size > 0) {
-            console.log(`[CLASSIFY] Bridge entity catalog loaded: ${lookup.size} entities`);
-        }
-        return lookup;
-    } catch (e) {
-        console.warn('[CLASSIFY] Bridge entity catalog unavailable — Phase B skipped:', e.message);
-        return new Map();
-    }
-}
-
-function _bridgeClassify(q) {
-    const match = _longestMatchLookup(q, _bridgeEntityLookup);
+function _bridgeClassify(q, lookups = STATIC_LOOKUPS) {
+    const match = _longestMatchLookup(q, lookups.bridge);
     return match ? { domains: match.value, matched: match.matched } : null;
 }
 
 /**
- * Resolve bridge-entity detail for a question already classified as 'cross_domain' via
- * Phase B. Kept separate from classifyDomain()'s return value so its existing
- * plain-string contract (one call site: cortex-gateway/index.js) is untouched — callers
- * that need the bridge detail call this explicitly.
- *
- * @param {string} question
+ * Bridge-entity detail for a question already classified 'cross_domain' via Phase B (kept apart from
+ * classifyDomain()'s return value; website-domain-cross-domain-routing-design-2026-08-24.md §2.3).
  * @returns {{bridge_entity: string, candidate_domains: string[]} | null}
  */
-function getBridgeContext(question) {
-    const match = _bridgeClassify(question || '');
+function getBridgeContext(question, lookups = STATIC_LOOKUPS) {
+    const match = _bridgeClassify(question || '', lookups);
     if (!match) return null;
     return { bridge_entity: match.matched, candidate_domains: match.domains };
 }
 
-// ─── Named-person lookup (added 2026-09-14) ──────────────────────────────────
-// Separate from _entityLookup by design, same reasoning as _bridgeEntityLookup above —
-// Person is a shared/SYSTEM label excluded from domains.* (see generate_entity_catalog.py),
-// but "does this question name a specific person" is a distinct, real need: both the
-// career-backbone auto-inject and Tier 7 bridge-source resolution must prefer an
-// explicitly-named person over a tenant-default fallback. See
-// documents/architecture/auth-derived-identity-and-bridge-source-config-design-2026-09-12.md
-// §3.3/§4.2 — reuses the existing catalog + longest-match-lookup pattern rather than a new
-// mechanism.
-
-let _personLookup = null;  // Map<lowerCaseName, originalCaseName>
-
-function _loadPersonCatalog() {
-    try {
-        const catalogPath = path.join(__dirname, '../config/entity_catalog.json');
-        const raw = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
-        const lookup = new Map();
-        for (const name of raw.persons || []) {
-            if (name && name.length > 2) lookup.set(name.toLowerCase(), name);
-        }
-        if (lookup.size > 0) {
-            console.log(`[CLASSIFY] Person catalog loaded: ${lookup.size} names`);
-        }
-        return lookup;
-    } catch (e) {
-        console.warn('[CLASSIFY] Person catalog unavailable — named-person lookup skipped:', e.message);
-        return new Map();
-    }
-}
-
 /**
- * Resolve whether a question explicitly names a known person, independent of domain
- * classification. Returns the person's name in its original catalog casing (the exact
- * form Neo4j stores it as), suitable for passing straight through as a node_name argument.
- *
- * @param {string} question
- * @returns {string | null}
+ * Whether a question names a known person (career auto-inject, Tier 7 bridge source), independent of
+ * domain classification. Returns the name in its catalog casing, or null.
  */
-function classifyNamedPerson(question) {
-    const match = _longestMatchLookup(question || '', _personLookup);
+function classifyNamedPerson(question, lookups = STATIC_LOOKUPS) {
+    const match = _longestMatchLookup(question || '', lookups.person);
     return match ? match.value : null;
 }
 
@@ -389,7 +369,7 @@ const SAFE_DEFAULT = 'career';
  *   these apart — see resolveDomainInstruction() in index.js and
  *   documents/architecture/universal-discovery-fallback-design-2026-09-18.md.
  */
-async function classifyDomain(question, openaiClient) {
+async function classifyDomain(question, openaiClient, lookups = STATIC_LOOKUPS) {
     const q = question || '';
 
     // Phase B: Bridge entity — free, <1ms. Runs BEFORE Phase R's short-circuit (added
@@ -397,7 +377,7 @@ async function classifyDomain(question, openaiClient) {
     // real failure this fix addresses: "What does the Apache Iceberg Wikipedia page
     // discuss?" matched Phase R's podcast regex (the word "discuss") before Phase E's
     // entity lookup ever ran, so a genuine website<->podcast bridge was missed entirely.
-    const bridgeMatch = _bridgeClassify(q);
+    const bridgeMatch = _bridgeClassify(q, lookups);
     if (bridgeMatch) {
         console.log(`[CLASSIFY] phase=B(bridge) domain=cross_domain matched="${bridgeMatch.matched}" candidate_domains=${bridgeMatch.domains}`);
         return { domain: 'cross_domain', confident: true };
@@ -407,7 +387,7 @@ async function classifyDomain(question, openaiClient) {
     const rx = _regexClassify(q);
     if (rx) {
         if (rx.deferTo.length) {
-            const entity = _entityClassify(q);
+            const entity = _entityClassify(q, lookups);
             if (entity && rx.deferTo.includes(entity.domain)) {
                 console.log(`[CLASSIFY] phase=R(regex) ambiguous=${rx.domain_signal} deferred to phase=E domain=${entity.domain} matched="${entity.matched}"`);
                 return { domain: entity.domain, confident: true };
@@ -418,9 +398,9 @@ async function classifyDomain(question, openaiClient) {
     }
 
     // Phase E: Entity catalog — free, <1ms
-    const entityMatch = _entityClassify(q);
+    const entityMatch = _entityClassify(q, lookups);
     if (entityMatch) {
-        console.log(`[CLASSIFY] phase=E(entity) domain=${entityMatch.domain} matched="${entityMatch.matched}"`);
+        console.log(`[CLASSIFY] phase=E(entity) domain=${entityMatch.domain} matched="${entityMatch.matched}"${entityMatch.short ? ' (short name)' : ''}`);
         return { domain: entityMatch.domain, confident: true };
     }
 
@@ -462,8 +442,5 @@ async function classifyDomain(question, openaiClient) {
 
 // ─── Module init ──────────────────────────────────────────────────────────────
 
-_entityLookup = _loadEntityCatalog();
-_bridgeEntityLookup = _loadBridgeEntities();
-_personLookup = _loadPersonCatalog();
-
-module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS, getBridgeContext, classifyNamedPerson };
+module.exports = { classifyDomain, initClassifier, INTENT_PATTERNS, getBridgeContext, classifyNamedPerson,
+                   buildRoutingLookups };

@@ -26,6 +26,7 @@ from schema_guard import (  # noqa: E402
     WORKER_MODES,
 )
 from worker.status import acquire_ingest_lock, connect, release_ingest_lock, write_status  # noqa: E402
+from entity_catalog import bump_version as bump_catalog_version  # noqa: E402
 
 TASK_ENV_VAR = "DOCUMENT_TASK"
 REQUIRED_TASK_FIELDS = ("uri", "tenant_id", "owner_id")
@@ -138,6 +139,7 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
             write_status(tenant_id, uri, DOCUMENT_INGEST_STATUS_UNCHANGED, redis_client, **summary)
             return {"state": DOCUMENT_INGEST_STATUS_UNCHANGED, **summary}
         result = adapter.process_item(uri, engine)
+        bump_catalog_version(redis_client, graph_tenant)   # S2-60: the title routes from the next question
         parsed = result.pop("parsed")
         summary = {k: result[k] for k in ("source_node_id", "blocks", "entities", "grounded_links")}
         summary["pages"] = parsed.page_count

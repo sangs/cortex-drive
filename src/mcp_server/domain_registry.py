@@ -384,6 +384,23 @@ CONTENT_DOMAINS = ["professional", "podcast", "website", "document"]
 _NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
 
 
+# Routing name catalog (S2-60): the labels whose `name` routes a question to a domain by naming it (the
+# gateway classifier's Phase E). Not get_exclusive_labels(): that returns nothing for career and includes
+# passage-level labels (Chunk, Section, ContentBlock) nobody names. Shared labels (Concept, Technology,
+# Topic, …) are excluded — they appear in several domains. Keys are gateway domain signals.
+ROUTING_NAME_LABELS = {
+    "career": ["Company", "Role", "Project", "Startup", "Hackathon", "ThoughtLeadership",
+               "Degree", "Institution", "Certification", "OpenSource", "Team"],
+    "podcast": ["Episode", "Podcast"],
+    "website": ["WebsiteSource"],
+    "document": ["DocumentSource"],
+}
+# Named-person detection (gateway classifyNamedPerson): its own section, never a routing domain.
+ROUTING_PERSON_LABELS = ["Person"]
+# Sources whose titles get short names (S2-60 §9).
+ROUTING_SOURCE_DOMAINS = ["website", "document"]
+
+
 def get_exclusive_labels(domain: str) -> list:
     """Labels that exist only in this content domain (e.g. podcast → Episode, Podcast, Chunk, Source)."""
     domain = (domain or "").lower()

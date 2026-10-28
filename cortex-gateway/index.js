@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson } = require('./utils/intent_classifier');
+const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson, buildRoutingLookups } = require('./utils/intent_classifier');
 const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
 const { fetchWithColdStartRetry } = require('./utils/upstream_fetch.js');
 
@@ -656,6 +656,23 @@ async function bentoNodesInTenant(nodeIds, tenantId) {
     return { own: body.node_ids || [], everyone: body.everyone_ids || [] };
 }
 const shareAuthz = createShareAuthz({ db, permify, isOwner, nodesInTenant: bentoNodesInTenant });
+
+// Routing catalog (S2-60): per-tenant, refetched from Bento when a source is added; static file as fallback.
+const { createEntityCatalogStore } = require('./utils/entity_catalog');
+async function bentoEntityCatalog(tenantId) {
+    const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+    const token = await getCloudRunToken(bentoBase);
+    const res = await fetch(`${bentoBase}/entity_catalog`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, ...(token ? { Authorization: token } : {}) },
+        body: '{}',
+    });
+    if (!res.ok) throw new Error(`Bento /entity_catalog → ${res.status}`);
+    return res.json();
+}
+let STATIC_ENTITY_CATALOG = {};
+try { STATIC_ENTITY_CATALOG = require('./config/entity_catalog.json'); } catch { /* classifier logs it */ }
+const entityCatalogStore = createEntityCatalogStore({ redis, fetchCatalog: bentoEntityCatalog, staticCatalog: STATIC_ENTITY_CATALOG });
 
 
 /**
@@ -3164,8 +3181,8 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
 // cross_domain path (named-target "how did X influence Y" questions). Kept separate so
 // classifyDomain()'s own contract is untouched — see
 // website-domain-cross-domain-routing-design-2026-08-24.md §2.3.
-function resolveBridgeContext(domainSignal, question) {
-    const bridgeContext = domainSignal === 'cross_domain' ? getBridgeContext(question) : null;
+function resolveBridgeContext(domainSignal, question, routingLookups) {
+    const bridgeContext = domainSignal === 'cross_domain' ? getBridgeContext(question, routingLookups) : null;
     if (bridgeContext) {
         console.log(`[QUERY] bridge_entity="${bridgeContext.bridge_entity}" candidate_domains=${bridgeContext.candidate_domains}`);
     }
@@ -3366,10 +3383,14 @@ app.post('/query', authMiddleware, async (req, res) => {
         // real, bounded value used everywhere else (graph-rendering domain guard, bridge
         // context, response payload) — unchanged. See
         // documents/architecture/universal-discovery-fallback-design-2026-09-18.md.
-        const { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai);
+        // Names route only for sources this asker can open (S2-60 §8, AP-30).
+        const routingLookups = buildRoutingLookups(await entityCatalogStore.getCatalog(tenantId),
+                                                   { isOwner: isOwner(userId), allowedIds });
+        if (routingLookups.withheld) console.log(`[CLASSIFY] ${routingLookups.withheld} catalog name(s) withheld (not visible to this user)`);
+        const { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai, routingLookups);
         console.log(`[QUERY] domain_signal=${domainSignal} confident=${domainConfident}`);
 
-        const bridgeContext = resolveBridgeContext(domainSignal, question);
+        const bridgeContext = resolveBridgeContext(domainSignal, question, routingLookups);
         const crossDomainInstruction = buildCrossDomainInstruction(bridgeContext);
 
         // Low-confidence override (2026-09-18): when nothing actually matched and domain_signal
@@ -3693,7 +3714,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §3.4.
                 if (domainSignal === 'career' && accumulatedGraph.nodes.length > 0) {
                     try {
-                        const namedPerson = classifyNamedPerson(question);
+                        const namedPerson = classifyNamedPerson(question, routingLookups);
                         const backboneMcp = await callMcpTool(tenantId, 'get_cluster_context', {
                             ...(namedPerson ? { node_name: namedPerson } : {}),
                             backbone_only: true,
