@@ -407,7 +407,9 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                             {!generatedUrl && linkPreview && (
                                 <div className="bg-white/5 border border-indigo-500/30 rounded-xl p-3 space-y-1" data-testid="link-preview">
                                     <p className="text-xs text-slate-200 font-semibold">
-                                        {linkPreview.roots} item{linkPreview.roots === 1 ? '' : 's'} will be shared: {linkPreview.totalNodes} node{linkPreview.totalNodes === 1 ? '' : 's'} in total, including everything under them.
+                                        {linkPreview.roots > 0
+                                            ? `${linkPreview.roots} item${linkPreview.roots === 1 ? '' : 's'} will be shared: ${linkPreview.totalNodes} node${linkPreview.totalNodes === 1 ? '' : 's'} in total, including everything under them.`
+                                            : 'Everything in this view is Public or built-in: the link shows it live, and nothing else is shared.'}
                                     </p>
                                     {linkPreview.dropped.everyone > 0 && (
                                         <p className="text-[11px] text-slate-500">{linkPreview.dropped.everyone} Public or built-in node{linkPreview.dropped.everyone === 1 ? ' is' : 's are'} already visible to everyone and not part of the share.</p>

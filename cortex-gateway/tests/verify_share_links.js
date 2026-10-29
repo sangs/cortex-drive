@@ -81,7 +81,10 @@ const ROOTS = { roots: ['a', 'c'], covered: ['b'], others: [], everyone: ['pub']
     {
         const { links } = harness({ shareRoots: { roots: [], covered: [], others: [], everyone: ['pub'], unknown: [], total_nodes: 0 } });
         const p = await links.plan({ nodeIds: ['pub'], userId: 'owner', tenantId: 'org' });
-        eq([p.status, p.error, p.everyone_visible], [409, NOTHING_TO_SHARE_ERROR, true], 'only Public nodes: nothing to share (409)');
+        eq([p.ok, p.roots, p.layoutNodeIds, p.dropped.everyone], [true, [], ['pub'], 1], 'only Public nodes: a link with no tuples that shows them live');
+        const h2 = harness({ shareRoots: { roots: [], covered: [], others: [], everyone: [], unknown: ['grouper-1'], total_nodes: 0 } });
+        const p2 = await h2.links.plan({ nodeIds: ['grouper-1'], userId: 'owner', tenantId: 'org' });
+        eq([p2.status, p2.error], [409, NOTHING_TO_SHARE_ERROR], 'no real nodes at all: nothing to share (409)');
     }
 
     // ── create, token, view, list, revoke ─────────────────────────────────────────────────────

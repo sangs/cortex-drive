@@ -18,7 +18,7 @@ const crypto = require('crypto');
 
 const LINK_SUBJECT_PREFIX = 'share_link:';
 const LINK_TOKEN_SEPARATOR = '.';
-const NOTHING_TO_SHARE_ERROR = 'Nothing here can be shared: everything is already visible to everyone (Public or built-in).';
+const NOTHING_TO_SHARE_ERROR = 'Nothing here can be shared: the view has no nodes from the knowledge graph.';
 const NOT_YOURS_ERROR = 'Some of these nodes were added by someone else, so you cannot share them. Remove them from the view and try again.';
 
 const sha256 = value => crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -57,7 +57,9 @@ function createShareLinks({ db, permify, bento, redis, isOwner = () => false, se
         const allowed = await Promise.all(toCheck.map(id => permify.checkPermission(id, userId, 'can_share')));
         const denied = toCheck.filter((_, i) => !allowed[i]);
         if (denied.length) return { ok: false, status: 403, error: NOT_YOURS_ERROR, denied };
-        if (!r.roots.length) return { ok: false, status: 409, error: NOTHING_TO_SHARE_ERROR, everyone_visible: true };
+        // A view of Public/built-in nodes only is still a useful link (e.g. for viewers who aren't signed in):
+        // it needs no Permify tuples and shows that content live. Refuse only a view with no real nodes.
+        if (!r.roots.length && !r.everyone.length) return { ok: false, status: 409, error: NOTHING_TO_SHARE_ERROR };
         return {
             ok: true,
             roots: r.roots,
