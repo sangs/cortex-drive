@@ -385,7 +385,7 @@ async function buildQ2WriterCall(node, openaiClient) {
             }
         ],
         max_tokens: 200,
-        temperature: 0.3
+        temperature: ANSWER_TEMPERATURE
     });
     return response.choices[0].message.content?.trim() || null;
 }
@@ -438,6 +438,10 @@ const promptsDir = path.join(__dirname, '..', 'prompts');
 const gatewaySystemPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_system_assistant.md'), 'utf-8');
 const gatewaySecurityPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_security_guest.md'), 'utf-8');
 const gatewayRerankerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_search_reranker.md'), 'utf-8');
+// Sampling temperature for the chat tool loop and the Q2 writer (2026-10-29). 0 = take the most likely
+// wording: the default (1.0) let the model coin terms that appear in no tool result ("stable cortical
+// memory" for "stable, traceable source of truth"). Grounding is checked for facts and URLs, not wording.
+const ANSWER_TEMPERATURE = 0;
 const gatewayQ2WriterPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_q2_writer.md'), 'utf-8').trim();
 const gatewayDomainInstructionPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_domain_instruction.md'), 'utf-8');
 // Phase B M5: appended only on `document` turns (reachable only with ENABLE_DOCUMENT_DOMAIN), so every
@@ -3112,6 +3116,7 @@ app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
                 messages: messages,
                 tools: offeredTools,
                 tool_choice: "auto",
+                temperature: ANSWER_TEMPERATURE,
             });
 
             const assistantMessage = response.choices[0].message;
@@ -3568,6 +3573,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                 messages: messages,
                 tools: offeredTools,
                 tool_choice: "auto",
+                temperature: ANSWER_TEMPERATURE,
             });
 
             const assistantMessage = response.choices[0].message;
