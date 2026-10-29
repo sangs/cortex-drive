@@ -52,6 +52,8 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     const [generatedUrl, setGeneratedUrl] = useState('');
     const [linkCopied, setLinkCopied] = useState(false);
     const [linkError, setLinkError] = useState('');
+    // What a live link would include, shown before it is created (unified shares §3).
+    const [linkPreview, setLinkPreview] = useState<{ roots: number; totalNodes: number; dropped: { everyone: number; display: number } } | null>(null);
 
     const nodeIds = graphData.nodes
         .map(n => n.node_id || n.id)
@@ -156,37 +158,37 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
         } catch { /* non-fatal */ } finally { setGroupSharing(false); }
     }
 
+    // Live link (unified shares phase 1, 2026-10-29): the server picks the roots and stores no graph data.
+    const linkErrorText = (err: any, status: number) =>
+        err?.denied?.length ? `${err.error} (${err.denied.length} node${err.denied.length > 1 ? 's' : ''})` : (err?.error || `Server error (${status})`);
+
+    async function previewLink() {
+        if (nodeIds.length === 0) return;
+        setLinkGenerating(true);
+        setLinkError('');
+        try {
+            const headers = await authHeaders();
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link/preview`, { method: 'POST', headers, body: JSON.stringify({ nodeIds }) });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) { setLinkError(linkErrorText(data, resp.status)); return; }
+            setLinkPreview(data);
+        } catch (e: any) {
+            setLinkError(e?.message || 'Network error — try again.');
+        } finally { setLinkGenerating(false); }
+    }
+
     async function generateLink() {
         if (nodeIds.length === 0) return;
         setLinkGenerating(true);
         setLinkError('');
         try {
             const headers = await authHeaders();
-            // Strip ECharts metadata — keep only display fields to minimise payload
-            const cleanNodes = graphData.nodes.map((n: any) => ({
-                id: n.id || n.node_id,
-                node_id: n.node_id || n.id,
-                name: n.name,
-                type: n.type,
-                description: n.description,
-                links: n.links,
-                link_titles: n.link_titles,
-            }));
-            const cleanLinks = graphData.links.map((l: any) => ({
-                source: typeof l.source === 'object' ? (l.source?.id || l.source?.node_id) : l.source,
-                target: typeof l.target === 'object' ? (l.target?.id || l.target?.node_id) : l.target,
-                type: l.type,
-            }));
-            const body: any = { nodeIds, graphData: { nodes: cleanNodes, links: cleanLinks }, title: linkTitle || undefined };
+            const body: any = { nodeIds, title: linkTitle || undefined };
             if (linkExpiry > 0) body.expiresAt = new Date(Date.now() + linkExpiry * 86400000).toISOString();
             const resp = await fetch(`${GATEWAY}/api/share/graph-link`, { method: 'POST', headers, body: JSON.stringify(body) });
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                setLinkError(err.error || `Server error (${resp.status})`);
-                return;
-            }
-            const data = await resp.json();
-            if (data.shareUrl) setGeneratedUrl(data.shareUrl);
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) { setLinkError(linkErrorText(data, resp.status)); return; }
+            if (data.shareUrl) { setGeneratedUrl(data.shareUrl); setLinkPreview(null); }
             else setLinkError('No URL returned — try again.');
         } catch (e: any) {
             setLinkError(e?.message || 'Network error — try again.');
@@ -402,11 +404,22 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                 <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{linkError}</p>
                             )}
 
+                            {!generatedUrl && linkPreview && (
+                                <div className="bg-white/5 border border-indigo-500/30 rounded-xl p-3 space-y-1" data-testid="link-preview">
+                                    <p className="text-xs text-slate-200 font-semibold">
+                                        {linkPreview.roots} item{linkPreview.roots === 1 ? '' : 's'} will be shared: {linkPreview.totalNodes} node{linkPreview.totalNodes === 1 ? '' : 's'} in total, including everything under them.
+                                    </p>
+                                    {linkPreview.dropped.everyone > 0 && (
+                                        <p className="text-[11px] text-slate-500">{linkPreview.dropped.everyone} Public or built-in node{linkPreview.dropped.everyone === 1 ? ' is' : 's are'} already visible to everyone and not part of the share.</p>
+                                    )}
+                                </div>
+                            )}
+
                             {!generatedUrl ? (
-                                <button onClick={generateLink} disabled={linkGenerating || nodeIds.length === 0}
+                                <button onClick={linkPreview ? generateLink : previewLink} disabled={linkGenerating || nodeIds.length === 0}
                                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40">
                                     {linkGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
-                                    Generate Public Link
+                                    {linkPreview ? 'Create live link' : 'Check what will be shared'}
                                 </button>
                             ) : (
                                 <div className="space-y-3">
@@ -418,7 +431,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                         </button>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                        <button onClick={() => { setGeneratedUrl(''); setLinkTitle(''); setLinkExpiry(0); }}
+                                        <button onClick={() => { setGeneratedUrl(''); setLinkTitle(''); setLinkExpiry(0); setLinkPreview(null); }}
                                             className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
                                             Generate another link
                                         </button>
@@ -432,7 +445,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
 
                             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-1">
                                 <p className="text-[11px] font-bold text-amber-400">Anyone with this link can view the graph</p>
-                                <p className="text-[10px] text-slate-500">No sign-in required. The graph snapshot is frozen at the time you generate this link. Good for sharing with recruiters or hiring managers.</p>
+                                <p className="text-[10px] text-slate-500">No sign-in required. The link is live and read-only: viewers see the current graph, never a copy, and lose access the moment you revoke it or make a node private.</p>
                             </div>
                         </div>
                     )}

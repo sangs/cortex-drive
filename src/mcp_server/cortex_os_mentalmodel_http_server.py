@@ -140,6 +140,49 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"node_ids": classified["own"], "everyone_ids": classified["everyone"]}).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/share_roots":
+            # Unified shares phase 1 (2026-10-29): which selected nodes become share roots. Internal call.
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                if not tenant_id:
+                    self.send_error(400, "x-tenant-id required")
+                    return
+                expert = ExpertTools(tenant_id=tenant_id)
+                try:
+                    result = expert.share_roots(params.get("node_ids") or [], owner_id=params.get("owner_id") or "")
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/nodes_by_ids":
+            # Live shared graph view (unified shares phase 1): the given nodes the requester may see now.
+            # Requires a requester: an empty x-user-id would be an internal (whole-tenant) call.
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                user_id = self.headers.get("x-user-id") or ""
+                if not tenant_id or not user_id:
+                    self.send_error(400, "x-tenant-id and x-user-id required")
+                    return
+                allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
+                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
+                try:
+                    result = expert.nodes_by_ids(params.get("node_ids") or [])
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/entity_catalog":
             # Gateway routing catalog for the caller's tenant (S2-60): refetched when entcat_version changes.
             try:

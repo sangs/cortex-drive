@@ -31,6 +31,11 @@ entity agent {
     relation delegated_by @user
 }
 
+// A share link (unified shares phase 1, 2026-10-29): an audience like a user or group. The gateway
+// resolves a valid link token to the principal share_link:<link_id>; its view is
+// LookupEntity(node, can_view, subject=share_link:<link_id>). No relations of its own.
+entity share_link {}
+
 rule check_not_private(is_private boolean) {
     is_private != true
 }
@@ -42,7 +47,7 @@ entity node {
     relation owner          @user
     relation parent         @node                           // written at ingestion for every COMPOSITION_RELATIONSHIP edge
     relation tenant_viewer  @org#member                    // written once per node: org-wide visibility
-    relation shared_viewer  @user @group#member @agent     // written once at share time on the root node only
+    relation shared_viewer  @user @group#member @agent @share_link   // written once at share time on each root node only
 
     // non_owner_view: any inherited or directly-granted access, blocked by privacy marker
     permission non_owner_view = (tenant_viewer or shared_viewer or parent.can_view) and check_not_private(is_private)

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useParams } from 'next/navigation';
-import { useUser, useAuth } from '@clerk/nextjs';
+import { useUser } from '@clerk/nextjs';
 import {
     Lock, ExternalLink, X, Calendar, ChevronRight,
     Sparkles, Network, Loader2, Sun, Moon
@@ -194,7 +194,6 @@ function SnapshotPanel({
 export default function GraphViewPage() {
     const params = useParams<{ token: string }>();
     const { user }     = useUser();
-    const { getToken } = useAuth();
 
     const [status, setStatus]       = useState<'loading' | 'ok' | 'error'>('loading');
     const [meta, setMeta]           = useState<GraphMeta | null>(null);
@@ -219,8 +218,9 @@ export default function GraphViewPage() {
             .catch(() => setStatus('error'));
     }, [params.token]);
 
+    // Node details through the LINK's permissions (unified shares phase 1, 2026-10-29): the same for
+    // everyone who opens the link, signed in or not; never the viewer's own access.
     const hydrateNode = useCallback(async (freshNode: any) => {
-        if (!user) return;
         bentoAbortRef.current?.abort();
         bentoAbortRef.current = new AbortController();
 
@@ -233,10 +233,9 @@ export default function GraphViewPage() {
         setSelectedNode(freshNode);
         setIsBentoHydrating(true);
         try {
-            const token = await getToken();
-            const resp = await fetch(`${GATEWAY}/api/get_node_details`, {
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link/${params.token}/node_details`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ node_name: freshNode.name, node_id: freshNode.node_id }),
                 signal: bentoAbortRef.current.signal,
             });
@@ -283,12 +282,12 @@ export default function GraphViewPage() {
         } finally {
             setIsBentoHydrating(false);
         }
-    }, [user, getToken]);
+    }, [params.token]);
 
     const handleNodeClick = useCallback((node: any) => {
         setSelectedNode(node);
-        if (user) hydrateNode(node);
-    }, [user, hydrateNode]);
+        hydrateNode(node);
+    }, [hydrateNode]);
 
     const formattedDate = meta?.createdAt
         ? new Date(meta.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })

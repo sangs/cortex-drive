@@ -694,6 +694,12 @@ def validate_upsert(label: str, data: Dict[str, Any]):
 # Cap on node ids per Bento /nodes_in_tenant request (gateway owner share checks, S2-43).
 # Matches MAX_NODES_PER_CHECK in cortex-gateway/utils/share_authz.js.
 NODES_IN_TENANT_MAX_IDS = 200
+# Unified shares phase 1 (2026-10-29, security/unified-shares-design-2026-10-29.md §3): a shared root grants
+# everything under it through these edges (Permify parent tuples are written for exactly these at ingestion),
+# up to the Permify lookup depth.
+SHARE_INHERITANCE_MAX_DEPTH = 5
+# Permify subject prefix for a share link principal (gateway-assigned x-user-id = "share_link:<link_id>").
+SHARE_LINK_SUBJECT_PREFIX = "share_link:"
 
 # ── Founder's career graph → PUBLIC (S2-44, visibility-tiers-design-2026-10-23.md §4) ─────────────────
 # Relationships from the founder's Person node that define the career graph.

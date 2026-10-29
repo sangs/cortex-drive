@@ -3257,6 +3257,77 @@ class ExpertTools:
         return {"own": [r["node_id"] for r in result.records if r["in_tenant"] and r["by_owner"]],
                 "everyone": [r["node_id"] for r in result.records if not r["in_tenant"]]}
 
+    def share_roots(self, node_ids: list, owner_id: str = "") -> dict:
+        """Root selection for a share (unified shares §3, 2026-10-29). Internal call only (Bento).
+        Of the node ids the sharer selected (e.g. every node of a graph view):
+        - `unknown`: not a node in this tenant or SYSTEM/PUBLIC (grouper/display-only ids) → dropped;
+        - `everyone`: SYSTEM/PUBLIC, already visible to all → dropped (never refused);
+        - `others`: in the tenant but added by another user → the gateway checks Permify `can_share`;
+        - `roots`: the sharer's nodes (plus `others` once allowed) with no ancestor in the selection
+          (a descendant is covered by inheritance, so a tuple on it would be redundant);
+        - `covered`: selected nodes under another selected node;
+        - `total_nodes`: roots plus everything under them (what the recipient can reach).
+        """
+        from schema_guard import (NODES_IN_TENANT_MAX_IDS, VISIBLE_TO_EVERYONE_TENANTS,
+                                  COMPOSITION_RELATIONSHIPS, SHARE_INHERITANCE_MAX_DEPTH)
+        ids = list(dict.fromkeys(str(i) for i in (node_ids or []) if i))[:NODES_IN_TENANT_MAX_IDS]
+        empty = {"roots": [], "covered": [], "others": [], "everyone": [], "unknown": [], "total_nodes": 0}
+        if not ids:
+            return empty
+        found = self._exec_query(
+            "MATCH (n) WHERE n.node_id IN $node_ids AND (n.tenant_id = $tenant_id OR n.tenant_id IN $everyone_tenants) "
+            "RETURN DISTINCT n.node_id AS node_id, n.tenant_id = $tenant_id AS in_tenant, "
+            "n.owner_id IS NULL OR n.owner_id = $owner_id AS by_owner",
+            node_ids=ids, tenant_id=self.tenant_id, everyone_tenants=VISIBLE_TO_EVERYONE_TENANTS, owner_id=owner_id,
+        ).records
+        kind = {r["node_id"]: ("own" if r["by_owner"] else "others") if r["in_tenant"] else "everyone" for r in found}
+        candidates = [i for i in ids if kind.get(i) in ("own", "others")]
+        covered = set()
+        if len(candidates) > 1:
+            covered = {r["node_id"] for r in self._exec_query(
+                f"MATCH (a)-[:{'|'.join(COMPOSITION_RELATIONSHIPS)}*1..{SHARE_INHERITANCE_MAX_DEPTH}]->(c) "
+                "WHERE a.node_id IN $candidates AND c.node_id IN $candidates AND a.tenant_id = $tenant_id "
+                "RETURN DISTINCT c.node_id AS node_id",
+                candidates=candidates, tenant_id=self.tenant_id).records}
+        roots = [i for i in candidates if i not in covered]
+        total = 0
+        if roots:
+            total = self._exec_query(
+                f"MATCH (r)-[:{'|'.join(COMPOSITION_RELATIONSHIPS)}*0..{SHARE_INHERITANCE_MAX_DEPTH}]->(d) "
+                "WHERE r.node_id IN $roots AND r.tenant_id = $tenant_id RETURN count(DISTINCT d) AS total",
+                roots=roots, tenant_id=self.tenant_id).records[0]["total"]
+        return {"roots": roots, "covered": [i for i in candidates if i in covered],
+                "others": [i for i in candidates if kind[i] == "others"],
+                "everyone": [i for i in ids if kind.get(i) == "everyone"],
+                "unknown": [i for i in ids if i not in kind], "total_nodes": total}
+
+    def nodes_by_ids(self, node_ids: list) -> dict:
+        """The live graph for a shared view (unified shares phase 1): the given nodes the requester may
+        see right now (security clause: for a share link, its Permify allowlist + SYSTEM/PUBLIC), with
+        their current fields, and the relationships between them. Nothing is read from a stored copy."""
+        from schema_guard import NODES_IN_TENANT_MAX_IDS
+        ids = list(dict.fromkeys(str(i) for i in (node_ids or []) if i))[:NODES_IN_TENANT_MAX_IDS]
+        if not ids:
+            return {"nodes": [], "links": []}
+        records = self._exec_query(
+            f"MATCH (n) WHERE n.node_id IN $node_ids AND {self._get_security_clause('n')} RETURN n",
+            node_ids=ids, **self._security_params()).records
+        nodes = []
+        for rec in records:
+            node = rec["n"]
+            props = dict(node)
+            labels = list(node.labels)
+            nodes.append({"id": node.element_id, "element_id": node.element_id, "node_id": props.get("node_id"),
+                          "name": props.get("name") or props.get("title") or "", "type": labels[0] if labels else "",
+                          "labels": labels, "description": (props.get("description") or "")[:500],
+                          "url": props.get("uri") or props.get("url")})
+        visible = [n["node_id"] for n in nodes]
+        links = [{"source": r["s"], "target": r["t"], "type": r["type"]} for r in self._exec_query(
+            "MATCH (a)-[r]->(b) WHERE a.node_id IN $visible AND b.node_id IN $visible "
+            "RETURN DISTINCT elementId(a) AS s, elementId(b) AS t, type(r) AS type",
+            visible=visible).records] if len(visible) > 1 else []
+        return {"nodes": nodes, "links": links}
+
     def close(self):
         """Close the Neo4j driver"""
         if self.driver:

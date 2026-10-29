@@ -663,6 +663,29 @@ async function bentoNodesInTenant(nodeIds, tenantId, ownerId = '') {
     return { own: body.node_ids || [], everyone: body.everyone_ids || [] };
 }
 const shareAuthz = createShareAuthz({ db, permify, isOwner, nodesInTenant: bentoNodesInTenant });
+// Live share links (unified shares phase 1). Gateway→Bento via direct fetch + OIDC (AP-18).
+async function bentoPost(path, tenantId, body, principalId = '') {
+    const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+    const token = await getCloudRunToken(bentoBase);
+    const res = await fetchWithColdStartRetry(`${bentoBase}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId,
+                   ...(principalId ? { 'x-user-id': principalId } : {}), ...(token ? { Authorization: token } : {}) },
+        body: JSON.stringify(body),
+    }, { label: path });
+    if (!res.ok) throw new Error(`Bento ${path} → ${res.status}`);
+    return res.json();
+}
+const { createShareLinks } = require('./utils/share_links');
+const shareLinks = createShareLinks({
+    db, permify, redis, isOwner,
+    secret: process.env.GATEWAY_SHARE_SECRET || '',
+    frontendUrl: process.env.FRONTEND_URL || 'https://app.cortex-drive.com',
+    bento: {
+        shareRoots: (nodeIds, tenantId, ownerId) => bentoPost('/share_roots', tenantId, { node_ids: nodeIds, owner_id: ownerId }),
+        nodesByIds: (nodeIds, tenantId, principalId) => bentoPost('/nodes_by_ids', tenantId, { node_ids: nodeIds }, principalId),
+    },
+});
 
 // Routing catalog (S2-60): per-tenant, refetched from Bento when a source is added; static file as fallback.
 const { createEntityCatalogStore } = require('./utils/entity_catalog');
@@ -2236,101 +2259,101 @@ app.post('/api/share/graph-island', authMiddleware, shareAuthz.requireNodeShare(
 
 // --- Public Graph Links (Loom-style) ---
 
-app.post('/api/share/graph-link', authMiddleware, shareAuthz.requireNodeShare(req => (req.body && req.body.nodeIds) || []), async (req, res) => {
-    const userSub  = req.headers['x-user-id'];
-    const tenantId = req.headers['x-tenant-id'];
-    const { nodeIds, graphData, title, expiresAt } = req.body;
-    if (!nodeIds?.length || !graphData) return res.status(400).json({ error: 'nodeIds and graphData required' });
+// Live graph-view links (unified shares phase 1, 2026-10-29; utils/share_links.js). A link is a Permify
+// audience (share_link:<id>) with one tuple per root; its page reads the nodes live through the link's
+// permissions. Until 2026-10-29 this stored a frozen copy of the graph in Cloud SQL (graph_share_links).
+const graphLinkRequest = req => ({
+    nodeIds: (req.body && req.body.nodeIds) || [], userId: req.headers['x-user-id'], tenantId: req.headers['x-tenant-id'],
+});
+const sendShareRefusal = (res, p) => res.status(p.status).json({
+    error: p.error, ...(p.denied ? { denied: p.denied } : {}), ...(p.everyone_visible ? { everyone_visible: true } : {}),
+});
+// What a share would include, before the sharer confirms (design §3).
+app.post('/api/share/graph-link/preview', authMiddleware, requireCapability('share', 'You cannot share from this account.'), async (req, res) => {
     try {
-        const token = crypto.randomBytes(32).toString('base64url');
-        const result = await db.query(
-            `INSERT INTO graph_share_links (share_token, node_ids, graph_snapshot, title, owner_sub, org_id, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING link_id`,
-            [token, nodeIds, JSON.stringify(graphData), title || null, userSub, tenantId, expiresAt || null]
-        );
-        const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/graph-view/${token}`;
-        res.json({ shareUrl, linkId: result.rows[0].link_id });
+        const p = await shareLinks.plan(graphLinkRequest(req));
+        if (!p.ok) return sendShareRefusal(res, p);
+        res.json({ roots: p.roots.length, totalNodes: p.totalNodes, dropped: p.dropped });
     } catch (err) {
-        console.error('[/api/share/graph-link POST]', err.message);
-        res.status(500).json({ error: err.message });
+        console.error('[/api/share/graph-link/preview]', err.message);
+        res.status(err.status || 503).json({ error: 'Could not check what would be shared' });
     }
 });
-
-app.get('/api/share/graph-link/:token', async (req, res) => {
-    const { token } = req.params;
+app.post('/api/share/graph-link', authMiddleware, requireCapability('share', 'You cannot share from this account.'), async (req, res) => {
+    const { title, expiresAt } = req.body || {};
     try {
-        const row = await db.query(
-            `SELECT * FROM graph_share_links
-             WHERE share_token = $1
-               AND revoked_at IS NULL
-               AND (expires_at IS NULL OR expires_at > NOW())`,
-            [token]
-        );
-        if (!row.rows.length) return res.status(404).json({ error: 'Link not found or expired' });
-        const link = row.rows[0];
-        // increment view stats (fire-and-forget)
-        db.query(
-            `UPDATE graph_share_links SET view_count = view_count + 1, last_viewed_at = NOW() WHERE link_id = $1`,
-            [link.link_id]
-        ).catch(() => {});
-        // resolve owner display name from Clerk (best-effort)
+        const r = await shareLinks.createGraphLink({ ...graphLinkRequest(req), title, expiresAt });
+        if (!r.ok) return sendShareRefusal(res, r);
+        res.json({ shareUrl: r.shareUrl, linkId: r.linkId, roots: r.plan.roots.length, totalNodes: r.plan.totalNodes });
+    } catch (err) {
+        console.error('[/api/share/graph-link POST]', err.message);
+        res.status(err.status || 500).json({ error: 'Could not create the link' });
+    }
+});
+// Public: anyone with the link (phase 1 keeps today's audience; link policies arrive in phase 4).
+app.get('/api/share/graph-link/:token', async (req, res) => {
+    try {
+        const r = await shareLinks.viewGraphLink(req.params.token);
+        if (!r) return res.status(404).json({ error: 'Link not found or expired' });
         let ownerName = 'CortexDrive';
         try {
-            const owner = await clerkClient.users.getUser(link.owner_sub);
+            const owner = await clerkClient.users.getUser(r.link.owner_sub);
             ownerName = `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || ownerName;
         } catch {}
-        const snapshot = typeof link.graph_snapshot === 'string'
-            ? JSON.parse(link.graph_snapshot)
-            : link.graph_snapshot;
         res.json({
-            meta: { title: link.title, ownerName, createdAt: link.created_at, nodeCount: link.node_ids.length },
-            nodes: snapshot.nodes || [],
-            links: snapshot.links || [],
+            meta: { title: r.link.title, ownerName, createdAt: r.link.created_at, nodeCount: r.graph.nodes.length, live: true },
+            nodes: r.graph.nodes,
+            links: r.graph.links,
         });
     } catch (err) {
         console.error('[/api/share/graph-link/:token]', err.message);
         res.status(500).json({ error: 'Failed to load graph' });
     }
 });
-
-app.get('/api/share/graph-links', authMiddleware, async (req, res) => {
-    const userSub = req.headers['x-user-id'];
+// Node details on a link page, through the LINK's permissions (not the viewer's own).
+app.post('/api/share/graph-link/:token/node_details', async (req, res) => {
     try {
-        const result = await db.query(
-            `SELECT link_id, title,
-                    array_length(node_ids, 1) AS node_count,
-                    created_at, expires_at, revoked_at, view_count, last_viewed_at,
-                    share_token,
-                    CASE WHEN revoked_at IS NOT NULL THEN 'revoked'
-                         WHEN expires_at IS NOT NULL AND expires_at < NOW() THEN 'expired'
-                         ELSE 'active' END AS status
-             FROM graph_share_links WHERE owner_sub = $1 ORDER BY created_at DESC`,
-            [userSub]
-        );
-        const frontendUrl = process.env.FRONTEND_URL || 'https://app.cortex-drive.com';
-        res.json(result.rows.map(r => ({ ...r, shareUrl: `${frontendUrl}/graph-view/${r.share_token}` })));
+        const link = await shareLinks.resolveToken(req.params.token);
+        if (!link) return res.status(404).json({ error: 'Link not found or expired' });
+        const bentoOidcToken = await getCloudRunToken(bentoServerUrl);
+        const bentoResponse = await fetchWithColdStartRetry(`${bentoServerUrl}/get_node_details`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': link.org_id,
+                'x-user-id': shareLinks.linkPrincipal(link.link_id),
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
+            },
+            body: JSON.stringify({ node_id: req.body && req.body.node_id, node_name: req.body && req.body.node_name }),
+        }, { label: '/api/share/graph-link/node_details' });
+        if (!bentoResponse.ok) return res.status(bentoResponse.status).send(await bentoResponse.text());
+        res.json(await bentoResponse.json());
     } catch (err) {
-        console.error('[/api/share/graph-links]', err.message);
-        res.status(500).json({ error: err.message });
+        console.error('[/api/share/graph-link/node_details]', err.message);
+        res.status(500).json({ error: 'Failed to load node details' });
     }
 });
-
-app.delete('/api/share/graph-link/:linkId', authMiddleware, async (req, res) => {
-    const userSub = req.headers['x-user-id'];
-    const { linkId } = req.params;
+app.get('/api/share/graph-links', authMiddleware, async (req, res) => {
     try {
-        const result = await db.query(
-            `UPDATE graph_share_links SET revoked_at = NOW()
-             WHERE link_id = $1 AND owner_sub = $2 AND revoked_at IS NULL RETURNING link_id`,
-            [linkId, userSub]
-        );
-        if (!result.rows.length) return res.status(404).json({ error: 'Link not found' });
+        res.json(await shareLinks.listLinks(req.headers['x-user-id']));
+    } catch (err) {
+        console.error('[/api/share/graph-links]', err.message);
+        res.status(err.status || 500).json({ error: 'Could not list links' });
+    }
+});
+app.delete('/api/share/graph-link/:linkId', authMiddleware, async (req, res) => {
+    try {
+        const ok = await shareLinks.revokeLink(req.params.linkId, req.headers['x-user-id']);
+        if (!ok) return res.status(404).json({ error: 'Link not found' });
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/share/graph-link DELETE]', err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Could not revoke the link' });
     }
 });
+
+
+
 
 // List all active grants issued by the current user — grouped shape (one grant, N audience rows).
 app.get('/api/share/grants', authMiddleware, async (req, res) => {

@@ -133,6 +133,30 @@ async function writePrivacyAttribute(nodeId, isPrivate) {
   }
 }
 
+// Principal ids are bare Clerk subs (users) or "share_link:<link_id>" (unified shares phase 1, 2026-10-29).
+// Mirrors permify_utils.subject_for_principal; gateway-assigned only (x-user-id, AP-23).
+const SHARE_LINK_PREFIX = 'share_link:';
+function subjectForPrincipal(principalId) {
+  const id = String(principalId || '');
+  return id.startsWith(SHARE_LINK_PREFIX)
+    ? { type: 'share_link', id: id.slice(SHARE_LINK_PREFIX.length) }
+    : { type: 'user', id };
+}
+
+/** Give a share link view access to one root node (one shared_viewer tuple). */
+async function shareNodeWithLink(nodeId, linkId) {
+  return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [{
+    entity:   { type: 'node', id: nodeId },
+    relation: 'shared_viewer',
+    subject:  { type: 'share_link', id: linkId },
+  }] });
+}
+
+/** Remove a share link's access to one root node (exact delete, AP-28). Throws on failure. */
+async function revokeNodeLink(nodeId, linkId) {
+  return revokeNodeAccess(nodeId, { type: 'share_link', id: linkId });
+}
+
 /** Check if a user has a specific permission on a node. */
 async function checkPermission(nodeId, userId, permission = 'can_view') {
   if (!configured()) return false;
@@ -140,7 +164,7 @@ async function checkPermission(nodeId, userId, permission = 'can_view') {
     metadata:   { depth: maxDepth(), schema_version: '', snap_token: '' },
     entity:     { type: 'node', id: nodeId },
     permission,
-    subject:    { type: 'user', id: userId },
+    subject:    subjectForPrincipal(userId),
     context:    { tuples: [], attributes: [], data: {} },
   });
   return data.can === 'CHECK_RESULT_ALLOWED';
@@ -153,7 +177,7 @@ async function listViewableNodeIds(userId) {
     metadata:    { depth: maxDepth(), schema_version: '', snap_token: '' },
     entity_type: 'node',
     permission:  'can_view',
-    subject:     { type: 'user', id: userId },
+    subject:     subjectForPrincipal(userId),
     context:     { tuples: [], attributes: [], data: {} },
   });
   return data.entity_ids || [];
@@ -260,4 +284,7 @@ module.exports = {
   checkPermission,
   listViewableNodeIds,
   listNodeAccess,
+  subjectForPrincipal,
+  shareNodeWithLink,
+  revokeNodeLink,
 };

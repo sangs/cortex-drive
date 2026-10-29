@@ -274,6 +274,15 @@ async def revoke_agent_session(agent_session_id: str, node_ids: list[str]) -> No
 # Permission resolution (used by MCP + Bento Redis cache population)
 # ---------------------------------------------------------------------------
 
+def subject_for_principal(principal_id: str) -> dict:
+    """Permify subject for a gateway-assigned principal id. A share link (unified shares phase 1,
+    2026-10-29) is "share_link:<link_id>"; everything else is a user (bare Clerk sub)."""
+    from schema_guard import SHARE_LINK_SUBJECT_PREFIX
+    if principal_id.startswith(SHARE_LINK_SUBJECT_PREFIX):
+        return {"type": "share_link", "id": principal_id[len(SHARE_LINK_SUBJECT_PREFIX):]}
+    return {"type": "user", "id": principal_id}
+
+
 async def list_viewable_node_ids(user_id: str) -> list[str] | None:
     """Return all node UUIDs visible to a user via Permify can_view permission.
 
@@ -295,7 +304,7 @@ async def list_viewable_node_ids(user_id: str) -> list[str] | None:
         "metadata":    {"depth": _max_depth(), "schema_version": "", "snap_token": ""},
         "entity_type": "node",
         "permission":  "can_view",
-        "subject":     {"type": "user", "id": user_id},
+        "subject":     subject_for_principal(user_id),
         "context":     {"tuples": [], "attributes": [], "data": {}},
     }
     try:
