@@ -168,7 +168,17 @@ if echo "$CURRENT_ENV_JSON" | grep -q '"PUBLIC_TRIAL_'; then
     exit 1
 fi
 
-gcloud run deploy cortex-gateway \
+# Candidate deploy (2026-10-29): CANDIDATE_TAG=<tag> deploys a revision with NO traffic, reachable only at
+# https://<tag>---<service url host>, for a regression run before users see it. Promote with:
+#   gcloud run services update-traffic cortex-gateway --to-latest --region "$REGION" --project "$PROJECT_ID"
+CANDIDATE_FLAGS=""
+if [ -n "${CANDIDATE_TAG:-}" ]; then
+    CANDIDATE_FLAGS="--no-traffic --tag ${CANDIDATE_TAG}"
+    echo "Candidate deploy: no traffic, tag ${CANDIDATE_TAG}"
+fi
+
+# shellcheck disable=SC2086  # CANDIDATE_FLAGS is intentionally word-split
+gcloud run deploy cortex-gateway ${CANDIDATE_FLAGS} \
     --image "${REGISTRY}/cortex-gateway:latest" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
