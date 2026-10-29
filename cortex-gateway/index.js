@@ -642,6 +642,8 @@ const { isOwner, resolvePrincipal, routingTenantFor, USER_TYPES } = require('./u
 const { createOrgMembershipSync, membershipFromClerkEvent } = require('./utils/org_membership_sync');
 const { createShareAuthz } = require('./utils/share_authz');
 const { createVisibilityGuard } = require('./utils/source_visibility');
+const { capabilitiesFor, principalFromRequest, createCapabilityGuard } = require('./utils/capabilities');
+const requireCapability = createCapabilityGuard(isOwner);
 // Owner share checks also accept nodes of the owner's own tenant (most nodes have no Permify owner
 // tuple, S2-41). One Bento query per request; Gateway→Bento via direct fetch + OIDC (AP-18, Flow 5).
 async function bentoNodesInTenant(nodeIds, tenantId, ownerId = '') {
@@ -1355,6 +1357,12 @@ app.post('/api/webhooks/clerk', async (req, res) => {
 // Uses x-raw-user-id (real Clerk sub) to avoid OWNER_USER_ID substitution.
 // Rate-limited per user via Redis TTL (1 hour) to avoid hammering the DB.
 
+// What the signed-in user may do (S2-69): the UI shows only these controls; the routes enforce the
+// same rules (utils/capabilities.js), so hiding a control is never the protection.
+app.get('/api/me/capabilities', authMiddleware, (req, res) => {
+    res.json({ type: req.headers['x-user-type'] || '', capabilities: capabilitiesFor(principalFromRequest(req, isOwner)) });
+});
+
 app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {
     const userSub  = req.headers['x-raw-user-id'] || req.headers['x-user-id'];
     const cacheKey = `pending_activated:${userSub}`;
@@ -1498,10 +1506,11 @@ app.delete('/api/share/revoke-link', authMiddleware, shareAuthz.requireNodeShare
 // Permify is the enforcement layer. share_grants (Cloud SQL) is the audit/UI record.
 // Every share writes ONE shared_viewer tuple on the root; children inherit via parent chain.
 
-// "Share with the whole organization" toggle: one tenant_viewer tuple in Permify (S2-37). Owner
-// only (S2-43); POST switches it on, DELETE switches it off (S2-40).
+// "Share with the whole organization" toggle: one tenant_viewer tuple in Permify (S2-37). The node's
+// owner (S2-43), and only if they are the platform owner or an org admin (S2-69, roles doc §3);
+// POST switches it on, DELETE switches it off (S2-40).
 const tenantWideNode = req => req.body && req.body.node_id;
-app.post('/api/share/tenant-wide', authMiddleware, shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
+app.post('/api/share/tenant-wide', authMiddleware, requireCapability('shareOrgWide', 'Only an organization admin can make a node visible to the whole organization.'), shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
     const { node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     try {
@@ -1514,7 +1523,7 @@ app.post('/api/share/tenant-wide', authMiddleware, shareAuthz.requireNodeShare(t
     }
 });
 
-app.delete('/api/share/tenant-wide', authMiddleware, shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
+app.delete('/api/share/tenant-wide', authMiddleware, requireCapability('shareOrgWide', 'Only an organization admin can make a node visible to the whole organization.'), shareAuthz.requireNodeShare(tenantWideNode), async (req, res) => {
     const { node_id } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     try {
@@ -1853,7 +1862,7 @@ app.get('/api/user/resolve', authMiddleware, async (req, res) => {
 
 // ─── Custom Group Management ─────────────────────────────────────────────────
 
-app.post('/api/groups', authMiddleware, async (req, res) => {
+app.post('/api/groups', authMiddleware, requireCapability('manageGroups', 'Only members of an organization can create groups.'), async (req, res) => {
     const { name, slug, description } = req.body;
     const orgId    = req.headers['x-tenant-id'];
     const issuedBy = req.headers['x-user-id'];
@@ -4163,16 +4172,10 @@ app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('co
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 
-// Who may add sources (2026-10-28, roles doc §3): the owner and organization admins/members. Never
-// collaborators, guests or the trial key. Ingested nodes are owned (Permify + owner_id) by whoever
+// Who may add sources: utils/capabilities.js (owner, organization admins and members; never
+// collaborators, guests or the trial key). Ingested nodes are owned (Permify + owner_id) by whoever
 // added them, Private by default. The MCP tools apply the same rule (x-user-type).
-const SOURCE_WRITER_USER_TYPES = new Set([USER_TYPES.OWNER, USER_TYPES.ORG_ADMIN, USER_TYPES.ORG_MEMBER]);
-const requireSourceWriter = (req, res, next) => {
-    if (req.guestAuth === true || !SOURCE_WRITER_USER_TYPES.has(req.headers['x-user-type'] || '')) {
-        return res.status(403).json({ error: 'Only members of an organization can add sources.' });
-    }
-    return next();
-};
+const requireSourceWriter = requireCapability('addSource', 'Only members of an organization can add sources.');
 // Phase B M3': documents are queued for the ingestion worker; cortex-mcp never parses them.
 // Visibility chosen when adding a source (S2-44 / M5-11): private (default) | organization | public.
 const requireVisibilityChoice = createVisibilityGuard({ isOwner });

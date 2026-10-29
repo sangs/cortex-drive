@@ -33,6 +33,7 @@ import {
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
 import { useMCP } from "@/hooks/use-mcp";
+import { useCapabilities } from "@/hooks/use-capabilities";
 
 // 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
 const EnterpriseGraph = dynamic(() => import("@/components/EnterpriseGraph"), { ssr: false });
@@ -63,6 +64,8 @@ import {
 export default function DashboardPage() {
     const { user } = useUser();
     const { getToken } = useAuth();
+    // Controls this user may use (S2-69); all false until the gateway answers.
+    const caps = useCapabilities();
     const { isConnected, query, callTool, abortQuery } = useMCP();
     const [messages, setMessages] = useState<any[]>([]);
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
@@ -1111,6 +1114,7 @@ export default function DashboardPage() {
                             <History className="w-4 h-4" />
                             Conversation History
                         </button>
+                        {caps.addSource && (
                         <button
                             onClick={() => setAddSourceModalOpen(true)}
                             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white border border-slate-200 text-slate-900 shadow-sm hover:border-indigo-600 hover:text-indigo-600 transition-all font-bold group"
@@ -1118,6 +1122,7 @@ export default function DashboardPage() {
                             <Globe className="w-4 h-4" />
                             Add Source
                         </button>
+                        )}
                     </div>
 
                     {/* System Status Section */}
@@ -1232,9 +1237,11 @@ export default function DashboardPage() {
                                         </span>
                                     </div>
                                 </div>
+                                {(caps.share || caps.manageGroups) && (
                                 <Link href="/settings/sharing" title="Sharing & Access">
                                     <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
                                 </Link>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -1417,7 +1424,7 @@ export default function DashboardPage() {
                                     </button>
                                 )}
 
-                                {graphData.nodes.length > 0 && (
+                                {graphData.nodes.length > 0 && caps.share && (
                                     <button
                                         onClick={() => setGraphShareModalOpen(true)}
                                         className="bg-white/80 hover:bg-indigo-50 border border-border hover:border-indigo-200 text-slate-600 hover:text-indigo-600 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg"
@@ -1468,8 +1475,9 @@ export default function DashboardPage() {
                             />
 
                             <AddSourceModal
-                                open={addSourceModalOpen}
+                                open={addSourceModalOpen && caps.addSource}
                                 onClose={() => setAddSourceModalOpen(false)}
+                                allowedVisibilities={caps.sourceVisibilities}
                             />
                         </div>
 

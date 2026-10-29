@@ -191,7 +191,7 @@ function run(mw, req) {
     }
     ok(routes >= 25, `found the share/group routes (${routes})`);
     eq(unchecked, [], 'every share/group route has an ownership check or a documented exemption (S2-43)');
-    ok(/app\.delete\('\/api\/share\/tenant-wide', authMiddleware, shareAuthz\.requireNodeShare/.test(src), 'tenant-wide off route exists and is owner-only (S2-40)');
+    ok(/app\.delete\('\/api\/share\/tenant-wide', authMiddleware, requireCapability\('shareOrgWide'[^)]*\), shareAuthz\.requireNodeShare/.test(src), 'tenant-wide off route exists, admin-only and node-owner-only (S2-40, S2-69)');
     ok(/app\.post\('\/api\/register_website_source', authMiddleware, requireSourceWriter/.test(src), 'website registration is owner-only');
     ok(/app\.post\('\/api\/register_document_source', authMiddleware, requireSourceWriter/.test(src), 'document registration is owner-only');
     // S2-47: nobody is added to the organization automatically (not by the Clerk webhook, not by

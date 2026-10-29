@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --no-warnings tests/verify_graph_expand_collapse.ts"
+    "test": "node --experimental-strip-types --no-warnings tests/verify_graph_expand_collapse.ts && node --experimental-strip-types --no-warnings tests/verify_capability_gating.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.38.3",

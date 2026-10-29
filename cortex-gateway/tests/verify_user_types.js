@@ -114,7 +114,9 @@ const { membershipFromClerkEvent, diffMembership, createOrgMembershipSync } = re
     // ── 4. index.js wiring ─────────────────────────────────────────────────────────────────────
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     ok(/GATEWAY_ASSIGNED_HEADERS = \[[^\]]*'x-user-type'/.test(src), 'x-user-type is gateway-assigned (AP-23)');
-    ok(/SOURCE_WRITER_USER_TYPES = new Set\(\[USER_TYPES\.OWNER, USER_TYPES\.ORG_ADMIN, USER_TYPES\.ORG_MEMBER\]\)/.test(src), 'source writers: owner, org admin, org member');
+    const capSrc = fs.readFileSync(path.join(__dirname, '..', 'utils', 'capabilities.js'), 'utf8');
+    ok(/SOURCE_WRITER_USER_TYPES = new Set\(\[USER_TYPES\.OWNER, USER_TYPES\.ORG_ADMIN, USER_TYPES\.ORG_MEMBER\]\)/.test(capSrc), 'source writers: owner, org admin, org member');
+    ok(/requireSourceWriter = requireCapability\('addSource'/.test(src), 'Add Source routes use the capability rule (S2-69)');
     ok(!/process\.env\.TENANT_ID \|\| decoded\.org_id/.test(src), 'TENANT_ID no longer applies to every signed-in user (S2-48)');
     ok(/organizationMembership\./.test(src) && /orgMembershipSync\.removeMembership/.test(src), 'webhook handles organizationMembership events');
     ok(/"x-user-type": reqHeaders\['x-user-type'\]/.test(src), 'MCP calls carry the user type');

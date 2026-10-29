@@ -5,12 +5,12 @@ import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Globe, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
+import type { SourceVisibility } from '@/hooks/use-capabilities';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 // Phase B M3': the Document option is off unless the deployment enables it (feature flag).
 const DOCUMENT_SOURCES_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES === 'true';
 
-type SourceVisibility = 'private' | 'organization' | 'public';
 const VISIBILITY_OPTIONS: { value: SourceVisibility; label: string; hint: string }[] = [
     { value: 'private', label: 'Private', hint: 'Only you, plus people and groups you share it with.' },
     { value: 'organization', label: 'Organization', hint: 'Every member of your organization.' },
@@ -23,6 +23,8 @@ const DOCUMENT_FINAL_STATES = new Set(['done', 'unchanged', 'failed']);
 interface AddSourceModalProps {
     open: boolean;
     onClose: () => void;
+    // Visibilities this user may choose (S2-69, from /api/me/capabilities); the server enforces the same.
+    allowedVisibilities: SourceVisibility[];
 }
 
 type Status = 'idle' | 'submitting' | 'processing' | 'success' | 'error';
@@ -33,7 +35,8 @@ const parsePayload = async (resp: Response) => {
     return data.content?.[0]?.text ? JSON.parse(data.content[0].text) : data;
 };
 
-export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
+export default function AddSourceModal({ open, onClose, allowedVisibilities }: AddSourceModalProps) {
+    const visibilityOptions = VISIBILITY_OPTIONS.filter(o => allowedVisibilities.includes(o.value));
     const { getToken } = useAuth();
     const [url, setUrl] = useState('');
     const [status, setStatus] = useState<Status>('idle');
@@ -222,7 +225,7 @@ export default function AddSourceModal({ open, onClose }: AddSourceModalProps) {
                                 disabled={status === 'submitting' || status === 'processing'}
                                 className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-slate-200 outline-none disabled:opacity-50"
                             >
-                                {VISIBILITY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                {visibilityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                             <span className="text-[11px] text-slate-500">{VISIBILITY_OPTIONS.find(o => o.value === visibility)?.hint}</span>
                         </div>

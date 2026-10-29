@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash, Radio, Loader2 } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 import ShareModal from './ShareModal';
+import { useCapabilities } from '@/hooks/use-capabilities';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
@@ -30,6 +31,7 @@ interface BentoDetailPanelProps {
 const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal, isBentoHydrating = false }) => {
     const [shareModalOpen, setShareModalOpen] = React.useState(false);
     const { getToken } = useAuth();
+    const caps = useCapabilities();   // S2-69: Share only for users who can own nodes
 
     // --- A1: on-demand live re-fetch for WebsiteSource nodes ---
     const [liveContent, setLiveContent] = React.useState<{ content: string; image_urls: string[] } | null>(null);
@@ -194,12 +196,14 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 <h2 className="text-2xl font-bold text-white tracking-tight leading-tight">{node.name}</h2>
             </div>
             <div className="flex items-center gap-2">
+                {caps.share && (
                 <button
                     onClick={() => setShareModalOpen(true)}
                     className="p-2 rounded-xl transition-all flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 border border-transparent"
                 >
                     <Share2 className="w-4 h-4" />Share
                 </button>
+                )}
                 <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-500 hover:text-white">
                     <X className="w-5 h-5" />
                 </button>

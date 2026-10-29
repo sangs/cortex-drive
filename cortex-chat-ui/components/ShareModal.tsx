@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Link2, UserPlus, Users, Building2, Check, Copy, Trash2, Loader2, ChevronDown } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
+import { useCapabilities } from '@/hooks/use-capabilities';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
@@ -75,6 +76,7 @@ function relationColor(rel: string) {
 
 export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const { getToken } = useAuth();
+    const caps = useCapabilities();   // S2-69: org-wide toggle for the owner and org admins only
     const [tab, setTab] = useState<Tab>('guest');
 
     // --- Guest link state ---
@@ -573,6 +575,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                     {!everyoneVisible && tab === 'manage' && (
                         <div className="space-y-4">
                             {/* Tenant-wide toggle */}
+                            {caps.shareOrgWide && (
                             <div className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">
                                 <span className="text-xs text-slate-300 font-medium">Visible to all org members</span>
                                 <button
@@ -582,6 +585,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                     <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all shadow ${tenantWide ? 'left-5' : 'left-0.5'}`} />
                                 </button>
                             </div>
+                            )}
 
                             {historyLoading ? (
                                 <div className="flex justify-center py-4">
