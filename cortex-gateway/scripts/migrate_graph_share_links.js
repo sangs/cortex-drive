@@ -1,6 +1,8 @@
 'use strict';
 /**
  * Unified shares phase 1 (2026-10-29): migrate graph_share_links (frozen copies) to live share_links.
+ * DONE in production 2026-10-29 (1 migrated, 1 dead); the table was then dropped by
+ * scripts/migrations/010_drop_graph_share_links.sql. Kept for the record and for other environments.
  * Design: documents/security/unified-shares-design-2026-10-29.md §4, §9, §11 (user decisions).
  *
  *   node scripts/migrate_graph_share_links.js                 dry run: report what would happen
