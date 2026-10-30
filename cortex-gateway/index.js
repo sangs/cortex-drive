@@ -2333,6 +2333,27 @@ app.post('/api/share/graph-link/:token/node_details', async (req, res) => {
         res.status(500).json({ error: 'Failed to load node details' });
     }
 });
+// "Shared with me" (unified shares phase 2, utils/received_shares.js): what this user has received,
+// checked live against their own permissions, with deterministic suggested questions. Every signed-in
+// user; guests have no account to receive shares.
+const { createReceivedShares } = require('./utils/received_shares');
+const receivedShares = createReceivedShares({
+    db,
+    bento: { nodesByIds: (nodeIds, tenantId, principalId) => bentoPost('/nodes_by_ids', tenantId, { node_ids: nodeIds }, principalId) },
+    userName: async sub => {
+        const u = await clerkClient.users.getUser(sub);
+        return `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.emailAddresses?.[0]?.emailAddress || '';
+    },
+});
+app.get('/api/share/received', authMiddleware, async (req, res) => {
+    if (req.guestAuth === true) return res.json([]);
+    try {
+        res.json(await receivedShares.list({ userId: req.headers['x-user-id'], tenantId: req.headers['x-tenant-id'] }));
+    } catch (err) {
+        console.error('[/api/share/received]', err.message);
+        res.status(503).json({ error: 'Could not load what was shared with you' });
+    }
+});
 app.get('/api/share/graph-links', authMiddleware, async (req, res) => {
     try {
         res.json(await shareLinks.listLinks(req.headers['x-user-id']));

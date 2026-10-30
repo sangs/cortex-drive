@@ -179,6 +179,7 @@ function run(mw, req) {
         ['post /api/share/graph-link/preview', 'same check as creating the link (shareLinks.plan)'],
         ['post /api/share/graph-link/:token/node_details', 'public by signed token; Bento applies the LINK\'s Permify allowlist'],
         ['get /api/share/graph-links', 'filtered by owner_sub = caller'],
+        ['get /api/share/received', "the caller's own received grants (role_assignments for them or their groups), each root re-checked under their own Permify allowlist"],
         ['delete /api/share/graph-link/:linkId', 'filtered by owner_sub = caller in SQL'],
         ['get /api/share/grants', 'filtered by issued_by = caller'],
         ['get /api/share/pending', 'filtered by issued_by = caller'],

@@ -41,6 +41,7 @@ const BentoDetailPanel = dynamic(() => import("@/components/BentoDetailPanel"), 
 const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { ssr: false });
 const ConversationHistoryModal = dynamic(() => import("@/components/ConversationHistoryModal"), { ssr: false });
 const AddSourceModal = dynamic(() => import("@/components/AddSourceModal"), { ssr: false });
+const SharedWithMe = dynamic(() => import("@/components/SharedWithMe"), { ssr: false });
 
 // System Health panel polling — see documents/architecture/neo4j-status-indicator-design-2026-08-27.md
 const SYSTEM_STATUS_POLL_INTERVAL_MS = 30000;
@@ -614,6 +615,29 @@ export default function DashboardPage() {
         }
     };
 
+    // "Shared with me" (unified shares phase 2): a suggested question is asked like a typed one; "Open in
+    // graph" loads the shared item's neighbourhood, read live under the user's own permissions.
+    const askSuggested = async (question: string) => {
+        if (!isConnected || isProcessing || isActivating) return;
+        await executeQuery(question, [...messages], false, conversationId);
+    };
+    const openSharedItem = async (item: { title: string }) => {
+        if (!isConnected || isProcessing) return;
+        setIsProcessing(true);
+        try {
+            const toolResponse = await callTool("get_cluster_context", { node_name: item.title, depth: 1, backbone_only: false });
+            if (toolResponse?.content?.[0]) {
+                expandedNodes.current = new Set();
+                expansionContributions.current = new Map();
+                setGraphData(parseDataToGraph(JSON.parse(toolResponse.content[0].text)));
+            }
+        } catch (e) {
+            console.error("Opening shared item failed:", e);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     const handleSend = async () => {
         if (!input.trim() || !isConnected || isProcessing || isActivating) return;
 
@@ -1124,6 +1148,10 @@ export default function DashboardPage() {
                         </button>
                         )}
                     </div>
+
+                    {/* Shared with me (unified shares phase 2) */}
+                    <SharedWithMe onAsk={askSuggested} onOpen={openSharedItem}
+                        showEmptyState={!caps.addSource} disabled={!isConnected || isProcessing || isActivating} />
 
                     {/* System Status Section */}
                     <div className="space-y-4">

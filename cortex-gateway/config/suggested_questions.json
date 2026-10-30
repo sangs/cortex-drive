@@ -1,0 +1,15 @@
+{
+  "_comment": "Suggested questions for shared items (unified shares phase 2, 2026-10-29; design security/unified-shares-design-2026-10-29.md §5.2). Deterministic templates keyed by the shared root's node type; {title} is the item's exact name. Used by GET /api/share/received (and later by the share emails), so the page and the email never disagree. Every template is tested to route to the item's domain (tests/verify_received_shares.js). No LLM.",
+  "max_per_item": 3,
+  "by_type": {
+    "DocumentSource": ["Summarise {title}.", "What are the main findings of {title}?", "What does {title} say about its method?"],
+    "WebsiteSource": ["What does {title} cover?", "What are the key points of {title}?"],
+    "Project": ["What was built in {title}?", "Which technologies were used in {title}?"],
+    "Company": ["What work is recorded for {title}?", "Which projects are linked to {title}?"],
+    "ThoughtLeadership": ["What does {title} argue?", "What are the key points of {title}?"],
+    "Hackathon": ["What was built at {title}?", "Which technologies were used at {title}?"],
+    "Episode": ["What was discussed in {title}?", "Who were the guests of {title}?"],
+    "Podcast": ["Which episodes of {title} are there?", "What topics does {title} cover?"]
+  },
+  "default": ["What does Cortex-Drive know about {title}?"]
+}
