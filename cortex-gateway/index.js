@@ -1544,9 +1544,14 @@ app.post('/api/share/infer', authMiddleware, shareAuthz.requireNodeShare(req => 
     if (!rootNodeId) return res.status(400).json({ error: 'rootNodeId required' });
     try {
         const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+        const bentoOidcToken = await getCloudRunToken(bento);
         const subtree = await fetch(`${bento}/get_composition_subtree`, {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
+            },
             body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
         }).then(r => r.json());
 
@@ -1581,9 +1586,14 @@ app.post('/api/share/user', authMiddleware, shareAuthz.requireNodeShare(req => r
 
         if (targetSub) {
             const bento   = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+            const bentoOidcToken = await getCloudRunToken(bento);
             const subtree = await fetch(`${bento}/get_composition_subtree`, {
                 method:  'POST',
-                headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-tenant-id': tenantId,
+                    ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
+                },
                 body:    JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
             }).then(r => r.json());
             childNodeIds   = subtree.child_node_ids || [rootNodeId];
@@ -1651,9 +1661,14 @@ app.post('/api/share/group', authMiddleware, shareAuthz.requireNodeShare(req => 
     const issuedBy = req.headers['x-user-id'];
     try {
         const bento = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+        const bentoOidcToken = await getCloudRunToken(bento);
         const subtreeResp = await fetch(`${bento}/get_composition_subtree`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
+            },
             body: JSON.stringify({ root_node_id: rootNodeId, max_depth: depthSelection }),
         });
         const subtree = subtreeResp.ok ? await subtreeResp.json() : { child_node_ids: [], private_node_ids: [] };
@@ -2502,6 +2517,7 @@ app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
     const tenantId = req.headers['x-tenant-id'] || '';
     const bentoUrl = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     try {
+        const bentoOidcToken = await getCloudRunToken(bentoUrl);
         const resp = await fetch(`${bentoUrl}/get_node_details`, {
             method: 'POST',
             headers: {
@@ -2509,6 +2525,7 @@ app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
                 'x-tenant-id': tenantId,
                 'x-user-id': 'guest-auth',
                 'x-guest-share-anchor': nodeId,
+                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
             body: JSON.stringify({ node_id: nodeId }),
         });

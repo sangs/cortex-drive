@@ -41,6 +41,13 @@ const forge = (payload, secret = SECRET) =>
         // Production sets BENTO_SERVER_URL only; BENTO_URL fell back to localhost and broke the link
         // preview and group share (found on the GL-4 candidate, 2026-11-02).
         ok(!/process\.env\.BENTO_URL\b/.test(src), 'every Bento call reads BENTO_SERVER_URL');
+        // Bento is IAM-locked (run.invoker for the gateway's service account only): a call without the
+        // Cloud Run ID token gets 403 (share preview, user/group share, infer — same finding).
+        const lines = src.split('\n');
+        const bentoCalls = lines.map((l, i) => i).filter(i => /fetch(WithColdStartRetry)?\(`\$\{(bento|bentoBase|bentoUrl|bentoServerUrl)\}/.test(lines[i]));
+        const untokened = bentoCalls.filter(i => !lines.slice(Math.max(0, i - 6), i + 1).some(l => /getCloudRunToken\(/.test(l)));
+        ok(bentoCalls.length >= 10 && untokened.length === 0,
+           `every Bento fetch gets a Cloud Run ID token first (${bentoCalls.length} calls, missing at lines ${untokened.map(i => i + 1).join(', ') || 'none'})`);
     }
     // ── secret validation ──────────────────────────────────────────────────────────────────────
     {
