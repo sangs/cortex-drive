@@ -1650,7 +1650,7 @@ app.post('/api/share/group', authMiddleware, shareAuthz.requireNodeShare(req => 
     const tenantId = req.headers['x-tenant-id'];
     const issuedBy = req.headers['x-user-id'];
     try {
-        const bento = process.env.BENTO_URL || 'http://localhost:8000';
+        const bento = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
         const subtreeResp = await fetch(`${bento}/get_composition_subtree`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
@@ -2500,7 +2500,7 @@ app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
     const nodeId = req.headers['x-guest-share-anchor'];
     if (!nodeId) return res.status(400).json({ error: 'Invalid or missing share token' });
     const tenantId = req.headers['x-tenant-id'] || '';
-    const bentoUrl = process.env.BENTO_URL || 'http://localhost:8000';
+    const bentoUrl = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
     try {
         const resp = await fetch(`${bentoUrl}/get_node_details`, {
             method: 'POST',

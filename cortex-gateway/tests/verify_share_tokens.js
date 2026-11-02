@@ -38,6 +38,9 @@ const forge = (payload, secret = SECRET) =>
         ok(!/GATEWAY_SHARE_SECRET\s*\|\|\s*['"][^'"]+['"]/.test(src), 'no non-empty fallback for GATEWAY_SHARE_SECRET');
         ok(/process\.exit\(1\)/.test(src.slice(src.indexOf('shareSecretProblem('), src.indexOf('createShareTokens({'))),
            'production refuses to start without a usable secret');
+        // Production sets BENTO_SERVER_URL only; BENTO_URL fell back to localhost and broke the link
+        // preview and group share (found on the GL-4 candidate, 2026-11-02).
+        ok(!/process\.env\.BENTO_URL\b/.test(src), 'every Bento call reads BENTO_SERVER_URL');
     }
     // ── secret validation ──────────────────────────────────────────────────────────────────────
     {
