@@ -843,35 +843,20 @@ const orgMembershipSync = createOrgMembershipSync({
 });
 
 /**
- * Stateless Guest Share Token Utilities
- * Uses HMAC-SHA256 for tamper-proof node sharing.
+ * Guest node-share tokens (utils/share_tokens.js). No in-code default secret (AP-24, GL-4/S2-72):
+ * production refuses to start without a usable GATEWAY_SHARE_SECRET; local dev runs with node
+ * share links switched off (creating one → 503, every token invalid).
  */
-const SHARE_SECRET = process.env.GATEWAY_SHARE_SECRET || 'cortex_default_fallback_secret_2026';
-
-const signShareToken = (tenantId, nodeId, expiresDays = 30) => {
-    const expiresAt = Date.now() + (expiresDays * 24 * 60 * 60 * 1000);
-    const payload = `${tenantId}:${nodeId}:${expiresAt}`;
-    const signature = crypto.createHmac('sha256', SHARE_SECRET).update(payload).digest('hex');
-    return Buffer.from(`${payload}:${signature}`).toString('base64');
-};
-
-const verifyShareToken = (token) => {
-    try {
-        const decoded = Buffer.from(token, 'base64').toString('utf-8');
-        const [tenantId, nodeId, expiresAt, signature] = decoded.split(':');
-        
-        if (Date.now() > parseInt(expiresAt)) return null;
-        
-        const expectedPayload = `${tenantId}:${nodeId}:${expiresAt}`;
-        const expectedSignature = crypto.createHmac('sha256', SHARE_SECRET).update(expectedPayload).digest('hex');
-        
-        if (signature !== expectedSignature) return null;
-        
-        return { tenantId, nodeId };
-    } catch (e) {
-        return null;
+const { createShareTokens, shareSecretProblem } = require('./utils/share_tokens');
+const shareSecretIssue = shareSecretProblem(process.env.GATEWAY_SHARE_SECRET);
+if (shareSecretIssue) {
+    if (process.env.NODE_ENV === 'production') {
+        console.error(`[STARTUP] ${shareSecretIssue}. Refusing to start (share links would be forgeable or broken).`);
+        process.exit(1);
     }
-};
+    console.warn(`[STARTUP] ${shareSecretIssue}. Share links are switched off in this local run.`);
+}
+const shareTokens = createShareTokens({ secret: process.env.GATEWAY_SHARE_SECRET, redis });
 
 // ALLOWED_ORIGIN: restrict to app subdomain in production, wildcard in local dev.
 // Set ALLOWED_ORIGIN=https://app.cortex-drive.com in Cloud Run env after custom domain is live.
@@ -894,7 +879,8 @@ function stripClientIdentityHeaders(req) {
 
 /**
  * Interceptor for Stateless Guest Share Tokens
- * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke).
+ * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke). A Redis
+ * error denies the link (GL-5); before 2026-11-02 it fell back to trusting the signature alone.
  * A verified token is recorded as req.guestAuth (a server-side property no client can set) —
  * authMiddleware keys its guest bypass off that, never off the x-user-id header value.
  */
@@ -903,19 +889,8 @@ const guestTokenMiddleware = async (req, res, next) => {
     const token = req.query.share || req.headers['x-share-token'];
 
     if (token) {
-        const verified = verifyShareToken(token);
-        if (verified) {
-            const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-            try {
-                const active = await redis.get(`guest_link:${tokenHash}`);
-                if (!active) {
-                    console.warn(`[GUEST-AUTH] Token revoked or not registered (hash: ${tokenHash.slice(0, 8)}…)`);
-                    return res.status(403).json({ error: 'This link has been revoked or has expired.' });
-                }
-            } catch (redisErr) {
-                // Redis unavailable — fall through and honour the HMAC signature alone
-                console.warn('[GUEST-AUTH] Redis check failed, falling back to HMAC-only:', redisErr.message);
-            }
+        const verified = await shareTokens.check(token);
+        if (verified.ok) {
             console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
             req.guestAuth = true;
             req.headers['x-tenant-id'] = verified.tenantId;
@@ -923,9 +898,12 @@ const guestTokenMiddleware = async (req, res, next) => {
             req.headers['x-user-type'] = USER_TYPES.GUEST;
             req.headers['x-guest-share-anchor'] = verified.nodeId;
             return next();
-        } else {
-            console.warn(`[GUEST-AUTH] Expired or Invalid Share Token attempt.`);
         }
+        if (verified.status) {
+            console.warn(`[GUEST-AUTH] Share link refused (${verified.status}): ${verified.error}`);
+            return res.status(verified.status).json({ error: verified.error });
+        }
+        console.warn(`[GUEST-AUTH] Expired or Invalid Share Token attempt.`);
     }
     next();
 };
@@ -1477,21 +1455,16 @@ app.get('/api/share', authMiddleware, shareAuthz.requireNodeShare(req => req.que
     if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
 
     const expireDays = Math.min(Math.max(parseInt(req.query.expireDays) || 30, 1), 90);
-    const token = signShareToken(tenantId, nodeId, expireDays);
-    const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/discovery?share=${token}`;
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const expirySeconds = expireDays * 86400;
-    const issuedAt = Date.now();
-    const expiresAt = issuedAt + expirySeconds * 1000;
-
+    let token, tokenHash;
     try {
-        const linkMeta = JSON.stringify({ nodeId, tenantId, issuedAt, expiresAt, expireDays });
-        await redis.setex(`guest_link:${tokenHash}`, expirySeconds, linkMeta);
-        await redis.sadd(`guest_links:${tenantId}:${nodeId}`, tokenHash);
-        await redis.expire(`guest_links:${tenantId}:${nodeId}`, 90 * 86400);
-    } catch (redisErr) {
-        console.warn('[GUEST-LINK] Redis registration failed (non-fatal):', redisErr.message);
+        const issuedAt = Date.now();
+        const signed = shareTokens.sign(tenantId, nodeId, expireDays);
+        token = signed.token;
+        tokenHash = await shareTokens.register(token, { tenantId, nodeId, issuedAt, expiresAt: signed.expiresAt, expireDays });
+    } catch (err) {
+        return res.status(err.status || 500).send({ error: err.message });
     }
+    const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/discovery?share=${token}`;
 
     res.send({
         token,
