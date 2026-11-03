@@ -66,6 +66,14 @@ BRIDGE_ALL_DOMAINS_TARGET_LABELS = [
     "Institution", "Category", "Technology", "Concept",
 ]
 
+# Bridge target domains (bridge-discovery-and-bento-panel-design-2026-11-03.md §1).
+# "auto" = every bridge-target domain the source node does not belong to.
+BRIDGE_AUTO_DOMAINS = "auto"
+# "Show more" raises the limit by this step, never past BRIDGE_MAX_LIMIT.
+BRIDGE_SHOW_MORE_STEP = int(os.environ.get("BRIDGE_SHOW_MORE_STEP", "10"))
+# How many bridges bridge_summary spells out.
+BRIDGE_SUMMARY_MAX_CLAUSES = 5
+
 def get_bridge_limit(requested: int = None) -> int:
     """Clamp a requested connect_knowledge_on_demand `limit` to [1, BRIDGE_MAX_LIMIT],
     falling back to BRIDGE_DEFAULT_LIMIT when not specified."""
@@ -244,6 +252,8 @@ DOMAIN_MANIFESTS = {
         # live-confirmed the LLM can skip that step and fabricate a source name instead.
         # enumerate_bridge_sources() matches on these labels directly, deterministically.
         "bridge_source_labels": ["ThoughtLeadership"],
+        "bridge_target": True,
+        "display_name": "Career",
         "realm": "INTERNAL"
     },
     "podcast": {
@@ -260,6 +270,8 @@ DOMAIN_MANIFESTS = {
         "node_set": CORTEX_DRIVE_NODES + ["Publication", "Community"],
         "anchor_labels": ["Episode", "Topic", "Concept", "Technology", "Publication", "Podcast"],
         "backbone_labels": ["Episode", "Topic", "Technology", "Publication", "Concept", "Category", "Podcast", "Source"],
+        "bridge_target": True,
+        "display_name": "Podcast",
         "realm": "INTERNAL"
     },
     "structural": {
@@ -292,6 +304,8 @@ DOMAIN_MANIFESTS = {
         "node_set": ["WebsiteSource", "SourceSnapshot"],
         "anchor_labels": ["WebsiteSource"],
         "backbone_labels": ["WebsiteSource"],
+        "bridge_target": True,
+        "display_name": "Websites",
         "realm": "INTERNAL"
     },
     "federated": {
@@ -328,6 +342,8 @@ DOMAIN_MANIFESTS = {
         "backbone_labels": ["DocumentSource"],
         "visual_deny_labels": ["ContentBlock"],
         "universal_discovery": False,
+        "bridge_target": True,
+        "display_name": "Documents",
         "realm": "INTERNAL"
     }
 }
@@ -422,3 +438,69 @@ def get_exclusive_labels(domain: str) -> list:
         if d != domain:
             others |= set(DOMAIN_MANIFESTS[d]["node_set"])
     return sorted(own - others - set(SHARED_ENTITY_LABELS) - _NOT_PROVENANCE_LABELS)
+
+
+# Domains behind a feature flag; any domain not listed here is always on.
+DOMAIN_FEATURE_FLAGS = {"document": ENABLE_DOCUMENT_DOMAIN}
+
+
+def is_domain_enabled(domain: str) -> bool:
+    return DOMAIN_FEATURE_FLAGS.get(domain, True)
+
+
+def get_bridge_target_domains() -> list:
+    """Content domains offered as bridge targets (manifest `bridge_target`), in CONTENT_DOMAINS order,
+    leaving out domains whose feature flag is off."""
+    return [d for d in CONTENT_DOMAINS
+            if DOMAIN_MANIFESTS[d].get("bridge_target") and is_domain_enabled(d)]
+
+
+def get_source_domains(labels) -> list:
+    """Content domains a node belongs to, judged by its exclusive labels. Empty for a node that has
+    only shared labels (e.g. a Concept), which belongs to no single domain."""
+    node_labels = set(labels or [])
+    return [d for d in CONTENT_DOMAINS if node_labels & set(get_exclusive_labels(d))]
+
+
+def resolve_bridge_target_domains(requested, source_labels) -> list:
+    """Turn a bridge request's domain list into concrete bridge-target domains.
+    - "auto": every offered domain the source does not belong to (all of them for a source with
+      only shared labels, or if the source belongs to every offered domain).
+    - Named domains are kept as asked, including the source's own domain.
+    - Unknown or disabled names are dropped. Result is in CONTENT_DOMAINS order, de-duplicated."""
+    offered = get_bridge_target_domains()
+    asked = [str(r).strip().lower() for r in (requested or [BRIDGE_AUTO_DOMAINS]) if r]
+    chosen = {d for d in asked if d in offered}
+    if BRIDGE_AUTO_DOMAINS in asked:
+        own = set(get_source_domains(source_labels))
+        chosen |= {d for d in offered if d not in own} or set(offered)
+    return [d for d in offered if d in chosen]
+
+
+def classify_bridge_candidate(labels, domain: str) -> str:
+    """AP-29, bridge variant. Returns:
+    - "no": hidden from the graph in this domain; or carries another content domain's exclusive
+      label and none of this one's (a ThoughtLeadership+Publication node is career, not podcast);
+      or has no label this domain targets;
+    - "yes": has a label exclusive to the domain, or a domain label that is not a shared label;
+    - "provenance": has a shared label (Concept, Technology, Person, Topic, ReferenceLink); it counts
+      only if linked to a node (other than the bridge source) with a label exclusive to the domain —
+      the caller checks that against the graph. Unlike search, SYSTEM/PUBLIC is not enough here:
+      built-in vocabulary is shared by every domain, so it is no evidence of the target domain."""
+    node_labels = set(labels or [])
+    if node_labels & set(get_visual_deny_list(domain)):
+        return "no"
+    if node_labels & set(get_exclusive_labels(domain)):
+        return "yes"
+    if any(node_labels & set(get_exclusive_labels(d)) for d in CONTENT_DOMAINS if d != domain):
+        return "no"
+    target_labels = set(DOMAIN_MANIFESTS[domain]["node_set"]) | set(SHARED_ENTITY_LABELS)
+    if not node_labels & target_labels:
+        return "no"
+    if node_labels & set(SHARED_ENTITY_LABELS):
+        return "provenance"
+    return "yes"
+
+
+def get_domain_display_name(domain: str) -> str:
+    return DOMAIN_MANIFESTS.get(domain, {}).get("display_name", domain)

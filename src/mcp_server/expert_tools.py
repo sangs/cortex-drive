@@ -2308,6 +2308,7 @@ class ExpertTools:
         limit: Optional[int] = None,
         target_node_name: Optional[str] = None,
         query_context: Optional[str] = None,
+        target_domains: Optional[list] = None,
     ) -> str:
         """
         Discover virtual cross-domain knowledge bridges for a specific node.
@@ -2355,6 +2356,15 @@ class ExpertTools:
         trying to reach, never what a found path is allowed to assert. Gated by
         domain_registry.ENABLE_SEMANTIC_CANDIDATE_SEARCH (default off).
 
+        target_domains (2026-11-03, bridge-discovery-and-bento-panel-design-2026-11-03.md §1): a list
+        of bridge-target domains and/or "auto" (every domain the source does not belong to). Takes
+        precedence over target_domain. Any named domain (target_domain other than "all", or
+        target_domains) uses the AP-29 rule: a shared-label target (Concept, Technology, Person, Topic,
+        ReferenceLink) counts only if it is SYSTEM/PUBLIC or linked to a visible node with a label
+        exclusive to that domain — so a document's own extracted Concepts no longer fill the slots.
+        With several domains the limit is split evenly; unused slots go to the next-best paths.
+        target_domain="all" keeps the broad label list (BRIDGE_ALL_DOMAINS_TARGET_LABELS) unchanged.
+
         Zero-write guarantee: nothing is persisted to Neo4j. All returned links are
         session-only virtual bridges rendered as gold dashed lines in the UI.
         """
@@ -2362,18 +2372,24 @@ class ExpertTools:
             return json.dumps({"error": "source_node_id or source_node_name is required"})
 
         from domain_registry import (
-            BRIDGE_ALL_DOMAINS_TARGET_LABELS, get_authorized_labels, get_bridge_label_string, get_bridge_limit,
+            BRIDGE_ALL_DOMAINS_TARGET_LABELS, BRIDGE_MAX_LIMIT, BRIDGE_SHOW_MORE_STEP,
+            get_bridge_label_string, get_bridge_limit,
         )
         limit = get_bridge_limit(limit)
         relevance_keywords = self._extract_bridge_keywords(query_context)
 
-        # Map target domain to allowed labels
-        target_labels_raw = get_authorized_labels(target_domain)
-        # For "all", get_authorized_labels returns None — use the registry's broad default
-        if not target_labels_raw:
-            target_labels_raw = BRIDGE_ALL_DOMAINS_TARGET_LABELS
-        target_domain_labels = set(target_labels_raw)
+        # Domain mode (named domains / "auto", AP-29 rule) vs the legacy "all" label list.
+        requested_domains = list(target_domains) if target_domains else (
+            [target_domain] if (target_domain or "all").lower() != "all" else None)
+        target_domain_labels = set(BRIDGE_ALL_DOMAINS_TARGET_LABELS)
         bridge_labels = get_bridge_label_string()
+
+        def _empty(summary: str, domains=None) -> str:
+            return json.dumps({
+                "nodes": [], "virtual_links": [], "bridge_summary": summary, "confidence_tier": "none",
+                "target_domains": domains, "limit": limit, "max_limit": BRIDGE_MAX_LIMIT,
+                "show_more_step": BRIDGE_SHOW_MORE_STEP, "has_more": False,
+            })
 
         # Bridge discovery is a READ-ONLY operation on content already visible to the user
         # (they clicked the node in the graph, so it was already authorized at tenant level).
@@ -2402,12 +2418,13 @@ class ExpertTools:
                    OR toLower(source.name) = toLower($source_node_name)
                    OR source.name CONTAINS $source_node_name)
               AND ({sec_source_read})
-            RETURN elementId(source) AS source_eid, source.name AS source_name,
+            RETURN elementId(source) AS source_eid, coalesce(source.name, source.title) AS source_name,
+                   labels(source) AS source_labels,
                    CASE WHEN source.node_id = $source_node_id
-                          OR elementId(source) = $source_node_id
-                          OR toLower(source.name) = toLower($source_node_name)
-                        THEN 0 ELSE 1 END AS match_rank
-            ORDER BY match_rank ASC, size(source.name) ASC
+                          OR elementId(source) = $source_node_id THEN 0
+                        WHEN toLower(source.name) = toLower($source_node_name) THEN 1
+                        ELSE 2 END AS match_rank
+            ORDER BY match_rank ASC, size(coalesce(source.name, source.title, '')) ASC
             LIMIT 1
             """
             source_result = self._exec_query(
@@ -2418,16 +2435,18 @@ class ExpertTools:
             )
 
             if not source_result.records:
-                return json.dumps({
-                    "nodes": [],
-                    "virtual_links": [],
-                    "bridge_summary": f"No source node found matching '{source_node_name or source_node_id}'.",
-                    "confidence_tier": "none"
-                })
+                return _empty(f"No source node found matching '{source_node_name or source_node_id}'.")
 
             source_row = source_result.records[0]
             source_eid = source_row["source_eid"]
             source_name = source_row["source_name"]
+
+            domains = None
+            if requested_domains is not None:
+                from domain_registry import resolve_bridge_target_domains
+                domains = resolve_bridge_target_domains(requested_domains, source_row["source_labels"])
+                if not domains:
+                    return _empty(f"No bridge target domain available for {requested_domains}.", [])
 
             # Step 2: Fetch the full security/domain-authorized adjacency. No relationship-type
             # filter at all — every type is eligible, which is the whole point of this redesign
@@ -2442,9 +2461,9 @@ class ExpertTools:
             MATCH (a)-[r]-(b)
             WHERE NOT a:{bridge_labels} AND NOT b:{bridge_labels}
               AND ({sec_a}) AND ({sec_b})
-            RETURN elementId(a) AS a_id, a.name AS a_name, labels(a) AS a_labels,
+            RETURN elementId(a) AS a_id, coalesce(a.name, a.title) AS a_name, labels(a) AS a_labels,
                    a.node_id AS a_node_id, a.description AS a_description,
-                   elementId(b) AS b_id, b.name AS b_name, labels(b) AS b_labels,
+                   elementId(b) AS b_id, coalesce(b.name, b.title) AS b_name, labels(b) AS b_labels,
                    b.node_id AS b_node_id, b.description AS b_description,
                    type(r) AS rel_type,
                    COUNT {{ (a)--() }} AS deg_a, COUNT {{ (b)--() }} AS deg_b
@@ -2478,10 +2497,17 @@ class ExpertTools:
             # the primary label, so dual-labeled nodes like Project+ThoughtLeadership still
             # qualify). This is the pool a target_node_name hint resolves against, BEFORE the
             # degree floor below — an explicit hint must resolve regardless of degree.
-            label_matched_targets = {
-                nid for nid, info in node_info.items()
-                if nid != source_eid and target_domain_labels & set(info["labels"])
-            }
+            # Domain mode assigns each candidate to the first selected domain it qualifies for
+            # (target_domain_of); legacy "all" mode matches BRIDGE_ALL_DOMAINS_TARGET_LABELS.
+            target_domain_of: dict = {}
+            if domains is None:
+                label_matched_targets = {
+                    nid for nid, info in node_info.items()
+                    if nid != source_eid and target_domain_labels & set(info["labels"])
+                }
+            else:
+                target_domain_of = self._bridge_domain_candidates(node_info, source_eid, domains)
+                label_matched_targets = set(target_domain_of)
 
             # Semantic widening (2026-09-08, Phase 2 of
             # node-metadata-embedding-hybrid-retrieval-2026-09-04.md) — union in nodes that are
@@ -2536,13 +2562,9 @@ class ExpertTools:
                 semantic_candidate_ids = (set(semantic_hits.keys()) & node_info.keys()) - {source_eid} - label_matched_targets
                 label_matched_targets |= semantic_candidate_ids
 
+            domain_text = ", ".join(domains) if domains is not None else target_domain
             if not label_matched_targets:
-                return json.dumps({
-                    "nodes": [],
-                    "virtual_links": [],
-                    "bridge_summary": f"No candidate nodes found in target domain '{target_domain}'.",
-                    "confidence_tier": "none"
-                })
+                return _empty(f"No candidate nodes found in target domain '{domain_text}'.", domains)
 
             # Resolve an explicit target hint (2026-07-23), if given, against the already-fetched
             # node_info — no extra Cypher round trip needed. Restricted to label_matched_targets so
@@ -2576,25 +2598,20 @@ class ExpertTools:
             }
 
             if not candidate_targets:
-                return json.dumps({
-                    "nodes": [],
-                    "virtual_links": [],
-                    "bridge_summary": f"No sufficiently-connected candidate nodes found in target domain '{target_domain}'.",
-                    "confidence_tier": "none"
-                })
+                return _empty(f"No sufficiently-connected candidate nodes found in target domain '{domain_text}'.", domains)
 
+            # Several domains: explore every candidate so each domain can get its share of slots.
+            # One domain (or "all"): one target past the limit, only to tell whether more exist —
+            # ranking still uses the first `limit` found, exactly as before.
+            multi_domain = domains is not None and len(domains) > 1
+            search_limit = len(candidate_targets) if multi_domain else limit + 1
             found = self._dijkstra_to_targets(
-                adjacency, source_eid, candidate_targets, limit,
+                adjacency, source_eid, candidate_targets, search_limit,
                 node_info=node_info, relevance_keywords=relevance_keywords, must_include=must_include,
             )
 
             if not found:
-                return json.dumps({
-                    "nodes": [],
-                    "virtual_links": [],
-                    "bridge_summary": f"No path found from '{source_name}' to any node in target domain '{target_domain}' within the authorized subgraph.",
-                    "confidence_tier": "none"
-                })
+                return _empty(f"No path found from '{source_name}' to any node in target domain '{domain_text}' within the authorized subgraph.", domains)
 
             # Relevance tiering (2026-08-29) — pure path weight rewards structural proximity, not
             # topical relevance: a highly-connected source (e.g. a Person node) has many one-hop
@@ -2647,18 +2664,31 @@ class ExpertTools:
                                 return True
                 return False
 
-            organic = [(tid, data) for tid, data in found.items() if tid != must_include_id]
-            confirmed_organic = sorted(
-                (item for item in organic if _path_is_confirmed(item[1][1])),
-                key=lambda kv: kv[1][0],
-            )
-            structural_organic = sorted(
-                (item for item in organic if not _path_is_confirmed(item[1][1])),
-                key=lambda kv: kv[1][0],
-            )
-            ranked_organic = (confirmed_organic + structural_organic)[:limit]
+            # `found` is in the order Dijkstra reached each target (cheapest first).
+            found_order = list(found.items())
+            pool = found_order if multi_domain else found_order[:limit]
+            organic = [(tid, data) for tid, data in pool if tid != must_include_id]
+            organic_ids = {tid for tid, _ in organic}
+            has_more = any(tid not in organic_ids for tid, _ in found_order if tid != must_include_id)
+            confirmed_flags = {tid: _path_is_confirmed(data[1]) for tid, data in organic}
+            confirmed_organic = sorted((it for it in organic if confirmed_flags[it[0]]), key=lambda kv: kv[1][0])
+            structural_organic = sorted((it for it in organic if not confirmed_flags[it[0]]), key=lambda kv: kv[1][0])
+            tiered = confirmed_organic + structural_organic
+
+            def _select(items: list) -> list:
+                if not multi_domain:
+                    return items[:limit]
+                return self._select_bridges_by_domain(items, target_domain_of, domains, limit)
+
+            ranked_organic = _select(tiered)
             ranked_ids = {tid for tid, _ in ranked_organic}
-            dropped_structural_count = max(0, len(structural_organic) - max(0, limit - len(confirmed_organic)))
+            if multi_domain and len(ranked_organic) < len(organic):
+                has_more = True
+            # Structural candidates that pure weight order would have shown but topical
+            # confirmation pushed out.
+            weight_only_ids = {tid for tid, _ in _select(sorted(organic, key=lambda kv: kv[1][0]))}
+            dropped_structural_count = len(
+                {tid for tid in weight_only_ids if not confirmed_flags[tid]} - ranked_ids)
 
             # "Additional, on top of limit" — a resolved target hint is guaranteed a slot even if
             # it wouldn't otherwise make the top-`limit` cut, rather than bumping an organic result.
@@ -2732,6 +2762,10 @@ class ExpertTools:
                         "relevance_tier": tier,
                     }
                     if node_id == target_eid:
+                        if target_domain_of.get(target_eid):
+                            from domain_registry import get_domain_display_name
+                            entry["bridge_domain"] = target_domain_of[target_eid]
+                            entry["bridge_domain_name"] = get_domain_display_name(target_domain_of[target_eid])
                         entry.update({
                             "description": info["description"],
                             "is_bento_eligible": True,
@@ -2756,12 +2790,26 @@ class ExpertTools:
             best_hops = len(best_path) - 1
             confidence_tier = "explicit" if (best_hops <= 2 and best_weight <= best_hops * 2) else "taxonomy_expanded"
 
-            bridge_clauses = [
-                f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)}"
-                for target_eid, (weight, path, rels) in ranked_organic[:5]
-            ]
+            from domain_registry import BRIDGE_SUMMARY_MAX_CLAUSES, get_domain_display_name
+
+            def _clause(target_eid, rels, suffix=""):
+                return f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)}{suffix}"
+
+            shown = ranked_organic[:BRIDGE_SUMMARY_MAX_CLAUSES]
+            if multi_domain:
+                groups = []
+                for d in domains:
+                    clauses = [_clause(t, rels) for t, (_, _, rels) in shown if target_domain_of.get(t) == d]
+                    if clauses:
+                        groups.append(f"{get_domain_display_name(d)}: " + "; ".join(clauses))
+                other = [_clause(t, rels) for t, (_, _, rels) in shown if target_domain_of.get(t) not in domains]
+                if other:
+                    groups.append("Other: " + "; ".join(other))
+                bridge_clauses = [". ".join(groups)] if groups else []
+            else:
+                bridge_clauses = [_clause(t, rels) for t, (_, _, rels) in shown]
             bridge_clauses += [
-                f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)} (explicitly requested)"
+                _clause(target_eid, rels, " (explicitly requested)")
                 for target_eid, (weight, path, rels) in extra_targets
             ]
             bridge_summary = f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."
@@ -2777,13 +2825,118 @@ class ExpertTools:
                 "nodes": list(nodes_by_id.values()),
                 "virtual_links": virtual_links,
                 "bridge_summary": bridge_summary,
-                "confidence_tier": confidence_tier
+                "confidence_tier": confidence_tier,
+                "target_domains": domains,
+                "limit": limit,
+                "max_limit": BRIDGE_MAX_LIMIT,
+                "show_more_step": BRIDGE_SHOW_MORE_STEP,
+                "has_more": has_more,
             }, indent=2)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return json.dumps({"error": str(e)})
+
+    def _bridge_domain_candidates(self, node_info: dict, source_eid: str, domains: list) -> dict:
+        """AP-29 (bridge variant, domain_registry.classify_bridge_candidate): {element_id: domain} for
+        every node in node_info that qualifies as a target in one of `domains` (first match in
+        `domains` order wins). Shared-label nodes need a visible neighbour other than the source with
+        a label exclusive to the domain, checked in one query per domain."""
+        from domain_registry import classify_bridge_candidate, get_exclusive_labels
+
+        assigned: dict = {}
+        needs_provenance = {d: [] for d in domains}
+        for nid, info in node_info.items():
+            if nid == source_eid:
+                continue
+            for d in domains:
+                verdict = classify_bridge_candidate(info["labels"], d)
+                if verdict == "yes":
+                    assigned[nid] = d
+                    break
+                if verdict == "provenance":
+                    needs_provenance[d].append(nid)
+
+        sec_prov = self._get_security_clause("prov")
+        for d in domains:
+            pending = [nid for nid in needs_provenance[d] if nid not in assigned]
+            exclusive = get_exclusive_labels(d)
+            if not pending or not exclusive:
+                continue
+            result = self._exec_query(
+                f"""
+                UNWIND $candidate_ids AS cid
+                MATCH (n) WHERE elementId(n) = cid
+                  AND EXISTS {{ MATCH (n)--(prov)
+                                WHERE elementId(prov) <> $source_eid
+                                  AND any(l IN labels(prov) WHERE l IN $exclusive_labels)
+                                  AND ({sec_prov}) }}
+                RETURN cid
+                """,
+                **self._security_params(),
+                candidate_ids=pending,
+                exclusive_labels=exclusive,
+                source_eid=source_eid,
+            )
+            for rec in result.records:
+                assigned.setdefault(rec["cid"], d)
+        return assigned
+
+    @staticmethod
+    def _select_bridges_by_domain(items: list, domain_of: dict, domains: list, limit: int) -> list:
+        """Pick up to `limit` bridges from `items` (already in ranking order): each domain first gets
+        up to ceil(limit / len(domains)) slots, then unused slots go to the best remaining items.
+        Returned in the original ranking order."""
+        import math
+        quota = math.ceil(limit / len(domains))
+        per_domain: dict = {}
+        chosen: list = []
+        chosen_ids: set = set()
+        for tid, data in items:
+            if len(chosen) >= limit:
+                break
+            d = domain_of.get(tid)
+            if d in domains and per_domain.get(d, 0) < quota:
+                per_domain[d] = per_domain.get(d, 0) + 1
+                chosen.append((tid, data))
+                chosen_ids.add(tid)
+        for tid, data in items:
+            if len(chosen) >= limit:
+                break
+            if tid not in chosen_ids:
+                chosen.append((tid, data))
+                chosen_ids.add(tid)
+        order = {tid: i for i, (tid, _) in enumerate(items)}
+        return sorted(chosen, key=lambda kv: order[kv[0]])
+
+    def list_bridge_domains(self) -> str:
+        """Bridge-target domains for the Bento panel's domain chips (design 2026-11-03 §1.2): id,
+        display name, and whether the caller can see any node in the domain (yes/no, not counts)."""
+        import re
+        from domain_registry import (
+            BRIDGE_AUTO_DOMAINS, BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT, BRIDGE_SHOW_MORE_STEP,
+            get_bridge_target_domains, get_domain_display_name, get_exclusive_labels,
+        )
+        sec = self._get_security_clause("n")
+        domains = []
+        for d in get_bridge_target_domains():
+            labels = [l for l in get_exclusive_labels(d) if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", l)]
+            has_visible = False
+            if labels:
+                result = self._exec_query(
+                    f"MATCH (n:{'|'.join(labels)}) WHERE {sec} RETURN 1 AS hit LIMIT 1",
+                    **self._security_params(),
+                )
+                has_visible = bool(result.records)
+            domains.append({"id": d, "display_name": get_domain_display_name(d), "has_visible_content": has_visible})
+        return json.dumps({
+            "auto": BRIDGE_AUTO_DOMAINS,
+            "domains": domains,
+            "default_limit": BRIDGE_DEFAULT_LIMIT,
+            "max_limit": BRIDGE_MAX_LIMIT,
+            "show_more_step": BRIDGE_SHOW_MORE_STEP,
+        })
 
     # Domain-specific additions to a plain English stopword list for _extract_bridge_keywords —
     # words that show up in nearly every Q3-style question ("decision trace", "how did X

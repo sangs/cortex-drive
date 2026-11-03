@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from neo4j import GraphDatabase
 from pydantic import Field
-from typing import Optional
+from typing import List, Optional
 
 # Local dependency
 from expert_tools import ExpertTools
@@ -826,7 +826,8 @@ async def connect_knowledge_on_demand(
     min_anchors: int = Field(1, description="Accepted for backward compatibility; no longer used (bridges are single weighted paths, not anchor-count matches)."),
     limit: int = Field(default_factory=lambda: BRIDGE_DEFAULT_LIMIT, description=f"Maximum number of bridge targets to return. Default {BRIDGE_DEFAULT_LIMIT} (env-var configurable), capped at {BRIDGE_MAX_LIMIT}."),
     target_node_name: Optional[str] = Field(None, description="If you already know the specific target node the user is asking about (e.g. it's named literally in their question), pass its name here — it will be included in the results even if it wouldn't otherwise rank in the top `limit`. Exact match preferred, partial-name fallback."),
-    query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Improves ranking by favoring bridges through nodes whose names match words in the question — useful when no specific target is known.")
+    query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Improves ranking by favoring bridges through nodes whose names match words in the question — useful when no specific target is known."),
+    target_domains: Optional[List[str]] = Field(None, description="Domains to bridge INTO, overriding target_domain: domain ids from list_bridge_domains and/or 'auto' (every domain the source does not belong to). The limit is split evenly across several domains.")
 ) -> str:
     """
     Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
@@ -859,10 +860,30 @@ async def connect_knowledge_on_demand(
             min_anchors=min_anchors,
             limit=limit,
             target_node_name=target_node_name,
-            query_context=query_context
+            query_context=query_context,
+            target_domains=target_domains,
         )
     except Exception as e:
         print(f"Error in connect_knowledge_on_demand: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
+async def list_bridge_domains() -> str:
+    """
+    List the domains a knowledge bridge can target (for the Bento panel's domain chips): id, display
+    name, and whether the caller can see any node in each domain. Read-only; not offered to the chat LLM.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return expert.list_bridge_domains()
+    except Exception as e:
+        print(f"Error in list_bridge_domains: {e}")
         return json.dumps({"error": str(e)})
     finally:
         expert.close()

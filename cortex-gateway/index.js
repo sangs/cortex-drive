@@ -4105,6 +4105,7 @@ const mcpToolEndpoint = (toolName) => async (req, res) => {
 app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluster_context'));
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
+app.post('/api/list_bridge_domains', authMiddleware, mcpToolEndpoint('list_bridge_domains'));
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 

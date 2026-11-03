@@ -33,6 +33,7 @@ import {
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
 import { useMCP } from "@/hooks/use-mcp";
+import type { BridgeOptions } from "@/utils/bridgeTypes";
 import { useCapabilities } from "@/hooks/use-capabilities";
 
 // 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
@@ -62,6 +63,21 @@ import {
     mergeFragmentNodes,
 } from "@/utils/graphConstants";
 
+// Bridge target domains (bridge-discovery-and-bento-panel-design-2026-11-03.md §1). The domain list
+// comes from the server (list_bridge_domains); this is only the request value used until it loads,
+// matching domain_registry.BRIDGE_AUTO_DOMAINS.
+const BRIDGE_AUTO_DEFAULT = 'auto';
+
+type LastBridge = {
+    nodeId: string;
+    node: any;
+    domains: string[];
+    limit: number;
+    maxLimit: number;
+    step: number;
+    hasMore: boolean;
+};
+
 export default function DashboardPage() {
     const { user } = useUser();
     const { getToken } = useAuth();
@@ -70,6 +86,9 @@ export default function DashboardPage() {
     const { isConnected, query, callTool, abortQuery } = useMCP();
     const [messages, setMessages] = useState<any[]>([]);
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
+    // Bridge domain chips (loaded once per connection) and the last bridge run, for "Show more".
+    const [bridgeOptions, setBridgeOptions] = useState<BridgeOptions | null>(null);
+    const [lastBridge, setLastBridge] = useState<LastBridge | null>(null);
     const [input, setInput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
     // Which specific node a live server-backed expand is in flight for (get_cluster_context via
@@ -550,6 +569,7 @@ export default function DashboardPage() {
             // Without this, a null-raw_data response (LLM answered without tool calls) leaves
             // the previous query's graph frozen on screen even though the toggle is ON.
             if (autoClear) setGraphData({ nodes: [], links: [] });
+            setLastBridge(null);
 
             const result = await query(userMsg, history, forceRefresh, convId);
 
@@ -661,6 +681,7 @@ export default function DashboardPage() {
             }
         ]);
         setGraphData({ nodes: [], links: [] });
+        setLastBridge(null);
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
         expansionCache.current = new Map();
@@ -699,6 +720,7 @@ export default function DashboardPage() {
     // that last question is still restored from cache as history context.
     const openHistoricalConversation = (conversation: HistoricalConversation, forceRefresh: boolean = false) => {
         try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
+        setLastBridge(null);
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
         expansionCache.current = new Map();
@@ -1024,24 +1046,33 @@ export default function DashboardPage() {
         }
     };
 
-    const handleDiscoverBridge = async (nodeId: string, node?: any) => {
-        try {
-            console.log("Identifying cross-domain bridges for:", node?.name || nodeId);
-            setIsProcessing(true);
+    useEffect(() => {
+        if (!isConnected) return;
+        callTool("list_bridge_domains", {})
+            .then((res: any) => {
+                const payload = JSON.parse(res?.content?.[0]?.text || "{}");
+                if (Array.isArray(payload.domains)) {
+                    setBridgeOptions({ auto: payload.auto || BRIDGE_AUTO_DEFAULT, domains: payload.domains });
+                }
+            })
+            .catch((e: any) => console.warn("list_bridge_domains failed (chips fall back to Auto only):", e));
+    }, [isConnected, callTool]);
 
-            // Infer the best target domain: if the source is a podcast type, bridge to professional; vice versa
-            const podcastTypes = new Set(['Episode', 'Podcast', 'Topic']);
-            const sourceDomain = node?.type && podcastTypes.has(node.type) ? 'professional' : 'podcast';
+    // domains: domain ids and/or "auto" (the server resolves "auto" from the source node's labels —
+    // the browser holds no domain/type lists). limit: omitted on the first click so the server's
+    // BRIDGE_DEFAULT_LIMIT applies; "Show more" passes a higher one (the server caps it).
+    const handleDiscoverBridge = async (nodeId: string, node?: any, domains?: string[], limit?: number) => {
+        const targetDomains = domains && domains.length ? domains : [bridgeOptions?.auto || BRIDGE_AUTO_DEFAULT];
+        try {
+            console.log("Identifying cross-domain bridges for:", node?.name || nodeId, targetDomains);
+            setIsProcessing(true);
 
             const toolResponse = await callTool("connect_knowledge_on_demand", {
                 source_node_id: nodeId,
                 source_node_name: node?.name || "",   // name-based fallback for robustness
-                target_domain: sourceDomain,
-                min_anchors: 1
-                // limit intentionally omitted — inherits the server's configurable
-                // BRIDGE_DEFAULT_LIMIT (was hardcoded to 5 here, out of sync with the
-                // backend default; this is a manual click with no query text, so there's
-                // no query_context to pass either — pure topology-based ranking applies).
+                target_domains: targetDomains,
+                ...(limit ? { limit } : {}),
+                // No query_context: a manual click has no question, so ranking is by graph structure.
             });
 
             if (toolResponse && toolResponse.content && toolResponse.content[0]) {
@@ -1052,6 +1083,16 @@ export default function DashboardPage() {
                     const newGraph = parseDataToGraph(results, graphData);
                     setGraphData(newGraph);
                 }
+
+                setLastBridge(results.error ? null : {
+                    nodeId,
+                    node,
+                    domains: targetDomains,
+                    limit: results.limit,
+                    maxLimit: results.max_limit,
+                    step: results.show_more_step,
+                    hasMore: !!results.has_more && results.limit < results.max_limit,
+                });
 
                 // Surface the bridge summary in chat so the user understands what was found
                 if (results.bridge_summary) {
@@ -1073,6 +1114,12 @@ export default function DashboardPage() {
         } finally {
             setIsProcessing(false);
         }
+    };
+
+    const handleShowMoreBridges = () => {
+        if (!lastBridge || !lastBridge.hasMore) return;
+        const nextLimit = Math.min(lastBridge.limit + lastBridge.step, lastBridge.maxLimit);
+        handleDiscoverBridge(lastBridge.nodeId, lastBridge.node, lastBridge.domains, nextLimit);
     };
 
     // Resize Logic
@@ -1439,6 +1486,7 @@ export default function DashboardPage() {
                                     <button
                                         onClick={() => {
                                             setGraphData({ nodes: [], links: [] });
+                                            setLastBridge(null);
                                             setSelectedNode(null);
                                             setNodeExpansionDepth(new Map());
                                             expansionCache.current = new Map();
@@ -1449,6 +1497,18 @@ export default function DashboardPage() {
                                     >
                                         <Trash2 className="w-4 h-4" />
                                         Clear Visual Map
+                                    </button>
+                                )}
+
+                                {lastBridge?.hasMore && graphData.nodes.length > 0 && (
+                                    <button
+                                        onClick={handleShowMoreBridges}
+                                        disabled={isProcessing}
+                                        title={`Rerun bridge discovery for ${lastBridge.node?.name || 'this node'} with a higher limit`}
+                                        className="bg-white/80 hover:bg-amber-50 border border-border hover:border-amber-200 text-slate-600 hover:text-amber-700 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg disabled:opacity-50"
+                                    >
+                                        <Network className="w-4 h-4" />
+                                        Show more bridges ({lastBridge.limit} → {Math.min(lastBridge.limit + lastBridge.step, lastBridge.maxLimit)})
                                     </button>
                                 )}
 
@@ -1483,7 +1543,8 @@ export default function DashboardPage() {
                                         allNodes={graphData.nodes}
                                         allLinks={graphData.links}
                                         onClose={() => setSelectedNode(null)}
-                                        onDiscoverBridge={(nodeId) => handleDiscoverBridge(nodeId, selectedNode)}
+                                        onDiscoverBridge={(nodeId, domains) => handleDiscoverBridge(nodeId, selectedNode, domains)}
+                                        bridgeOptions={bridgeOptions}
                                         domainSignal={domainSignal}
                                         isBentoHydrating={isBentoHydrating}
                                     />

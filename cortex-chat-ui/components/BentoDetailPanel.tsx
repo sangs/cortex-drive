@@ -6,6 +6,7 @@ import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, 
 import { useAuth } from '@clerk/nextjs';
 import ShareModal from './ShareModal';
 import { useCapabilities } from '@/hooks/use-capabilities';
+import type { BridgeOptions } from '@/utils/bridgeTypes';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
@@ -23,13 +24,25 @@ interface BentoDetailPanelProps {
     allNodes?: any[];
     allLinks?: any[];
     onClose: () => void;
-    onDiscoverBridge?: (nodeId: string) => void;
+    onDiscoverBridge?: (nodeId: string, domains: string[]) => void;
+    // Bridge target domains from the server (list_bridge_domains); null until loaded.
+    bridgeOptions?: BridgeOptions | null;
     domainSignal?: string;
     isBentoHydrating?: boolean;
 }
 
-const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, domainSignal, isBentoHydrating = false }) => {
+const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, bridgeOptions = null, domainSignal, isBentoHydrating = false }) => {
     const [shareModalOpen, setShareModalOpen] = React.useState(false);
+    // Selected bridge target domains: [auto] by default; picking a domain replaces Auto, clearing
+    // every domain returns to Auto. Ids come from the server; the panel holds no domain list.
+    const [bridgeSelection, setBridgeSelection] = React.useState<string[]>([]);
+    const bridgeAuto = bridgeOptions?.auto ?? null;
+    const selectedBridgeDomains = bridgeSelection.length ? bridgeSelection : (bridgeAuto ? [bridgeAuto] : []);
+    const toggleBridgeDomain = (id: string) => setBridgeSelection(prev => {
+        if (id === bridgeAuto) return [];
+        const next = prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id];
+        return next;
+    });
     const { getToken } = useAuth();
     const caps = useCapabilities();   // S2-69: Share only for users who can own nodes
 
@@ -274,7 +287,8 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     );
 
-    const knowledgeBridge = (
+    // Rendered only where a bridge handler exists (the guest graph-view page passes none).
+    const knowledgeBridge = onDiscoverBridge ? (
         <div className="p-6 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex flex-col gap-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-indigo-400">
@@ -284,16 +298,41 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 <span className="text-[8px] bg-indigo-500/20 px-2 py-0.5 rounded-full text-indigo-400 font-bold uppercase">Shortest-Path / Inferred</span>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                Disparity discovery: trace the shortest connected path (via any relationship) across disparate silos (Resume ↔ Podcast).
+                Trace the shortest connected path (via any relationship) from this node into other domains.
+                Auto searches every domain except this node&apos;s own.
             </p>
+            {bridgeOptions && bridgeAuto && (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Bridge target domains">
+                    {[{ id: bridgeAuto, display_name: 'Auto', has_visible_content: true }, ...bridgeOptions.domains].map(d => {
+                        const selected = selectedBridgeDomains.includes(d.id);
+                        return (
+                            <button
+                                key={d.id}
+                                type="button"
+                                onClick={() => toggleBridgeDomain(d.id)}
+                                disabled={!d.has_visible_content}
+                                aria-pressed={selected}
+                                title={!d.has_visible_content ? `Nothing you can see in ${d.display_name}` : undefined}
+                                className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                                    selected
+                                        ? 'bg-indigo-500 border-indigo-400 text-white'
+                                        : 'bg-transparent border-indigo-500/30 text-indigo-300 hover:border-indigo-400'
+                                } disabled:opacity-30 disabled:cursor-not-allowed`}
+                            >
+                                {d.display_name}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
             <button
-                onClick={() => onDiscoverBridge?.(node.node_id || node.id || node.name)}
+                onClick={() => onDiscoverBridge(node.node_id || node.id || node.name, selectedBridgeDomains)}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-indigo-600/40 hover:bg-indigo-600 border border-indigo-500/40 text-white transition-all font-bold text-xs uppercase tracking-widest shadow-lg shadow-indigo-600/10"
             >
                 Trigger Bridge Discovery
             </button>
         </div>
-    );
+    ) : null;
 
     const primaryActionLabel = isPodcastDomain
         ? (displayLinks.length === 1 ? 'Open Episode' : 'View Resources')
