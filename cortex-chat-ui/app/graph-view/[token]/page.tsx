@@ -36,6 +36,8 @@ interface GraphMeta {
     ownerName: string;
     createdAt: string;
     nodeCount: number;
+    linkType?: 'graph' | 'node';
+    focusNodeId?: string;   // node links: open on this node with its details panel (design §7b-1)
 }
 
 function fallbackLinkLabel(url: string) {
@@ -289,6 +291,16 @@ export default function GraphViewPage() {
         hydrateNode(node);
     }, [hydrateNode]);
 
+    // A node link (shared from the Bento panel) opens with that node selected and its panel open.
+    const focusedRef = useRef(false);
+    useEffect(() => {
+        if (focusedRef.current || status !== 'ok' || !meta?.focusNodeId) return;
+        const focus = graphData.nodes.find((n: { node_id?: string; id?: string }) => (n.node_id || n.id) === meta.focusNodeId);
+        if (focus) { focusedRef.current = true; handleNodeClick(focus); }
+    }, [status, meta, graphData.nodes, handleNodeClick]);
+
+    const isNodeLink = meta?.linkType === 'node';
+
     const formattedDate = meta?.createdAt
         ? new Date(meta.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
         : '';
@@ -310,10 +322,12 @@ export default function GraphViewPage() {
                         <Lock className="w-3.5 h-3.5 text-white" />
                     </div>
                     <div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-500">Shared Graph · Cortex-Drive</p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-500">
+                            {isNodeLink ? 'Shared Node' : 'Shared Graph'} · Cortex-Drive
+                        </p>
                         {meta && (
                             <p className={`text-xs font-medium leading-tight mt-0.5 ${hdrSub}`}>
-                                {meta.title || 'Knowledge Graph'} — {meta.nodeCount} nodes
+                                {isNodeLink ? (meta.title || 'Shared node') : `${meta.title || 'Knowledge Graph'} — ${meta.nodeCount} nodes`}
                             </p>
                         )}
                     </div>

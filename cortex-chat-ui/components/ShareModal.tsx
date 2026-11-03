@@ -9,7 +9,7 @@ import { useCapabilities } from '@/hooks/use-capabilities';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
-type Tab = 'guest' | 'person' | 'group' | 'manage';
+type Tab = 'link' | 'person' | 'group' | 'manage';
 
 interface ActiveGrant {
     grant_id: string;
@@ -27,12 +27,17 @@ interface RevokedEntry {
     revokedBy: string;
 }
 
-interface GuestLink {
-    tokenHash: string;
-    nodeId: string;
-    issuedAt: number;
-    expiresAt: number;
-    expireDays: number;
+// A live node link (design §7b-1, 2026-11-02): a share_links row with this node as its root. Until
+// 2026-11-02 this tab made an HMAC token in Redis (a separate guest page) whose visitor saw nothing on a
+// Private node (S2-25); it now uses the same live links as the graph-view Share dialog.
+interface NodeLink {
+    link_id: string;
+    link_type: string;
+    shareUrl: string;
+    created_at: string;
+    expires_at: string | null;
+    status: 'active' | 'revoked' | 'expired';
+    view_count: number;
 }
 
 interface ShareModalProps {
@@ -55,7 +60,7 @@ const PERSON_EXPIRY_OPTIONS = [
     { label: '30 days', days: 30 },
 ];
 
-function formatDate(ts: number) {
+function formatDate(ts: number | string) {
     return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -77,15 +82,17 @@ function relationColor(rel: string) {
 export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const { getToken } = useAuth();
     const caps = useCapabilities();   // S2-69: org-wide toggle for the owner and org admins only
-    const [tab, setTab] = useState<Tab>('guest');
+    const [tab, setTab] = useState<Tab>('link');
 
-    // --- Guest link state ---
-    const [guestLinks, setGuestLinks] = useState<GuestLink[]>([]);
+    // --- Node link state ---
+    const [nodeLinks, setNodeLinks] = useState<NodeLink[]>([]);
+    const [linkPreview, setLinkPreview] = useState<{ totalNodes: number } | null>(null);
     const [generatedLink, setGeneratedLink] = useState<string | null>(null);
-    const [generatedHash, setGeneratedHash] = useState<string | null>(null);
     const [linkExpiry, setLinkExpiry] = useState(30);
     const [linkCopied, setLinkCopied] = useState(false);
     const [generatingLink, setGeneratingLink] = useState(false);
+    const [linkError, setLinkError] = useState('');
+    const [revokingLink, setRevokingLink] = useState<string | null>(null);
 
     // --- Share with person state ---
     const [email, setEmail] = useState('');
@@ -95,6 +102,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const [personExpiry, setPersonExpiry] = useState(0);
     const [sharing, setSharing] = useState(false);
     const [shareSuccess, setShareSuccess] = useState('');
+    const [shareError, setShareError] = useState('');
 
     // --- Manage access state ---
     const [active, setActive] = useState<ActiveGrant[]>([]);
@@ -113,6 +121,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     const [groupExpiry, setGroupExpiry] = useState(0);
     const [groupSharing, setGroupSharing] = useState(false);
     const [groupShareSuccess, setGroupShareSuccess] = useState('');
+    const [groupShareError, setGroupShareError] = useState('');
 
     const nodeId = node?.node_id || node?.id || node?.name;
 
@@ -124,13 +133,13 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         };
     }, [getToken]);
 
-    // Load guest links when Guest tab is active
-    const loadGuestLinks = useCallback(async () => {
+    // This node's active live links, for the Link tab
+    const loadNodeLinks = useCallback(async () => {
         if (!nodeId) return;
         try {
             const headers = await authHeaders();
-            const resp = await fetch(`${GATEWAY}/api/share/links/${encodeURIComponent(nodeId)}`, { headers });
-            if (resp.ok) setGuestLinks(await resp.json());
+            const resp = await fetch(`${GATEWAY}/api/share/graph-links?nodeId=${encodeURIComponent(nodeId)}`, { headers });
+            if (resp.ok) setNodeLinks(((await resp.json()) as NodeLink[]).filter(l => l.status === 'active'));
         } catch { /* non-fatal */ }
     }, [nodeId, authHeaders]);
 
@@ -190,43 +199,71 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
 
     useEffect(() => {
         if (!open || everyoneVisible) return;
-        if (tab === 'guest') loadGuestLinks();
+        if (tab === 'link') loadNodeLinks();
         if (tab === 'group') loadGroups();
         if (tab === 'manage') loadHistory();
-    }, [open, tab, everyoneVisible, loadGuestLinks, loadGroups, loadHistory]);
+    }, [open, tab, everyoneVisible, loadNodeLinks, loadGroups, loadHistory]);
 
     // Reset per-tab state when switching tabs
     useEffect(() => {
         setGeneratedLink(null);
-        setGeneratedHash(null);
+        setLinkPreview(null);
+        setLinkError('');
         setLinkCopied(false);
         setEmail('');
         setResolvedUser(null);
         setResolveError('');
         setShareSuccess('');
+        setShareError('');
         setSelectedGroupId('');
         setSelectedGroupCount(0);
         setGroupShareSuccess('');
+        setGroupShareError('');
     }, [tab]);
 
     if (!open || !node) return null;
 
-    // --- Guest link actions ---
-    async function generateLink() {
+    // --- Node link actions (live link, one root: this node) ---
+    const errorFrom = async (resp: Response, fallback: string) => {
+        try { return (await resp.json()).error || fallback; } catch { return fallback; }
+    };
+
+    // What the link will include, shown before it is created (design §3).
+    async function previewLink() {
         setGeneratingLink(true);
+        setLinkError('');
         try {
             const headers = await authHeaders();
-            const resp = await fetch(
-                `${GATEWAY}/api/share?nodeId=${encodeURIComponent(nodeId)}&expireDays=${linkExpiry}`,
-                { headers }
-            );
-            const data = await resp.json();
-            if (data.shareUrl) {
-                setGeneratedLink(data.shareUrl);
-                setGeneratedHash(data.tokenHash);
-                await loadGuestLinks();
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link/preview`, {
+                method: 'POST', headers, body: JSON.stringify({ nodeIds: [nodeId] }),
+            });
+            if (resp.ok) setLinkPreview(await resp.json());
+            else setLinkError(await errorFrom(resp, 'Could not check what would be shared'));
+        } catch { setLinkError('Could not reach server'); } finally {
+            setGeneratingLink(false);
+        }
+    }
+
+    async function generateLink() {
+        setGeneratingLink(true);
+        setLinkError('');
+        try {
+            const headers = await authHeaders();
+            const body = {
+                nodeIds: [nodeId],
+                linkType: 'node',
+                title: node?.name,
+                expiresAt: new Date(Date.now() + linkExpiry * 86400000).toISOString(),
+            };
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link`, { method: 'POST', headers, body: JSON.stringify(body) });
+            if (resp.ok) {
+                setGeneratedLink((await resp.json()).shareUrl);
+                setLinkPreview(null);
+                await loadNodeLinks();
+            } else {
+                setLinkError(await errorFrom(resp, 'Could not create the link'));
             }
-        } catch { /* non-fatal */ } finally {
+        } catch { setLinkError('Could not reach server'); } finally {
             setGeneratingLink(false);
         }
     }
@@ -237,15 +274,18 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
         setTimeout(() => setLinkCopied(false), 2500);
     }
 
-    async function revokeGuestLink(tokenHash: string) {
-        const headers = await authHeaders();
-        await fetch(`${GATEWAY}/api/share/revoke-link`, {
-            method: 'DELETE',
-            headers,
-            body: JSON.stringify({ tokenHash, node_id: nodeId }),
-        });
-        setGeneratedLink(prev => (generatedHash === tokenHash ? null : prev));
-        await loadGuestLinks();
+    async function revokeNodeLink(link: NodeLink) {
+        setRevokingLink(link.link_id);
+        setLinkError('');
+        try {
+            const headers = await authHeaders();
+            const resp = await fetch(`${GATEWAY}/api/share/graph-link/${encodeURIComponent(link.link_id)}`, { method: 'DELETE', headers });
+            if (!resp.ok) setLinkError(await errorFrom(resp, 'Could not revoke the link'));
+            setGeneratedLink(prev => (prev === link.shareUrl ? null : prev));
+            await loadNodeLinks();
+        } catch { setLinkError('Could not reach server'); } finally {
+            setRevokingLink(null);
+        }
     }
 
     // --- Share with person actions ---
@@ -269,33 +309,40 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     async function shareWithPerson() {
         if (!resolvedUser) return;
         setSharing(true);
+        setShareSuccess('');
+        setShareError('');
         try {
             const headers = await authHeaders();
             const body: any = { rootNodeId: nodeId, targetSub: resolvedUser.sub };
             if (personExpiry > 0) {
                 body.expiresAt = new Date(Date.now() + personExpiry * 86400000).toISOString();
             }
-            await fetch(`${GATEWAY}/api/share/user`, { method: 'POST', headers, body: JSON.stringify(body) });
+            // Check the response: until 2026-11-02 a failed share still showed "Shared with" (S2-77).
+            const resp = await fetch(`${GATEWAY}/api/share/user`, { method: 'POST', headers, body: JSON.stringify(body) });
+            if (!resp.ok) { setShareError(await errorFrom(resp, 'Could not share')); return; }
             setShareSuccess(`Shared with ${resolvedUser.name}`);
             setEmail('');
             setResolvedUser(null);
-        } catch { /* non-fatal */ } finally { setSharing(false); }
+        } catch { setShareError('Could not reach server'); } finally { setSharing(false); }
     }
 
     // --- Share with group actions ---
     async function shareWithGroup() {
         if (!selectedGroupId) return;
         setGroupSharing(true);
+        setGroupShareSuccess('');
+        setGroupShareError('');
         try {
             const headers = await authHeaders();
             const body: any = { rootNodeId: nodeId, groupId: selectedGroupId };
             if (groupExpiry > 0) {
                 body.expiresAt = new Date(Date.now() + groupExpiry * 86400000).toISOString();
             }
-            await fetch(`${GATEWAY}/api/share/group`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const resp = await fetch(`${GATEWAY}/api/share/group`, { method: 'POST', headers, body: JSON.stringify(body) });
+            if (!resp.ok) { setGroupShareError(await errorFrom(resp, 'Could not share with the group')); return; }
             const g = groups.find(g => g.group_id === selectedGroupId);
             setGroupShareSuccess(`Shared with group "${g?.name}"`);
-        } catch { /* non-fatal */ } finally { setGroupSharing(false); }
+        } catch { setGroupShareError('Could not reach server'); } finally { setGroupSharing(false); }
     }
 
     // --- Manage access actions ---
@@ -327,7 +374,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
     }
 
     const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-        { id: 'guest',  label: 'Guest Link',        icon: <Link2 className="w-3.5 h-3.5" /> },
+        { id: 'link',   label: 'Link',              icon: <Link2 className="w-3.5 h-3.5" /> },
         { id: 'person', label: 'Share with Person', icon: <UserPlus className="w-3.5 h-3.5" /> },
         { id: 'group',  label: 'Share with Group',  icon: <Building2 className="w-3.5 h-3.5" /> },
         { id: 'manage', label: 'Manage Access',     icon: <Users className="w-3.5 h-3.5" /> },
@@ -386,8 +433,8 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                         </div>
                     )}
 
-                    {/* ── GUEST LINK TAB ── */}
-                    {!everyoneVisible && tab === 'guest' && (
+                    {/* ── LINK TAB (live node link) ── */}
+                    {!everyoneVisible && tab === 'link' && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2">
                                 <div className="flex items-center gap-1.5 flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2">
@@ -403,14 +450,25 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                     </select>
                                 </div>
                                 <button
-                                    onClick={generateLink}
+                                    onClick={linkPreview ? generateLink : previewLink}
                                     disabled={generatingLink}
                                     className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50 shrink-0"
                                 >
                                     {generatingLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
-                                    Generate
+                                    {linkPreview ? 'Create link' : 'Check what\'s included'}
                                 </button>
                             </div>
+
+                            {linkPreview && !generatedLink && (
+                                <div className="p-3 bg-white/5 border border-indigo-500/30 rounded-xl text-xs text-slate-200" data-testid="node-link-preview">
+                                    {linkPreview.totalNodes > 1
+                                        ? `This node and ${linkPreview.totalNodes - 1} item${linkPreview.totalNodes - 1 === 1 ? '' : 's'} it contains.`
+                                        : 'This node.'}
+                                    <span className="text-slate-500"> Private notes stay hidden.</span>
+                                </div>
+                            )}
+
+                            {linkError && <p className="text-xs text-red-400">{linkError}</p>}
 
                             {generatedLink && (
                                 <div className="flex items-center gap-2 p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl">
@@ -424,30 +482,44 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                 </div>
                             )}
 
-                            {guestLinks.length > 0 && (
+                            {nodeLinks.length > 0 && (
                                 <div>
-                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Active Guest Links</p>
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Active links</p>
                                     <div className="space-y-2">
-                                        {guestLinks.map(link => (
-                                            <div key={link.tokenHash} className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">
+                                        {nodeLinks.map(link => (
+                                            <div key={link.link_id} className="flex items-center justify-between p-3 bg-white/3 border border-white/5 rounded-xl">
                                                 <div>
-                                                    <p className="text-[11px] text-slate-300">Issued {formatDate(link.issuedAt)}</p>
-                                                    <p className="text-[10px] text-slate-500">Expires {formatDate(link.expiresAt)}</p>
+                                                    <p className="text-[11px] text-slate-300">
+                                                        Created {formatDate(link.created_at)}{link.link_type === 'graph' ? ' · graph view' : ''}
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-500">
+                                                        {link.expires_at ? `Expires ${formatDate(link.expires_at)}` : 'No expiry'} · {link.view_count} view{link.view_count === 1 ? '' : 's'}
+                                                    </p>
                                                 </div>
-                                                <button
-                                                    onClick={() => revokeGuestLink(link.tokenHash)}
-                                                    className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
-                                                    title="Revoke this link"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
+                                                <div className="flex items-center gap-1">
+                                                    <button
+                                                        onClick={() => copyLink(link.shareUrl)}
+                                                        className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-all"
+                                                        title="Copy this link"
+                                                    >
+                                                        <Copy className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => revokeNodeLink(link)}
+                                                        disabled={revokingLink === link.link_id}
+                                                        className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                                                        title="Revoke this link"
+                                                    >
+                                                        {revokingLink === link.link_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
                             )}
 
-                            <p className="text-[10px] text-slate-500">Anyone with the link can view this node. No login required.</p>
+                            <p className="text-[10px] text-slate-500">Anyone with the link can view this node and what it contains, live. No sign-in needed. Revoke and it stops working.</p>
                         </div>
                     )}
 
@@ -487,6 +559,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                 </select>
                             </div>
 
+                            {shareError && <p className="text-xs text-red-400">{shareError}</p>}
                             {shareSuccess && (
                                 <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
                                     <Check className="w-3.5 h-3.5" />{shareSuccess}
@@ -550,6 +623,7 @@ export default function ShareModal({ node, open, onClose }: ShareModalProps) {
                                         </select>
                                     </div>
 
+                                    {groupShareError && <p className="text-xs text-red-400">{groupShareError}</p>}
                                     {groupShareSuccess && (
                                         <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
                                             <Check className="w-3.5 h-3.5" />{groupShareSuccess}

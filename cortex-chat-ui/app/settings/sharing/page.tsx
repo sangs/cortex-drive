@@ -18,6 +18,7 @@ type Tab = 'public-links' | 'named-shares' | 'pending-invites';
 interface GraphLink {
     link_id: string;
     title: string | null;
+    link_type?: 'graph' | 'node';   // 'node': shared from the Bento panel (design §7b-1)
     node_count: number;
     shareUrl: string;
     share_token: string;
@@ -465,6 +466,11 @@ function LinkCard({ link, copiedId, revokingId, confirmId, onCopy, onConfirm, on
                         <span className="text-sm font-black text-slate-900 truncate">
                             {link.title || 'Untitled graph link'}
                         </span>
+                        {link.link_type === 'node' && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border text-indigo-600 bg-indigo-50 border-indigo-100">
+                                node
+                            </span>
+                        )}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${STATUS_STYLES[link.status]}`}>
                             {link.status}
                         </span>

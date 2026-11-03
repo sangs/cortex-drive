@@ -4,7 +4,6 @@ const isPublicRoute = createRouteMatcher([
     "/sign-in(.*)",
     "/sign-up(.*)",
     "/",
-    "/discovery(.*)",   // single-node guest HMAC links — no Clerk account required
     "/graph-view(.*)",  // public graph links (Loom-style) — no Clerk account required
 ]);
 

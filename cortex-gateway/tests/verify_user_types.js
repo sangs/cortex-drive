@@ -120,7 +120,10 @@ const { membershipFromClerkEvent, diffMembership, createOrgMembershipSync } = re
     ok(!/process\.env\.TENANT_ID \|\| decoded\.org_id/.test(src), 'TENANT_ID no longer applies to every signed-in user (S2-48)');
     ok(/organizationMembership\./.test(src) && /orgMembershipSync\.removeMembership/.test(src), 'webhook handles organizationMembership events');
     ok(/"x-user-type": reqHeaders\['x-user-type'\]/.test(src), 'MCP calls carry the user type');
-    ok(/req\.headers\['x-user-type'\] = USER_TYPES\.GUEST/.test(src), 'guest links are typed guest');
+    // The old node link (the only code that set req.guestAuth and typed its visitor guest) was removed
+    // 2026-11-02 (design §7b-1). Guest enforcement stays, dormant; phase 4 (chat over links) must set
+    // req.guestAuth and x-user-type = USER_TYPES.GUEST together.
+    ok(!/req\.guestAuth\s*=\s*true/.test(src), 'nothing grants guest auth until phase 4 (old node link removed)');
     ok(!/createOrganizationMembership/.test(src), 'still no automatic Clerk organization membership (S2-47)');
 
     console.log(`verify_user_types: ${passed} checks passed`);

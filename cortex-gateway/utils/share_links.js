@@ -12,14 +12,32 @@
  * exposes no working link; the owner can still copy the URL later. Migrated legacy tokens are matched
  * by their sha256 only (legacy_token_hash).
  *
+ * Two link types (design §7b-1, 2026-11-02): 'graph' (the Share button on a graph view) and 'node' (the
+ * Link tab of the Share dialog in the Bento panel: one root, the recipient lands on that node). Until
+ * 2026-11-02 a node link was a separate HMAC token in Redis (utils/share_tokens.js, /discovery?share=)
+ * whose visitor had no Permify grant and so saw nothing on a Private node (S2-25); it was removed.
+ *
  * Built from injected dependencies so it can be unit-tested without a server.
  */
 const crypto = require('crypto');
 
 const LINK_SUBJECT_PREFIX = 'share_link:';
+const LINK_TYPES = { GRAPH: 'graph', NODE: 'node' };
+const MIN_SHARE_SECRET_LENGTH = 32;
 const LINK_TOKEN_SEPARATOR = '.';
 const NOTHING_TO_SHARE_ERROR = 'Nothing here can be shared: the view has no nodes from the knowledge graph.';
 const NOT_YOURS_ERROR = 'Some of these nodes were added by someone else, so you cannot share them. Remove them from the view and try again.';
+const NODE_LINK_ONE_NODE_ERROR = 'A node link shares exactly one node.';
+const EVERYONE_VISIBLE_ERROR = 'This node is Public or built-in, so everyone can already see it. There is nothing to share.';
+
+/** Why the configured secret can't be used, or null when it can (GL-4/S2-72: no in-code default, AP-24). */
+function shareSecretProblem(secret) {
+    if (!secret) return 'GATEWAY_SHARE_SECRET is not set';
+    if (secret.length < MIN_SHARE_SECRET_LENGTH) {
+        return `GATEWAY_SHARE_SECRET is shorter than ${MIN_SHARE_SECRET_LENGTH} characters`;
+    }
+    return null;
+}
 
 const sha256 = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const linkPrincipal = linkId => `${LINK_SUBJECT_PREFIX}${linkId}`;
@@ -70,16 +88,25 @@ function createShareLinks({ db, permify, bento, redis, isOwner = () => false, se
         };
     }
 
-    /** Create a live graph-view link. Writes the Permify tuples; undoes them if the database write fails. */
-    async function createGraphLink({ nodeIds, title, expiresAt, userId, tenantId }) {
+    /**
+     * Create a live link (graph view, or one node). Writes the Permify tuples; undoes them if the database
+     * write fails. A node link must name one node that needs a grant: a Public/built-in node is refused
+     * (409, like every other share of it), since a link adds nothing to what everyone already sees.
+     */
+    async function createGraphLink({ nodeIds, title, expiresAt, userId, tenantId, linkType = LINK_TYPES.GRAPH }) {
+        if (!Object.values(LINK_TYPES).includes(linkType)) return { ok: false, status: 400, error: `Unknown link type: ${linkType}` };
+        if (linkType === LINK_TYPES.NODE && nodeIds.length !== 1) return { ok: false, status: 400, error: NODE_LINK_ONE_NODE_ERROR };
         const p = await plan({ nodeIds, userId, tenantId });
         if (!p.ok) return p;
+        if (linkType === LINK_TYPES.NODE && !p.roots.length) {
+            return { ok: false, status: 409, error: EVERYONE_VISIBLE_ERROR, everyone_visible: true };
+        }
         requireSecret();
         const nonce = crypto.randomBytes(16).toString('hex');
         const { rows: [row] } = await db.query(
             `INSERT INTO share_links (token_nonce, link_type, root_node_ids, layout_node_ids, title, owner_sub, org_id, expires_at)
-             VALUES ($1, 'graph', $2, $3, $4, $5, $6, $7) RETURNING link_id`,
-            [nonce, p.roots, p.layoutNodeIds, title || null, userId, tenantId, expiresAt || null]);
+             VALUES ($1, $8, $2, $3, $4, $5, $6, $7) RETURNING link_id`,
+            [nonce, p.roots, p.layoutNodeIds, title || null, userId, tenantId, expiresAt || null, linkType]);
         const written = [];
         try {
             for (const root of p.roots) { await permify.shareNodeWithLink(root, row.link_id); written.push(root); }
@@ -89,7 +116,7 @@ function createShareLinks({ db, permify, bento, redis, isOwner = () => false, se
             await db.query('DELETE FROM share_links WHERE link_id = $1', [row.link_id]);
             throw err;
         }
-        log.log(`[SHARE-LINK] created ${row.link_id} roots=${p.roots.length} total=${p.totalNodes} by=${userId}`);
+        log.log(`[SHARE-LINK] created ${linkType} ${row.link_id} roots=${p.roots.length} total=${p.totalNodes} by=${userId}`);
         return { ok: true, linkId: row.link_id, shareUrl: urlFor(row.link_id, nonce), plan: p };
     }
 
@@ -126,16 +153,20 @@ function createShareLinks({ db, permify, bento, redis, isOwner = () => false, se
         return { link, graph };
     }
 
-    /** The owner's links, newest first, each with its URL (re-derived from the nonce). */
-    async function listLinks(userId) {
+    /**
+     * The owner's links, newest first, each with its URL (re-derived from the nonce). With nodeId: only
+     * links that share that node as a root (the per-node list in the Bento panel's Share dialog).
+     */
+    async function listLinks(userId, { nodeId = null } = {}) {
         const { rows } = await db.query(
-            `SELECT link_id, token_nonce, title, array_length(root_node_ids, 1) AS root_count,
+            `SELECT link_id, token_nonce, link_type, title, array_length(root_node_ids, 1) AS root_count,
                     array_length(layout_node_ids, 1) AS node_count, created_at, expires_at, revoked_at,
                     view_count, last_viewed_at,
                     CASE WHEN revoked_at IS NOT NULL THEN 'revoked'
                          WHEN expires_at IS NOT NULL AND expires_at < NOW() THEN 'expired'
                          ELSE 'active' END AS status
-             FROM share_links WHERE owner_sub = $1 ORDER BY created_at DESC`, [userId]);
+             FROM share_links WHERE owner_sub = $1 AND ($2::text IS NULL OR $2 = ANY(root_node_ids))
+             ORDER BY created_at DESC`, [userId, nodeId || null]);
         return rows.map(({ token_nonce, ...r }) => ({ ...r, shareUrl: urlFor(r.link_id, token_nonce) }));
     }
 
@@ -155,4 +186,6 @@ function createShareLinks({ db, permify, bento, redis, isOwner = () => false, se
     return { plan, createGraphLink, resolveToken, viewGraphLink, listLinks, revokeLink, tokenFor, linkPrincipal };
 }
 
-module.exports = { createShareLinks, linkPrincipal, sha256, LINK_SUBJECT_PREFIX, NOTHING_TO_SHARE_ERROR, NOT_YOURS_ERROR };
+module.exports = { createShareLinks, linkPrincipal, sha256, shareSecretProblem, LINK_SUBJECT_PREFIX, LINK_TYPES,
+                   MIN_SHARE_SECRET_LENGTH, NOTHING_TO_SHARE_ERROR, NOT_YOURS_ERROR, NODE_LINK_ONE_NODE_ERROR,
+                   EVERYONE_VISIBLE_ERROR };

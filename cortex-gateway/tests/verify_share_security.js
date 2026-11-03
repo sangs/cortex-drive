@@ -183,7 +183,6 @@ function run(mw, req) {
         ['delete /api/share/graph-link/:linkId', 'filtered by owner_sub = caller in SQL'],
         ['get /api/share/grants', 'filtered by issued_by = caller'],
         ['get /api/share/pending', 'filtered by issued_by = caller'],
-        ['get /api/share/preview', 'guest-token route'],
     ]);
     const unchecked = [];
     let m; let routes = 0;

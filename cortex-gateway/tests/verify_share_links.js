@@ -7,7 +7,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { createShareLinks, sha256, NOT_YOURS_ERROR, NOTHING_TO_SHARE_ERROR } = require('../utils/share_links');
+const { createShareLinks, sha256, shareSecretProblem, MIN_SHARE_SECRET_LENGTH, LINK_TYPES, NOT_YOURS_ERROR,
+        NOTHING_TO_SHARE_ERROR, NODE_LINK_ONE_NODE_ERROR, EVERYONE_VISIBLE_ERROR } = require('../utils/share_links');
 
 let passed = 0;
 const ok = (c, m) => { assert.ok(c, m); passed++; };
@@ -23,7 +24,8 @@ function harness({ shareRoots, canShare = () => true, failWriteOn = null, rows =
             calls.sql.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
             if (sql.startsWith('INSERT INTO share_links')) {
                 store[LINK] = { link_id: LINK, token_nonce: params[0], root_node_ids: params[1], layout_node_ids: params[2],
-                                title: params[3], owner_sub: params[4], org_id: params[5], expires_at: params[6], revoked_at: null };
+                                title: params[3], owner_sub: params[4], org_id: params[5], expires_at: params[6],
+                                link_type: params[7], revoked_at: null };
                 return { rows: [{ link_id: LINK }] };
             }
             if (sql.startsWith('DELETE FROM share_links')) { delete store[params[0]]; return { rows: [] }; }
@@ -36,6 +38,11 @@ function harness({ shareRoots, canShare = () => true, failWriteOn = null, rows =
                 return { rows: r && r.owner_sub === params[1] && !r.revoked_at ? [r] : [] };
             }
             if (sql.startsWith('UPDATE share_links SET revoked_at')) { store[params[0]].revoked_at = new Date(); return { rows: [] }; }
+            if (sql.startsWith('SELECT link_id, token_nonce, link_type')) {
+                calls.listSql = sql;
+                return { rows: Object.values(store).filter(r => r.owner_sub === params[0]
+                                                              && (params[1] === null || r.root_node_ids.includes(params[1]))) };
+            }
             return { rows: [] };
         },
     };
@@ -141,6 +148,49 @@ const ROOTS = { roots: ['a', 'c'], covered: ['b'], others: [], everyone: ['pub']
         passed++;
     }
 
+    // ── node links (design §7b-1, 2026-11-02) ─────────────────────────────────────────────────
+    {
+        const h = harness({ shareRoots: { roots: ['n1'], covered: [], others: [], everyone: [], unknown: [], total_nodes: 7 } });
+        const r = await h.links.createGraphLink({ nodeIds: ['n1'], title: 'BERT', userId: 'member', tenantId: 'org', linkType: LINK_TYPES.NODE });
+        ok(r.ok && r.plan.totalNodes === 7, 'node link created; preview total includes what the node contains');
+        eq(h.store[LINK].link_type, 'node', "stored as link_type 'node'");
+        eq(h.calls.writes, [['n1', LINK]], 'one Permify tuple on the node (contents inherit through parent)');
+        const g = await h.links.createGraphLink({ nodeIds: [], userId: 'owner', tenantId: 'org' });
+        eq(h.store[LINK].link_type, 'graph', "default link type is still 'graph'");
+        ok(g.ok, 'graph link unchanged');
+
+        const both = harness({ shareRoots: ROOTS });
+        eq((await both.links.createGraphLink({ nodeIds: ['a', 'c'], userId: 'owner', tenantId: 'org', linkType: 'node' })).error,
+           NODE_LINK_ONE_NODE_ERROR, 'a node link names exactly one node');
+        eq((await both.links.createGraphLink({ nodeIds: ['a'], userId: 'owner', tenantId: 'org', linkType: 'island' })).status,
+           400, 'unknown link type refused');
+        const pub = harness({ shareRoots: { roots: [], covered: [], others: [], everyone: ['pub'], unknown: [], total_nodes: 0 } });
+        const rp = await pub.links.createGraphLink({ nodeIds: ['pub'], userId: 'owner', tenantId: 'org', linkType: 'node' });
+        eq([rp.status, rp.error, rp.everyone_visible, pub.store[LINK]], [409, EVERYONE_VISIBLE_ERROR, true, undefined],
+           'Public/built-in node: no node link (409), nothing written');
+        const denied = harness({ shareRoots: { roots: ['n1'], covered: [], others: [], everyone: [], unknown: [], total_nodes: 1 }, canShare: () => false });
+        eq((await denied.links.createGraphLink({ nodeIds: ['n1'], userId: 'member', tenantId: 'org', linkType: 'node' })).status,
+           403, "someone else's node: refused (Permify can_share)");
+
+        const l = harness({ rows: {
+            x: { link_id: 'x', token_nonce: 'n', owner_sub: 'me', root_node_ids: ['n1'] },
+            y: { link_id: 'y', token_nonce: 'n', owner_sub: 'me', root_node_ids: ['n2', 'n1'] },
+            z: { link_id: 'z', token_nonce: 'n', owner_sub: 'me', root_node_ids: ['n3'] },
+            w: { link_id: 'w', token_nonce: 'n', owner_sub: 'other', root_node_ids: ['n1'] },
+        } });
+        eq((await l.links.listLinks('me', { nodeId: 'n1' })).map(r => r.link_id), ['x', 'y'], "per-node list: the caller's links with that node as a root");
+        eq((await l.links.listLinks('me')).map(r => r.link_id), ['x', 'y', 'z'], 'without nodeId: all of the caller\'s links');
+        ok(/\$2::text IS NULL OR \$2 = ANY\(root_node_ids\)/.test(l.calls.listSql), 'the node filter is in SQL (AP-2: $2 is used)');
+    }
+
+    // ── secret (GL-4/S2-72, AP-24) ───────────────────────────────────────────────────────────────
+    {
+        ok(shareSecretProblem(undefined), 'unset secret is a problem');
+        ok(shareSecretProblem(''), 'empty secret is a problem');
+        ok(shareSecretProblem('x'.repeat(MIN_SHARE_SECRET_LENGTH - 1)), 'short secret is a problem');
+        eq(shareSecretProblem('x'.repeat(MIN_SHARE_SECRET_LENGTH)), null, `${MIN_SHARE_SECRET_LENGTH}-char secret is fine`);
+    }
+
     // ── wiring ────────────────────────────────────────────────────────────────────────────────
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     ok(!/(INSERT INTO|FROM|UPDATE) graph_share_links/.test(src), 'index.js no longer reads or writes stored graph copies');
@@ -148,6 +198,30 @@ const ROOTS = { roots: ['a', 'c'], covered: ['b'], others: [], everyone: ['pub']
     ok(/app\.post\('\/api\/share\/graph-link\/preview', authMiddleware, requireCapability\('share'/.test(src), 'preview needs it too');
     ok(/'x-user-id': shareLinks\.linkPrincipal\(link\.link_id\)/.test(src), "link node details use the link's permissions");
     ok(/secret: process\.env\.GATEWAY_SHARE_SECRET \|\| ''/.test(src), 'link secret has no in-code default');
+    ok(!/cortex_default_fallback_secret/.test(src), 'index.js has no default share secret');
+    ok(!/GATEWAY_SHARE_SECRET\s*\|\|\s*['"][^'"]+['"]/.test(src), 'no non-empty fallback for GATEWAY_SHARE_SECRET');
+    const startup = src.slice(src.indexOf('shareSecretProblem(process.env.GATEWAY_SHARE_SECRET)'));
+    ok(/NODE_ENV === 'production'[\s\S]{0,200}process\.exit\(1\)/.test(startup.slice(0, 600)),
+       'production refuses to start without a usable secret');
+    // The old node link (HMAC token in Redis, /discovery?share=) is gone (design §7b-1, 2026-11-02).
+    ok(!fs.existsSync(path.join(__dirname, '..', 'utils', 'share_tokens.js')), 'utils/share_tokens.js removed');
+    for (const re of [/app\.get\('\/api\/share',/, /\/api\/share\/links\//, /\/api\/share\/revoke-link/, /\/api\/share\/preview/,
+                      /guestTokenMiddleware/, /\/discovery\?share=/]) {
+        ok(!re.test(src), `old node-link code removed: ${re}`);
+    }
+    ok(/'x-guest-share-anchor'/.test(src.slice(src.indexOf('const GATEWAY_ASSIGNED_HEADERS'))), 'x-guest-share-anchor stays gateway-assigned (a client can never send it)');
+    ok(/req\.guestAuth === true/.test(src), 'dormant guest enforcement kept for phase 4');
+    ok(/listLinks\(req\.headers\['x-user-id'\], \{ nodeId: req\.query\.nodeId \|\| null \}\)/.test(src), 'GET /api/share/graph-links takes ?nodeId=');
+    ok(/createGraphLink\(\{ \.\.\.graphLinkRequest\(req\), title, expiresAt, linkType \}\)/.test(src), 'POST /api/share/graph-link passes linkType');
+    ok(/focusNodeId: r\.link\.root_node_ids\[0\]/.test(src), 'a node link page opens on its node');
+    // Production sets BENTO_SERVER_URL only; BENTO_URL fell back to localhost (S2-77, 2026-11-02).
+    ok(!/process\.env\.BENTO_URL\b/.test(src), 'every Bento call reads BENTO_SERVER_URL');
+    // Bento is IAM-locked: a call without the Cloud Run ID token gets 403 (AP-18, S2-77).
+    const lines = src.split('\n');
+    const bentoCalls = lines.map((l, i) => i).filter(i => /fetch(WithColdStartRetry)?\(`\$\{(bento|bentoBase|bentoUrl|bentoServerUrl)\}/.test(lines[i]));
+    const untokened = bentoCalls.filter(i => !lines.slice(Math.max(0, i - 6), i + 1).some(l => /getCloudRunToken\(/.test(l)));
+    ok(bentoCalls.length >= 9 && untokened.length === 0,
+       `every Bento fetch gets a Cloud Run ID token first (${bentoCalls.length} calls, missing at lines ${untokened.map(i => i + 1).join(', ') || 'none'})`);
     const schema = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'permify', 'authorization_schema.perm'), 'utf8');
     ok(/entity share_link \{\}/.test(schema) && /shared_viewer\s+@user @group#member @agent @share_link/.test(schema),
        'Permify schema: share_link is a shared_viewer subject');

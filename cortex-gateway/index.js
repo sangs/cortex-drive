@@ -676,7 +676,7 @@ async function bentoPost(path, tenantId, body, principalId = '') {
     if (!res.ok) throw new Error(`Bento ${path} → ${res.status}`);
     return res.json();
 }
-const { createShareLinks } = require('./utils/share_links');
+const { createShareLinks, LINK_TYPES } = require('./utils/share_links');
 const shareLinks = createShareLinks({
     db, permify, redis, isOwner,
     secret: process.env.GATEWAY_SHARE_SECRET || '',
@@ -843,11 +843,11 @@ const orgMembershipSync = createOrgMembershipSync({
 });
 
 /**
- * Guest node-share tokens (utils/share_tokens.js). No in-code default secret (AP-24, GL-4/S2-72):
- * production refuses to start without a usable GATEWAY_SHARE_SECRET; local dev runs with node
- * share links switched off (creating one → 503, every token invalid).
+ * Share-link secret (live links, utils/share_links.js). No in-code default (AP-24, GL-4/S2-72):
+ * production refuses to start without a usable GATEWAY_SHARE_SECRET; local dev runs with share
+ * links switched off (creating one → 503, every token invalid).
  */
-const { createShareTokens, shareSecretProblem } = require('./utils/share_tokens');
+const { shareSecretProblem } = require('./utils/share_links');
 const shareSecretIssue = shareSecretProblem(process.env.GATEWAY_SHARE_SECRET);
 if (shareSecretIssue) {
     if (process.env.NODE_ENV === 'production') {
@@ -856,7 +856,6 @@ if (shareSecretIssue) {
     }
     console.warn(`[STARTUP] ${shareSecretIssue}. Share links are switched off in this local run.`);
 }
-const shareTokens = createShareTokens({ secret: process.env.GATEWAY_SHARE_SECRET, redis });
 
 // ALLOWED_ORIGIN: restrict to app subdomain in production, wildcard in local dev.
 // Set ALLOWED_ORIGIN=https://app.cortex-drive.com in Cloud Run env after custom domain is live.
@@ -876,37 +875,6 @@ const GATEWAY_ASSIGNED_HEADERS = ['x-user-id', 'x-tenant-id', 'x-raw-user-id', '
 function stripClientIdentityHeaders(req) {
     for (const h of GATEWAY_ASSIGNED_HEADERS) delete req.headers[h];
 }
-
-/**
- * Interceptor for Stateless Guest Share Tokens
- * Async: checks Redis to support link revocation (DEL guest_link:{tokenHash} = revoke). A Redis
- * error denies the link (GL-5); before 2026-11-02 it fell back to trusting the signature alone.
- * A verified token is recorded as req.guestAuth (a server-side property no client can set) —
- * authMiddleware keys its guest bypass off that, never off the x-user-id header value.
- */
-const guestTokenMiddleware = async (req, res, next) => {
-    stripClientIdentityHeaders(req);
-    const token = req.query.share || req.headers['x-share-token'];
-
-    if (token) {
-        const verified = await shareTokens.check(token);
-        if (verified.ok) {
-            console.log(`[GUEST-AUTH] Valid Share Token for Node: ${verified.nodeId}`);
-            req.guestAuth = true;
-            req.headers['x-tenant-id'] = verified.tenantId;
-            req.headers['x-user-id'] = 'guest-auth';
-            req.headers['x-user-type'] = USER_TYPES.GUEST;
-            req.headers['x-guest-share-anchor'] = verified.nodeId;
-            return next();
-        }
-        if (verified.status) {
-            console.warn(`[GUEST-AUTH] Share link refused (${verified.status}): ${verified.error}`);
-            return res.status(verified.status).json({ error: verified.error });
-        }
-        console.warn(`[GUEST-AUTH] Expired or Invalid Share Token attempt.`);
-    }
-    next();
-};
 
 // Health check
 app.get('/health', (req, res) => res.send({ status: 'ok' }));
@@ -967,8 +935,9 @@ function trialKeyAccess(apiKey) {
 
 // Auth Middleware
 const authMiddleware = async (req, res, next) => {
-    // 0. Guest Share Token Bypass — only when guestTokenMiddleware verified a token on THIS
-    // request (req.guestAuth). Never trust the x-user-id header value itself.
+    // 0. Guest bypass — only when gateway code verified a guest on THIS request (req.guestAuth).
+    // Never trust the x-user-id header value itself. Dormant since the old node link was removed
+    // (2026-11-02, design §7b-1): nothing sets req.guestAuth until chat over links (phase 4).
     if (req.guestAuth === true) {
         console.log(`[AUTH] Bypassing Clerk for guest-auth (Anchor: ${req.headers['x-guest-share-anchor']})`);
         return next();
@@ -1449,59 +1418,6 @@ app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) =>
 /**
  * Endpoints
  */
-app.get('/api/share', authMiddleware, shareAuthz.requireNodeShare(req => req.query.nodeId), async (req, res) => {
-    const { nodeId } = req.query;
-    const tenantId = req.headers['x-tenant-id'];
-    if (!nodeId) return res.status(400).send({ error: "Missing 'nodeId' for sharing" });
-
-    const expireDays = Math.min(Math.max(parseInt(req.query.expireDays) || 30, 1), 90);
-    let token, tokenHash;
-    try {
-        const issuedAt = Date.now();
-        const signed = shareTokens.sign(tenantId, nodeId, expireDays);
-        token = signed.token;
-        tokenHash = await shareTokens.register(token, { tenantId, nodeId, issuedAt, expiresAt: signed.expiresAt, expireDays });
-    } catch (err) {
-        return res.status(err.status || 500).send({ error: err.message });
-    }
-    const shareUrl = `${process.env.FRONTEND_URL || 'https://app.cortex-drive.com'}/discovery?share=${token}`;
-
-    res.send({
-        token,
-        shareUrl,
-        tokenHash,
-        expiresIn: `${expireDays} days`,
-        note: "This URL grants stateless 'read-only' access to the specified graph island."
-    });
-});
-
-app.get('/api/share/links/:node_id', authMiddleware, shareAuthz.requireNodeShare(req => req.params.node_id), async (req, res) => {
-    const tenantId = req.headers['x-tenant-id'];
-    try {
-        const members = await redis.smembers(`guest_links:${tenantId}:${req.params.node_id}`);
-        const links = (await Promise.all(members.map(async h => {
-            const meta = await redis.get(`guest_link:${h}`);
-            return meta ? { tokenHash: h, ...JSON.parse(meta) } : null;
-        }))).filter(Boolean);
-        res.json(links);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.delete('/api/share/revoke-link', authMiddleware, shareAuthz.requireNodeShare(req => req.body && req.body.node_id), async (req, res) => {
-    const { tokenHash, node_id } = req.body;
-    const tenantId = req.headers['x-tenant-id'];
-    if (!tokenHash || !node_id) return res.status(400).json({ error: 'tokenHash and node_id required' });
-    try {
-        await redis.del(`guest_link:${tokenHash}`);
-        await redis.srem(`guest_links:${tenantId}:${node_id}`, tokenHash);
-        res.json({ ok: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 // --- Share Endpoints (Permify-backed, depth-aware) ---
 // Permify is the enforcement layer. share_grants (Cloud SQL) is the audit/UI record.
 // Every share writes ONE shared_viewer tuple on the root; children inherit via parent chain.
@@ -2268,9 +2184,9 @@ app.post('/api/share/graph-link/preview', authMiddleware, requireCapability('sha
     }
 });
 app.post('/api/share/graph-link', authMiddleware, requireCapability('share', 'You cannot share from this account.'), async (req, res) => {
-    const { title, expiresAt } = req.body || {};
+    const { title, expiresAt, linkType } = req.body || {};
     try {
-        const r = await shareLinks.createGraphLink({ ...graphLinkRequest(req), title, expiresAt });
+        const r = await shareLinks.createGraphLink({ ...graphLinkRequest(req), title, expiresAt, linkType });
         if (!r.ok) return sendShareRefusal(res, r);
         res.json({ shareUrl: r.shareUrl, linkId: r.linkId, roots: r.plan.roots.length, totalNodes: r.plan.totalNodes });
     } catch (err) {
@@ -2289,7 +2205,10 @@ app.get('/api/share/graph-link/:token', async (req, res) => {
             ownerName = `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || ownerName;
         } catch {}
         res.json({
-            meta: { title: r.link.title, ownerName, createdAt: r.link.created_at, nodeCount: r.graph.nodes.length, live: true },
+            meta: { title: r.link.title, ownerName, createdAt: r.link.created_at, nodeCount: r.graph.nodes.length, live: true,
+                    linkType: r.link.link_type,
+                    // A node link opens on its node with the details panel open (design §7b-1).
+                    ...(r.link.link_type === LINK_TYPES.NODE ? { focusNodeId: r.link.root_node_ids[0] } : {}) },
             nodes: r.graph.nodes,
             links: r.graph.links,
         });
@@ -2344,7 +2263,7 @@ app.get('/api/share/received', authMiddleware, async (req, res) => {
 });
 app.get('/api/share/graph-links', authMiddleware, async (req, res) => {
     try {
-        res.json(await shareLinks.listLinks(req.headers['x-user-id']));
+        res.json(await shareLinks.listLinks(req.headers['x-user-id'], { nodeId: req.query.nodeId || null }));
     } catch (err) {
         console.error('[/api/share/graph-links]', err.message);
         res.status(err.status || 500).json({ error: 'Could not list links' });
@@ -2508,32 +2427,6 @@ app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, shareAuthz.requ
     } catch (err) {
         console.error('[DELETE /api/share/cancel-invite]', err.message);
         res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/share/preview', guestTokenMiddleware, async (req, res) => {
-    const nodeId = req.headers['x-guest-share-anchor'];
-    if (!nodeId) return res.status(400).json({ error: 'Invalid or missing share token' });
-    const tenantId = req.headers['x-tenant-id'] || '';
-    const bentoUrl = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
-    try {
-        const bentoOidcToken = await getCloudRunToken(bentoUrl);
-        const resp = await fetch(`${bentoUrl}/get_node_details`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-tenant-id': tenantId,
-                'x-user-id': 'guest-auth',
-                'x-guest-share-anchor': nodeId,
-                ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
-            },
-            body: JSON.stringify({ node_id: nodeId }),
-        });
-        const data = await resp.json();
-        res.json(data);
-    } catch (err) {
-        console.error('[/api/share/preview]', err.message);
-        res.status(500).json({ error: 'Failed to fetch node preview' });
     }
 });
 
@@ -2974,8 +2867,8 @@ const HR_SAFE_LABELS = [
 ];
 
 /**
- * Guest share-link turns (req.guestAuth, set only by guestTokenMiddleware) get the guest security
- * prompt. The prompt is guidance only: the binding guest restriction is the tool allowlist in
+ * Guest turns (req.guestAuth, set only by gateway code; dormant until chat over links, phase 4) get the
+ * guest security prompt. The prompt is guidance only: the binding guest restriction is the tool allowlist in
  * utils/tool_policy.js (S2-20). Replaces a securityMiddleware that was never mounted on any route
  * and keyed on 'trial-user' instead of the guest identity.
  */
@@ -3083,7 +2976,7 @@ app.delete('/api/conversations/:id', authMiddleware, async (req, res) => {
  * SSE Endpoint for the Frontend
  * This is the "Brain" of the system.
  */
-app.get('/sse', guestTokenMiddleware, authMiddleware, async (req, res) => {
+app.get('/sse', authMiddleware, async (req, res) => {
     const { query, conversationId } = req.query;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
