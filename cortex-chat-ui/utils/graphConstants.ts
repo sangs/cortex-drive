@@ -402,10 +402,24 @@ export function finalizeGraphForRender(
 }
 
 /**
+ * Fields a later fetch may overwrite on a node already on screen (2026-11-03): only the per-run
+ * bridge annotations set by connect_knowledge_on_demand. Everything else the node already has
+ * (description, name, type, is_bento_eligible, relevance from the original answer) is kept — a bridge
+ * or expansion payload carries thinner copies of those (e.g. an intermediate bridge node arrives with
+ * is_bento_eligible:false and no description), which used to overwrite the richer on-screen values.
+ */
+export const GRAPH_MERGE_REFRESH_FIELDS: ReadonlySet<string> = new Set([
+    'has_federated_bridge', 'relevance_tier', 'bridge_reason', 'bridge_domain', 'bridge_domain_name',
+]);
+
+const isMissing = (v: unknown) => v === undefined || v === null || v === '';
+
+/**
  * Merge fetched nodes into the node list in place, matching by the stable node_id (falling back to
  * id). A matched node keeps its existing `id`, so expansion state, selection and collapse keyed on
- * it survive the merge; fields from the fetch are taken over. Returns the remap (fetched id →
- * existing id) to apply to the fetched links, so they still point at the node on screen.
+ * it survive the merge. It gains only the fields it does not have yet, plus the per-run bridge
+ * annotations (GRAPH_MERGE_REFRESH_FIELDS); its own values are never overwritten. Returns the remap
+ * (fetched id → existing id) to apply to the fetched links, so they still point at the node on screen.
  */
 export function mergeFragmentNodes(nodes: GraphNode[], incoming: GraphNode[]): Map<string, string> {
     const keyOf = (n: GraphNode) => (n as any).node_id || n.id;
@@ -417,10 +431,39 @@ export function mergeFragmentNodes(nodes: GraphNode[], incoming: GraphNode[]): M
             return;
         }
         const existingId = nodes[idx].id;
-        nodes[idx] = { ...nodes[idx], ...n, id: existingId };
+        const merged: any = { ...nodes[idx] };
+        Object.entries(n).forEach(([k, v]) => {
+            if (isMissing(v)) return;
+            if (GRAPH_MERGE_REFRESH_FIELDS.has(k) || isMissing(merged[k])) merged[k] = v;
+        });
+        merged.id = existingId;
+        nodes[idx] = merged;
         if (n.id !== existingId) remap.set(n.id, existingId);
     });
     return remap;
+}
+
+// Graph-view undo (2026-11-03): snapshots taken before a bridge or expand merge, browser memory only.
+export const GRAPH_UNDO_STACK_LIMIT = 10;
+
+export type GraphUndoSnapshot<E = unknown> = {
+    graph: { nodes: GraphNode[]; links: GraphLink[] };
+    extra: E;
+};
+
+/**
+ * Copy the graph for an undo snapshot. Node and link objects are copied one level deep because the
+ * render pipeline (applyAffordanceFlags) sets flags on node objects in place; sharing them would let
+ * a later merge change the snapshot.
+ */
+export function snapshotGraph(graph: { nodes: GraphNode[]; links: GraphLink[] }): { nodes: GraphNode[]; links: GraphLink[] } {
+    return { nodes: graph.nodes.map(n => ({ ...n })), links: graph.links.map(l => ({ ...l })) };
+}
+
+/** Push onto a bounded stack (oldest dropped). Returns a new array. */
+export function pushBounded<T>(stack: T[], item: T, limit: number = GRAPH_UNDO_STACK_LIMIT): T[] {
+    const next = [...stack, item];
+    return next.length > limit ? next.slice(next.length - limit) : next;
 }
 
 // Auto-fit after a bloom (2026-10-28): fit the graph, but never zoom in past normal size (a small

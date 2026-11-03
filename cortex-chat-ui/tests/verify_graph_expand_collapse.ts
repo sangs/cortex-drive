@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import {
     finalizeGraphForRender, mergeFragmentNodes, clampZoom,
     GRAPH_AUTOFIT_MIN_ZOOM, GRAPH_AUTOFIT_MAX_ZOOM,
+    snapshotGraph, pushBounded, applyAffordanceFlags, GRAPH_UNDO_STACK_LIMIT,
 } from '../utils/graphConstants.ts';
 
 let passed = 0;
@@ -91,6 +92,47 @@ const fragment = {
     eq(nodes.map(n => n.id), ['a', 'b'], 'matched node keeps its id; new node appended');
     eq((nodes[0] as any).description, 'd', 'fetched fields are taken over');
     eq([...remap], [['elem-1', 'a']], 'remap returned for the fetched id');
+}
+
+// ── merge never overwrites what the on-screen node already has (2026-11-03) ──────────────────────
+{
+    const nodes: any[] = [{ id: 'a', node_id: 'N1', name: 'Graph RAG', type: 'Project', description: 'full text',
+        is_bento_eligible: true, relevance_tier: 'related' }];
+    // An intermediate node of a bridge path arrives thin: no description, is_bento_eligible false.
+    mergeFragmentNodes(nodes, [{ id: 'elem-1', node_id: 'N1', name: 'Graph RAG', type: 'Project', description: '',
+        is_bento_eligible: false, is_bridge: true, has_federated_bridge: true, relevance_tier: 'structural' } as any]);
+    eq(nodes[0].description, 'full text', 'description kept');
+    eq(nodes[0].is_bento_eligible, true, 'is_bento_eligible kept');
+    eq(nodes[0].is_bridge, true, 'missing field filled');
+    eq(nodes[0].has_federated_bridge, true, 'bridge annotation added');
+    eq(nodes[0].relevance_tier, 'structural', 'per-run bridge field refreshed');
+    eq(nodes[0].id, 'a', 'id kept');
+}
+
+// ── undo: snapshots are isolated from later merges; the stack is bounded ─────────────────────────
+{
+    const live = careerMap();
+    const snap = snapshotGraph(live);
+    applyAffordanceFlags(live.nodes, live.links);              // sets flags on live node objects in place
+    mergeFragmentNodes(live.nodes, [{ id: 'z', node_id: 'n-z', name: 'Z', type: 'Topic' } as any]);
+    eq(snap.nodes.length, 6, 'snapshot keeps the pre-merge node count');
+    ok(snap.nodes.every(n => (n as any).isExpandable === undefined), 'in-place flag writes do not reach the snapshot');
+    let stack: number[] = [];
+    for (let i = 0; i < GRAPH_UNDO_STACK_LIMIT + 3; i++) stack = pushBounded(stack, i);
+    eq(stack.length, GRAPH_UNDO_STACK_LIMIT, 'stack capped at GRAPH_UNDO_STACK_LIMIT');
+    eq(stack[0], 3, 'oldest entries dropped first');
+}
+
+// ── undo is pushed before every bridge/expand/collapse merge and cleared on redraw ───────────────
+{
+    const src = readFileSync(new URL('../app/dashboard/page.tsx', import.meta.url), 'utf8');
+    const pushes = src.split('pushUndo();').length - 1;
+    ok(pushes >= 6, `pushUndo called at the bridge, collapse and four expand paths (found ${pushes})`);
+    const parts = src.split('pushUndo();').slice(1);
+    ok(parts.every(p => /^\s*(const newGraph = parseDataToGraph\(results, graphData\);\s*)?setGraphData\(/.test(p)),
+       'each pushUndo is immediately followed by the setGraphData it protects');
+    eq(src.split('setLastBridge(null);').length, src.split('setUndoStack([]);').length,
+       'every place that resets the last bridge also clears the undo stack');
 }
 
 // ── auto-fit zoom bounds ────────────────────────────────────────────────────────────────────────

@@ -28,7 +28,8 @@ import {
     X,
     RefreshCw,
     Share2,
-    Globe
+    Globe,
+    Undo2
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -61,6 +62,10 @@ import {
     applyAffordanceFlags,
     finalizeGraphForRender,
     mergeFragmentNodes,
+    snapshotGraph,
+    pushBounded,
+    GRAPH_UNDO_STACK_LIMIT,
+    type GraphUndoSnapshot,
 } from "@/utils/graphConstants";
 
 // Bridge target domains (bridge-discovery-and-bento-panel-design-2026-11-03.md §1). The domain list
@@ -78,6 +83,15 @@ type LastBridge = {
     hasMore: boolean;
 };
 
+// What an undo restores besides the node/link set: the expansion bookkeeping (so collapse still
+// works on the restored view), the last bridge run (for "Show more") and expansion depth.
+type UndoExtra = {
+    expanded: Set<string>;
+    contributions: Map<string, Set<string>>;
+    depth: Map<string, number>;
+    lastBridge: LastBridge | null;
+};
+
 export default function DashboardPage() {
     const { user } = useUser();
     const { getToken } = useAuth();
@@ -89,6 +103,8 @@ export default function DashboardPage() {
     // Bridge domain chips (loaded once per connection) and the last bridge run, for "Show more".
     const [bridgeOptions, setBridgeOptions] = useState<BridgeOptions | null>(null);
     const [lastBridge, setLastBridge] = useState<LastBridge | null>(null);
+    // Graph-view undo (bridge-discovery-and-bento-panel-design-2026-11-03.md §2): browser memory only.
+    const [undoStack, setUndoStack] = useState<GraphUndoSnapshot<UndoExtra>[]>([]);
     const [input, setInput] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
     // Which specific node a live server-backed expand is in flight for (get_cluster_context via
@@ -118,6 +134,9 @@ export default function DashboardPage() {
     const expansionInFlight = useRef<Set<string>>(new Set());
     const expansionContributions = useRef<Map<string, Set<string>>>(new Map());
     const isResizing = useRef(false);
+    // Latest graph for undo snapshots taken outside a setGraphData updater.
+    const graphDataRef = useRef(graphData);
+    graphDataRef.current = graphData;
 
     const computeFocusedIds = (): Set<string> | null => {
         if (expandedNodes.current.size === 0) return null;
@@ -127,6 +146,36 @@ export default function DashboardPage() {
             contributed.forEach(id => ids.add(id));
         });
         return ids;
+    };
+
+    // Called just before a bridge, expand or collapse changes the graph. Built eagerly (not inside a
+    // setGraphData updater) so it captures the view the user is looking at now.
+    const pushUndo = () => {
+        const current = graphDataRef.current;
+        if (!current.nodes.length) return;
+        const snapshot: GraphUndoSnapshot<UndoExtra> = {
+            graph: snapshotGraph(current),
+            extra: {
+                expanded: new Set(expandedNodes.current),
+                contributions: new Map([...expansionContributions.current].map(([k, v]) => [k, new Set(v)])),
+                depth: new Map(nodeExpansionDepth),
+                lastBridge,
+            },
+        };
+        setUndoStack(prev => pushBounded(prev, snapshot, GRAPH_UNDO_STACK_LIMIT));
+    };
+
+    const handleUndo = () => {
+        const snapshot = undoStack[undoStack.length - 1];
+        if (!snapshot) return;
+        setUndoStack(prev => prev.slice(0, -1));
+        expandedNodes.current = new Set(snapshot.extra.expanded);
+        expansionContributions.current = new Map(snapshot.extra.contributions);
+        setNodeExpansionDepth(new Map(snapshot.extra.depth));
+        setLastBridge(snapshot.extra.lastBridge);
+        setFocusedNodeIds(computeFocusedIds());
+        setGraphData(snapshot.graph);
+        if (selectedNode && !snapshot.graph.nodes.some((n: any) => n.id === selectedNode.id)) setSelectedNode(null);
     };
     const singleClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const bentoAbortController = useRef<AbortController | null>(null);
@@ -570,6 +619,7 @@ export default function DashboardPage() {
             // the previous query's graph frozen on screen even though the toggle is ON.
             if (autoClear) setGraphData({ nodes: [], links: [] });
             setLastBridge(null);
+            setUndoStack([]);
 
             const result = await query(userMsg, history, forceRefresh, convId);
 
@@ -682,6 +732,7 @@ export default function DashboardPage() {
         ]);
         setGraphData({ nodes: [], links: [] });
         setLastBridge(null);
+        setUndoStack([]);
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
         expansionCache.current = new Map();
@@ -721,6 +772,7 @@ export default function DashboardPage() {
     const openHistoricalConversation = (conversation: HistoricalConversation, forceRefresh: boolean = false) => {
         try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
         setLastBridge(null);
+        setUndoStack([]);
         setNodeExpansionDepth(new Map());
         setFocusedNodeIds(null);
         expansionCache.current = new Map();
@@ -872,6 +924,7 @@ export default function DashboardPage() {
                 (expansionContributions.current.get(otherId) || new Set()).forEach(id => sharedIds.add(id));
             });
             const toRemove = new Set([...contributed].filter(id => !sharedIds.has(id)));
+            pushUndo();
             setGraphData(prev => {
                 const newNodes = prev.nodes
                     .filter((n: any) => !toRemove.has(n.id))
@@ -902,6 +955,7 @@ export default function DashboardPage() {
         // keep the original node, add children linked TO it, track for collapse.
         // Guard: if children is empty fall through to server expansion.
         if (freshNode.isGrouper && freshNode.children && freshNode.children.length > 0) {
+            pushUndo();
             setGraphData(prev => {
                 const expandedGrouper = { ...freshNode, isExpanded: true };
                 const existingIds = new Set(prev.nodes.map((n: any) => n.id));
@@ -933,6 +987,7 @@ export default function DashboardPage() {
         // EXPAND FROM CACHE: no server call
         if (expansionCache.current.has(nodeKey)) {
             console.log("Expanding from cache:", nodeKey);
+            pushUndo();
             setGraphData(prev => {
                 const cached = expansionCache.current.get(nodeKey);
                 const existingIds = new Set(prev.nodes.map((n: any) => n.id as string));
@@ -969,6 +1024,7 @@ export default function DashboardPage() {
                     );
                     console.log("[DIAG] enrichedCompanies:", enrichedCompanies.length, enrichedCompanies.map((c: any) => c.name));
                     if (enrichedCompanies.length > 0) {
+                        pushUndo();
                         setGraphData(prev => {
                             console.log("[DIAG] prev.nodes at merge time:", prev.nodes.length, prev.nodes.map((n: any) => n.name));
                             const existingIds  = new Set(prev.nodes.map((n: any) => n.id as string));
@@ -1024,6 +1080,7 @@ export default function DashboardPage() {
                 const results = JSON.parse(toolResponse.content[0].text);
                 console.log("[DIAG] generic expand results.nodes.length:", (results.nodes || []).length);
                 expansionCache.current.set(nodeKey, results);
+                pushUndo();
                 setGraphData(prev => {
                     console.log("[DIAG] generic expand prev.nodes.length:", prev.nodes.length, prev.nodes.map((n: any) => n.name));
                     const existingIds = new Set(prev.nodes.map((n: any) => n.id as string));
@@ -1080,6 +1137,7 @@ export default function DashboardPage() {
 
                 if (results.virtual_links && results.virtual_links.length > 0) {
                     // Merge bridge nodes and virtual links into the current graph (additive)
+                    pushUndo();
                     const newGraph = parseDataToGraph(results, graphData);
                     setGraphData(newGraph);
                 }
@@ -1098,7 +1156,7 @@ export default function DashboardPage() {
                 if (results.bridge_summary) {
                     setMessages(prev => [...prev, {
                         role: "assistant",
-                        content: `**Knowledge Bridge Discovery**\n\n${results.bridge_summary}\n\nGold dashed connections on the graph show the inferred links. Nothing was written to the graph — these are session-only virtual bridges.`
+                        content: `**Knowledge Bridge Discovery**\n\n${results.bridge_summary}\n\nGold dashed connections on the graph show the inferred links. Nothing was written to the graph — these are session-only virtual bridges. **Undo** in the graph toolbar returns to the view before this run.`
                     }]);
                 } else if (!results.virtual_links?.length) {
                     setMessages(prev => [...prev, {
@@ -1487,6 +1545,7 @@ export default function DashboardPage() {
                                         onClick={() => {
                                             setGraphData({ nodes: [], links: [] });
                                             setLastBridge(null);
+                                            setUndoStack([]);
                                             setSelectedNode(null);
                                             setNodeExpansionDepth(new Map());
                                             expansionCache.current = new Map();
@@ -1497,6 +1556,21 @@ export default function DashboardPage() {
                                     >
                                         <Trash2 className="w-4 h-4" />
                                         Clear Visual Map
+                                    </button>
+                                )}
+
+                                {graphData.nodes.length > 0 && (
+                                    <button
+                                        onClick={handleUndo}
+                                        disabled={undoStack.length === 0 || isProcessing || expandingNodeKey !== null}
+                                        title={undoStack.length
+                                            ? `Return to the view before the last bridge, expand or collapse (${undoStack.length} step${undoStack.length === 1 ? '' : 's'} available)`
+                                            : 'Nothing to undo yet: run a bridge or expand a node first'}
+                                        aria-label="Undo last graph change"
+                                        className="bg-white/80 hover:bg-indigo-50 border border-border hover:border-indigo-200 text-slate-600 hover:text-indigo-600 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest backdrop-blur-md transition-all flex items-center gap-2 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        <Undo2 className="w-4 h-4" />
+                                        Undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
                                     </button>
                                 )}
 
