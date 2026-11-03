@@ -207,8 +207,11 @@ const ROOTS = { roots: ['a', 'c'], covered: ['b'], others: [], everyone: ['pub']
     ok(!fs.existsSync(path.join(__dirname, '..', 'utils', 'share_tokens.js')), 'utils/share_tokens.js removed');
     for (const re of [/app\.get\('\/api\/share',/, /\/api\/share\/links\//, /\/api\/share\/revoke-link/, /\/api\/share\/preview/,
                       /guestTokenMiddleware/, /\/discovery\?share=/]) {
-        ok(!re.test(src), `old node-link code removed: ${re}`);
+        ok(!re.test(src.replace(/const REMOVED_NODE_LINK_ROUTES = \[[^\]]*\];/, '')), `old node-link code removed: ${re}`);
     }
+    ok(/REMOVED_NODE_LINK_ROUTES = \['\/api\/share', '\/api\/share\/links\/:node_id', '\/api\/share\/revoke-link', '\/api\/share\/preview'\]/.test(src)
+       && src.indexOf('app.all(REMOVED_NODE_LINK_ROUTES') < src.indexOf("app.use('/api', authMiddleware, mcpProxy)"),
+       'removed node-link routes answer 404 before the catch-all /api proxy');
     ok(/'x-guest-share-anchor'/.test(src.slice(src.indexOf('const GATEWAY_ASSIGNED_HEADERS'))), 'x-guest-share-anchor stays gateway-assigned (a client can never send it)');
     ok(/req\.guestAuth === true/.test(src), 'dormant guest enforcement kept for phase 4');
     ok(/listLinks\(req\.headers\['x-user-id'\], \{ nodeId: req\.query\.nodeId \|\| null \}\)/.test(src), 'GET /api/share/graph-links takes ?nodeId=');

@@ -1418,6 +1418,9 @@ app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) =>
 /**
  * Endpoints
  */
+// Removed with the old node link (2026-11-02, design §7b-1): node links are live links now.
+const REMOVED_NODE_LINK_ROUTES = ['/api/share', '/api/share/links/:node_id', '/api/share/revoke-link', '/api/share/preview'];
+
 // --- Share Endpoints (Permify-backed, depth-aware) ---
 // Permify is the enforcement layer. share_grants (Cloud SQL) is the audit/UI record.
 // Every share writes ONE shared_viewer tuple on the root; children inherit via parent chain.
@@ -4148,6 +4151,9 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// The old node link's routes (removed 2026-11-02, design §7b-1) answer 404 instead of reaching the
+// catch-all proxy below (where a DELETE with a JSON body hangs: express.json has already read it).
+app.all(REMOVED_NODE_LINK_ROUTES, (req, res) => res.status(404).json({ error: 'Not found' }));
 app.use('/api', authMiddleware, mcpProxy);
 
 app.listen(port, () => {
