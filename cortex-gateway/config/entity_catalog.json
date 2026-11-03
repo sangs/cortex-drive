@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-11-03T20:15:40.975771+00:00",
+  "generated_at": "2026-11-03T20:49:45.864639+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
-  "node_count": 47,
+  "node_count": 48,
   "domains": {
     "career": [
       "Capital Attribution & Market Risk Data Platform",
@@ -16,6 +16,7 @@
       "Global Hackathons @ JPMorgan Chase",
       "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
       "Ignite Social Learning Community @ JPMC",
+      "Ignite takes New York City by storm",
       "Illinois Institute of Technology",
       "Image Management & Distributed Event Processing System",
       "Independent Ventures",
@@ -194,6 +195,13 @@
       "node_id": "af4be31e-283b-46bc-8909-f8db3884a590",
       "tier": "PUBLIC",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "Ignite takes New York City by storm",
+      "domain": "career",
+      "node_id": "59292307-c0f2-4bb9-a8ee-c6cc3d395817",
+      "tier": "PUBLIC",
+      "owner_id": "user_SYSTEM_ADMIN"
     },
     {
       "name": "Illinois Institute of Technology",
