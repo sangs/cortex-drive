@@ -2361,19 +2361,17 @@ class ExpertTools:
         if not source_node_id and not source_node_name:
             return json.dumps({"error": "source_node_id or source_node_name is required"})
 
-        from domain_registry import get_authorized_labels, get_bridge_label_string, get_bridge_limit
+        from domain_registry import (
+            BRIDGE_ALL_DOMAINS_TARGET_LABELS, get_authorized_labels, get_bridge_label_string, get_bridge_limit,
+        )
         limit = get_bridge_limit(limit)
         relevance_keywords = self._extract_bridge_keywords(query_context)
 
         # Map target domain to allowed labels
         target_labels_raw = get_authorized_labels(target_domain)
-        # For "all", get_authorized_labels returns None — use a broad default
+        # For "all", get_authorized_labels returns None — use the registry's broad default
         if not target_labels_raw:
-            target_labels_raw = [
-                "Project", "Role", "Company", "Hackathon", "ThoughtLeadership",
-                "Publication", "Episode", "Topic", "Podcast", "Certification",
-                "Institution", "Category", "Technology", "Concept"
-            ]
+            target_labels_raw = BRIDGE_ALL_DOMAINS_TARGET_LABELS
         target_domain_labels = set(target_labels_raw)
         bridge_labels = get_bridge_label_string()
 

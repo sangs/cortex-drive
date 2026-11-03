@@ -56,6 +56,16 @@ SEMANTIC_CANDIDATE_MIN_SIMILARITY = float(os.environ.get("SEMANTIC_CANDIDATE_MIN
 BRIDGE_DEFAULT_LIMIT = int(os.environ.get("BRIDGE_DEFAULT_LIMIT", "10"))
 BRIDGE_MAX_LIMIT = int(os.environ.get("BRIDGE_MAX_LIMIT", "25"))
 
+# Target labels connect_knowledge_on_demand uses when target_domain is "all"
+# (get_authorized_labels("all") returns None). Same contents as the list that used to be inline
+# in expert_tools.py; kept explicit rather than derived from the union of every manifest, which
+# would add labels such as Year/Task/Milestone and change bridge results.
+BRIDGE_ALL_DOMAINS_TARGET_LABELS = [
+    "Project", "Role", "Company", "Hackathon", "ThoughtLeadership",
+    "Publication", "Episode", "Topic", "Podcast", "Certification",
+    "Institution", "Category", "Technology", "Concept",
+]
+
 def get_bridge_limit(requested: int = None) -> int:
     """Clamp a requested connect_knowledge_on_demand `limit` to [1, BRIDGE_MAX_LIMIT],
     falling back to BRIDGE_DEFAULT_LIMIT when not specified."""

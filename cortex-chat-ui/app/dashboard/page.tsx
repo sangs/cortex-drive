@@ -1062,7 +1062,7 @@ export default function DashboardPage() {
                 } else if (!results.virtual_links?.length) {
                     setMessages(prev => [...prev, {
                         role: "assistant",
-                        content: `**Knowledge Bridge Discovery**\n\nNo cross-domain bridges found for **${node?.name || nodeId}** with the current anchor threshold. Try expanding the node first (double-click) to enrich its context, then retry.`
+                        content: `**Knowledge Bridge Discovery**\n\nNo cross-domain path found from **${node?.name || nodeId}** within the graph you can see. Expanding the node (double-click) may add the connections a bridge needs; then try again.`
                     }]);
                 }
                 // Close Bento to reveal the updated graph with gold dashed lines
