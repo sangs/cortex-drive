@@ -94,6 +94,21 @@ class SplitAcrossDomainsTest(unittest.TestCase):
         ids = [t for t, _ in chosen]
         self.assertEqual(ids, sorted(ids, key=lambda t: int(t[1:])))
 
+    def test_every_domain_shown_when_slots_are_scarce(self):
+        # Summary cap 5 across 4 domains: the 4th-ranked domain must still get a line.
+        items, domain_of = self._items(["podcast"] * 3 + ["website"] * 3 + ["document"] * 3 + ["professional"])
+        chosen = ExpertTools._select_bridges_by_domain(
+            items, domain_of, ["podcast", "website", "document", "professional"], reg.BRIDGE_SUMMARY_MAX_CLAUSES)
+        self.assertEqual({domain_of[t] for t, _ in chosen}, {"podcast", "website", "document", "professional"})
+        self.assertEqual(len(chosen), reg.BRIDGE_SUMMARY_MAX_CLAUSES)
+
+    def test_summary_names_every_domain_that_found_a_bridge(self):
+        # Production case 2026-11-03: Podcast 9, Websites 1 — Websites was missing from the summary.
+        items, domain_of = self._items(["podcast"] * 9 + ["website"])
+        chosen = ExpertTools._select_bridges_by_domain(
+            items, domain_of, ["podcast", "website"], reg.BRIDGE_SUMMARY_MAX_CLAUSES)
+        self.assertIn("website", [domain_of[t] for t, _ in chosen])
+
 
 if __name__ == "__main__":
     unittest.main()

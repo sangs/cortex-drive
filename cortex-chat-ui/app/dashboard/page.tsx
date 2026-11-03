@@ -73,6 +73,12 @@ import {
 // matching domain_registry.BRIDGE_AUTO_DOMAINS.
 const BRIDGE_AUTO_DEFAULT = 'auto';
 
+// Graph toolbar layout: offset from the top of the canvas, single-row height before the first
+// measurement, and the gap left above the legend.
+const GRAPH_TOOLBAR_TOP_PX = 24;
+const GRAPH_TOOLBAR_DEFAULT_HEIGHT = 48;
+const GRAPH_LEGEND_GAP_PX = 8;
+
 type LastBridge = {
     nodeId: string;
     node: any;
@@ -134,6 +140,9 @@ export default function DashboardPage() {
     const expansionInFlight = useRef<Set<string>>(new Set());
     const expansionContributions = useRef<Map<string, Set<string>>>(new Map());
     const isResizing = useRef(false);
+    // Graph toolbar wraps onto more rows when narrow (2026-11-03); the legend sits below it.
+    const graphToolbarRef = useRef<HTMLDivElement | null>(null);
+    const [graphToolbarHeight, setGraphToolbarHeight] = useState(GRAPH_TOOLBAR_DEFAULT_HEIGHT);
     // Latest graph for undo snapshots taken outside a setGraphData updater.
     const graphDataRef = useRef(graphData);
     graphDataRef.current = graphData;
@@ -1104,6 +1113,14 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
+        const el = graphToolbarRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(() => setGraphToolbarHeight(el.offsetHeight));
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [isGraphVisible]);
+
+    useEffect(() => {
         if (!isConnected) return;
         callTool("list_bridge_domains", {})
             .then((res: any) => {
@@ -1497,7 +1514,7 @@ export default function DashboardPage() {
                         
                         <div className="w-full h-full relative">
                             {/* Visual Action Bar */}
-                            <div className="absolute top-6 left-6 z-20 flex items-center gap-6">
+                            <div ref={graphToolbarRef} style={{ top: GRAPH_TOOLBAR_TOP_PX }} className="absolute left-6 right-16 z-20 flex flex-wrap items-center gap-3 [&>button]:whitespace-nowrap">
                                 {/* Restore Analysis Panel */}
                                 {!isChatVisible && (
                                     <button
@@ -1646,7 +1663,7 @@ export default function DashboardPage() {
 
                         {/* Visual Ontology Legend */}
                         {graphData.nodes.length > 0 && (
-                            <div className="absolute top-[80px] left-6 z-20 bg-white/90 backdrop-blur-xl border border-border rounded-2xl shadow-2xl ring-1 ring-primary/5 transition-all">
+                            <div style={{ top: GRAPH_TOOLBAR_TOP_PX + graphToolbarHeight + GRAPH_LEGEND_GAP_PX }} className="absolute left-6 z-20 bg-white/90 backdrop-blur-xl border border-border rounded-2xl shadow-2xl ring-1 ring-primary/5 transition-all">
                                 <button
                                     onClick={() => setLegendOpen(o => !o)}
                                     className="flex items-center gap-2 w-full px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"

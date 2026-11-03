@@ -2795,7 +2795,10 @@ class ExpertTools:
             def _clause(target_eid, rels, suffix=""):
                 return f"{source_name} → {node_info[target_eid]['name']} via {' → '.join(rels)}{suffix}"
 
-            shown = ranked_organic[:BRIDGE_SUMMARY_MAX_CLAUSES]
+            # Multi-domain: every chosen domain that found a bridge gets its share of the clause cap
+            # (same split as the bridges themselves), so one busy domain can't hide the others.
+            shown = (self._select_bridges_by_domain(ranked_organic, target_domain_of, domains, BRIDGE_SUMMARY_MAX_CLAUSES)
+                     if multi_domain else ranked_organic[:BRIDGE_SUMMARY_MAX_CLAUSES])
             if multi_domain:
                 groups = []
                 for d in domains:
@@ -2886,21 +2889,23 @@ class ExpertTools:
     @staticmethod
     def _select_bridges_by_domain(items: list, domain_of: dict, domains: list, limit: int) -> list:
         """Pick up to `limit` bridges from `items` (already in ranking order): each domain first gets
-        up to ceil(limit / len(domains)) slots, then unused slots go to the best remaining items.
-        Returned in the original ranking order."""
+        its best one (so no domain that found something is hidden, even when there are more domains
+        than slots allow), then up to ceil(limit / len(domains)) slots, then unused slots go to the
+        best remaining items. Returned in the original ranking order."""
         import math
         quota = math.ceil(limit / len(domains))
         per_domain: dict = {}
         chosen: list = []
         chosen_ids: set = set()
-        for tid, data in items:
-            if len(chosen) >= limit:
-                break
-            d = domain_of.get(tid)
-            if d in domains and per_domain.get(d, 0) < quota:
-                per_domain[d] = per_domain.get(d, 0) + 1
-                chosen.append((tid, data))
-                chosen_ids.add(tid)
+        for cap in (1, quota):
+            for tid, data in items:
+                if len(chosen) >= limit:
+                    break
+                d = domain_of.get(tid)
+                if tid not in chosen_ids and d in domains and per_domain.get(d, 0) < cap:
+                    per_domain[d] = per_domain.get(d, 0) + 1
+                    chosen.append((tid, data))
+                    chosen_ids.add(tid)
         for tid, data in items:
             if len(chosen) >= limit:
                 break
