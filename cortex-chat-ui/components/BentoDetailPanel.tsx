@@ -297,9 +297,19 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             <div className="flex items-center gap-3 text-rose-400">
                 <MessageSquare className="w-4 h-4" />
                 <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
+                {isBentoHydrating && (
+                    <span className="ml-auto text-[9px] text-rose-400/60 animate-pulse uppercase tracking-widest">loading…</span>
+                )}
             </div>
             <div className="text-slate-100 text-sm leading-relaxed space-y-3">
-                {narrativeText ? (
+                {isBentoHydrating ? (
+                    // Same skeleton as the podcast summary box: the summary is still being fetched.
+                    <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading narrative">
+                        <div className="animate-pulse h-3 rounded bg-white/10 w-full" />
+                        <div className="animate-pulse h-3 rounded bg-white/10 w-5/6" />
+                        <div className="animate-pulse h-3 rounded bg-white/10 w-4/6" />
+                    </div>
+                ) : narrativeText ? (
                     narrativeText.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
                 ) : (
                     <p className="italic text-slate-500">

@@ -46,5 +46,7 @@ const panel = readFileSync(new URL('../components/BentoDetailPanel.tsx', import.
 ok(!panel.includes("node.description || 'Metadata pending...'"), 'Impact Context has no placeholder text');
 ok(/node\.panel_narrative \|\| node\.combined_narrative/.test(panel), 'Narrative prefers panel_narrative');
 eq((panel.match(/\{narrativeBlock\}/g) || []).length, 2, 'Narrative block in both the podcast and career layouts');
+ok(/aria-label="Loading narrative"/.test(panel) && /\{isBentoHydrating \? \(/.test(panel),
+    'Narrative shows a loading skeleton while the panel hydrates (not the placeholder text)');
 
 console.log(`verify_panel_narrative: ${passed} checks passed`);
