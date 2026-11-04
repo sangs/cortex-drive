@@ -110,7 +110,8 @@ class ToolHandler(BaseHTTPRequestHandler):
                 expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
                                      guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
                 try:
-                    result_str = expert.get_node_details(node_id=node_id, node_name=node_name)
+                    result_str = expert.get_node_details(node_id=node_id, node_name=node_name,
+                                                         visible_node_ids=params.get("visible_node_ids"))
                     result = json.loads(result_str)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")

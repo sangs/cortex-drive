@@ -15,6 +15,46 @@ from typing import List, Dict, Any, Optional, cast, LiteralString
 from neo4j_serialization import neo4j_default, neo4j_json_dumps
 
 
+# ── Helpers for the Bento panel "in this view" summary (ExpertTools._render_view_summary) ──
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_IRREGULAR_PLURALS = {"Person": "People"}
+
+
+def _date_expression(var: str) -> str:
+    """The display-date expression already used by the context queries, for node variable `var`."""
+    return (f"coalesce({var}.displayDate, {var}.startDate + (CASE WHEN {var}.endDate IS NOT NULL "
+            f"THEN \"-\" + {var}.endDate ELSE \"\" END), {var}.date, toString({var}.year), "
+            f"{var}.published_at, {var}.aired_date)")
+
+
+def _display_type(labels) -> str:
+    """A node's type for the summary: its first label that names a type (not e.g. Embeddable)."""
+    from domain_registry import NON_TYPE_LABELS
+    for label in labels or []:
+        if label not in NON_TYPE_LABELS:
+            return label
+    return "Node"
+
+
+def _plural(count: int, word: str) -> str:
+    if count == 1:
+        return word
+    if word in _IRREGULAR_PLURALS:
+        return _IRREGULAR_PLURALS[word]
+    if word.endswith("y") and word[-2:-1].lower() not in "aeiou":
+        return word[:-1] + "ies"
+    if word.endswith(("s", "x", "ch", "sh")):
+        return word + "es"
+    return word + "s"
+
+
+def _join_words(items: list) -> str:
+    items = [str(i) for i in items if i]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 class ExpertTools:
     """Expert tools for querying the Neo4j podcast episode graph"""
     
@@ -1341,7 +1381,8 @@ class ExpertTools:
 
         return [clean(row) for row in rows], withheld
 
-    def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None) -> str:
+    def get_node_details(self, node_id: Optional[str] = None, node_name: Optional[str] = None,
+                         visible_node_ids: Optional[list] = None) -> str:
         """
         Fetch all properties and labels for a specific node by its stable node_id UUID or name.
 
@@ -1358,6 +1399,14 @@ class ExpertTools:
         raw fields (e.g. a future "Explain this node" button). Category nodes get none of this
         (structural nodes don't have a distinct narrative — same guard already applied to the
         PreparatoryNote traversal below).
+
+        `panel_narrative` (2026-11-03, design bridge-discovery-and-bento-panel-design-2026-11-03.md
+        §3.2 A): what the Bento panel's Narrative block shows. Same "Authored:"/"Inferred from graph:"
+        labels, but the inferred part is a plain-language summary of aggregates (counts by type,
+        domains, time span, what it shares with the nodes on screen) instead of one sentence per edge.
+        `visible_node_ids` is the browser's on-screen list; only ids that pass the security clause are
+        used, the rest are dropped silently (§3.3). `combined_narrative` is unchanged: the gateway's
+        Q2 writer reads it.
         """
         from domain_registry import get_bridge_label_string
         bridge_labels = get_bridge_label_string()
@@ -1449,6 +1498,17 @@ class ExpertTools:
             except Exception as e:
                 # Non-fatal — the authored narrative (if any) and placeholder fallback still work.
                 print(f"[get_node_details] inferred context collection failed (non-fatal): {e}")
+            try:
+                type_rows, pair_rows = self._collect_view_summary_rows(
+                    data["element_id"], self._clean_visible_ids(visible_node_ids))
+                summary = self._render_view_summary(
+                    {"name": data.get("display_name"), "labels": labels_list}, type_rows, pair_rows)
+                data["panel_narrative"] = self._compose_narrative(
+                    data.get("narratives") or [], summary,
+                    {"name": data.get("display_name"), "labels": labels_list})
+            except Exception as e:
+                # Non-fatal — the panel falls back to combined_narrative.
+                print(f"[get_node_details] view summary failed (non-fatal): {e}")
 
         return neo4j_json_dumps([data], indent=2)
 
@@ -3283,15 +3343,20 @@ class ExpertTools:
           connections" claim — a genuinely orphaned node and a node whose neighbors are all
           permission-masked must stay indistinguishable at this layer, by design).
         """
-        authored = [n for n in (authored_narratives or []) if n]
         fact_sentences = self._render_fact_sentences(node_row, facts, keywords)
+        return self._compose_narrative(authored_narratives, fact_sentences, node_row)
 
-        if authored and fact_sentences:
-            return "Authored: " + "\n\n".join(authored) + "\n\nInferred from graph: " + fact_sentences
+    @staticmethod
+    def _compose_narrative(authored_narratives: list, inferred: str, node_row: dict) -> str:
+        """The "Authored:" / "Inferred from graph:" composition shared by combined_narrative and
+        panel_narrative, so the provenance labels and the empty-state wording can't drift."""
+        authored = [n for n in (authored_narratives or []) if n]
+        if authored and inferred:
+            return "Authored: " + "\n\n".join(authored) + "\n\nInferred from graph: " + inferred
         if authored:
             return "Authored: " + "\n\n".join(authored)
-        if fact_sentences:
-            return "Inferred from graph: " + fact_sentences
+        if inferred:
+            return "Inferred from graph: " + inferred
 
         name = node_row.get("name") or "This node"
         ntype = (node_row.get("labels") or ["Node"])[0]
@@ -3299,6 +3364,159 @@ class ExpertTools:
             f"No connections visible in your authorized view for '{name}' ({ntype}), "
             f"and no narrative context is recorded for it."
         )
+
+    # ── Bento panel "in this view" summary (design 2026-11-03 §3.2 A, §3.3) ──────────────────────
+    # Aggregates written as sentences instead of one sentence per edge (the edges are already on
+    # screen). Every number and name comes from Neo4j rows; no LLM call (test_07 still holds).
+
+    @staticmethod
+    def _clean_visible_ids(visible_node_ids) -> list:
+        """The browser's on-screen node_ids: strings only, de-duplicated, capped. Not trusted:
+        _collect_view_summary_rows keeps only ids that pass the security clause."""
+        from domain_registry import CONTEXT_VISIBLE_IDS_MAX
+        if not isinstance(visible_node_ids, list):
+            return []
+        out, seen = [], set()
+        for i in visible_node_ids:
+            if isinstance(i, str) and i and i not in seen:
+                seen.add(i)
+                out.append(i)
+                if len(out) >= CONTEXT_VISIBLE_IDS_MAX:
+                    break
+        return out
+
+    def _collect_view_summary_rows(self, element_id: str, visible_ids: list) -> tuple:
+        """Rows for _render_view_summary.
+        - type_rows: the node's neighbours grouped by label set, with counts and dated names.
+        - pair_rows: (on-screen node, neighbour it shares with this node). On-screen ids that fail
+          the security clause match nothing, so they are dropped silently (an error would confirm
+          that a hidden node exists, §3.3)."""
+        from domain_registry import (get_bridge_label_string, CONTEXT_SUMMARY_DATE_SCAN_MAX,
+                                     CONTEXT_SUMMARY_PAIR_SCAN_MAX)
+        bridge_labels = get_bridge_label_string()
+        sec_m = self._get_security_clause("m")
+        date_m = _date_expression("m")
+        type_query = f"""
+        MATCH (n) WHERE elementId(n) = $element_id
+        MATCH (n)--(m)
+        WHERE elementId(m) <> $element_id AND NOT m:{bridge_labels} AND m.name IS NOT NULL AND ({sec_m})
+        WITH DISTINCT m
+        WITH m, {date_m} AS d
+        WITH labels(m) AS labels, count(*) AS cnt,
+             collect(CASE WHEN d IS NOT NULL THEN {{name: m.name, date: toString(d)}} END) AS dated
+        RETURN labels, cnt, dated[..$date_cap] AS dated
+        """
+        type_result = self._exec_query(type_query, **self._security_params(),
+                                       element_id=element_id, date_cap=CONTEXT_SUMMARY_DATE_SCAN_MAX)
+        type_rows = [{"labels": r["labels"] or [], "count": r["cnt"], "dated": r["dated"] or []}
+                     for r in type_result.records]
+
+        pair_rows = []
+        if visible_ids:
+            sec_v = self._get_security_clause("v")
+            sec_s = self._get_security_clause("s")
+            pair_query = f"""
+            MATCH (n) WHERE elementId(n) = $element_id
+            MATCH (v)
+            WHERE v.node_id IN $visible_ids AND elementId(v) <> $element_id
+              AND NOT v:{bridge_labels} AND v.name IS NOT NULL AND ({sec_v})
+            MATCH (n)--(s)--(v)
+            WHERE s <> n AND s <> v AND NOT s:{bridge_labels} AND s.name IS NOT NULL AND ({sec_s})
+            RETURN DISTINCT v.node_id AS v_id, v.name AS v_name, labels(v) AS v_labels, s.name AS s_name,
+                   COUNT {{ (s)--() }} AS s_degree
+            LIMIT $pair_cap
+            """
+            pair_result = self._exec_query(pair_query, **self._security_params(), element_id=element_id,
+                                           visible_ids=visible_ids, pair_cap=CONTEXT_SUMMARY_PAIR_SCAN_MAX)
+            pair_rows = [r.data() for r in pair_result.records]
+        return type_rows, pair_rows
+
+    @staticmethod
+    def _render_view_summary(node_row: dict, type_rows: list, pair_rows: list) -> str:
+        """Deterministic sentences from _collect_view_summary_rows (no LLM call). Each sentence is
+        written only when its data exists:
+        1. what the node connects to, by type, and which content domains that spans;
+        2. the time span of its dated neighbours and the most recent one;
+        3. the on-screen nodes it shares the most neighbours with;
+        4. where it sits: "One of N <type>s in this view connected to 'X'".
+        Shared neighbours are listed most specific first (lowest degree); a sentence 3 needs at
+        least CONTEXT_SUMMARY_MIN_SHARED shared neighbours; a hub neighbour (degree >=
+        CONTEXT_HUB_DEGREE_THRESHOLD, e.g. the founder's Person node) never decides sentence 4,
+        because "connected to a hub" says nothing (same reason as design §5.5)."""
+        from domain_registry import (CONTEXT_SUMMARY_MAX_TYPES, CONTEXT_SUMMARY_MAX_SHARED_NAMES,
+                                     CONTEXT_SUMMARY_MAX_PEERS, CONTEXT_SUMMARY_MIN_GROUP,
+                                     CONTEXT_SUMMARY_MIN_SHARED, CONTEXT_HUB_DEGREE_THRESHOLD,
+                                     CONTENT_DOMAINS, get_source_domains, get_domain_display_name)
+        name = node_row.get("name") or "This node"
+        ntype = _display_type(node_row.get("labels"))
+        sentences = []
+
+        counts, domains, dated = {}, set(), []
+        for row in type_rows or []:
+            t = _display_type(row.get("labels"))
+            counts[t] = counts.get(t, 0) + (row.get("count") or 0)
+            domains.update(get_source_domains(row.get("labels")))
+            dated.extend(row.get("dated") or [])
+        total = sum(counts.values())
+        if total:
+            ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            parts = [f"{c} {_plural(c, t)}" for t, c in ordered[:CONTEXT_SUMMARY_MAX_TYPES]]
+            rest = sum(c for _, c in ordered[CONTEXT_SUMMARY_MAX_TYPES:])
+            if rest:
+                parts.append(f"{rest} {_plural(rest, 'other item')}")
+            s = f"{ntype} '{name}' connects to {total} {_plural(total, 'item')} you can see: {_join_words(parts)}"
+            if len(domains) > 1:
+                names = [get_domain_display_name(d) for d in CONTENT_DOMAINS if d in domains]
+                s += f", across {_join_words(names)} content"
+            sentences.append(s + ".")
+
+        years = []
+        for d in dated:
+            m = _YEAR_RE.search(str(d.get("date") or ""))
+            if m and d.get("name"):
+                years.append((int(m.group(0)), d["name"]))
+        if years:
+            lo = min(y for y, _ in years)
+            hi = max(y for y, _ in years)
+            latest = sorted(n for y, n in years if y == hi)[0]
+            k = len(years)
+            if lo == hi:
+                sentences.append(f"Its {k} dated {_plural(k, 'connection')} "
+                                 f"{'is' if k == 1 else 'are all'} from {lo}.")
+            else:
+                sentences.append(f"Its {k} dated connections run from {lo} to {hi}; "
+                                 f"the most recent is '{latest}' ({hi}).")
+
+        peers, s_degree = {}, {}
+        for p in pair_rows or []:
+            entry = peers.setdefault(p["v_id"], {"name": p["v_name"], "labels": p.get("v_labels"), "shared": set()})
+            entry["shared"].add(p["s_name"])
+            s_degree[p["s_name"]] = max(s_degree.get(p["s_name"], 0), p.get("s_degree") or 0)
+        ranked = sorted((e for e in peers.values() if len(e["shared"]) >= CONTEXT_SUMMARY_MIN_SHARED),
+                        key=lambda e: (-len(e["shared"]), e["name"]))
+        for e in ranked[:CONTEXT_SUMMARY_MAX_PEERS]:
+            shared = sorted(e["shared"], key=lambda n: (s_degree.get(n, 0), n))
+            k = len(shared)
+            quoted = ", ".join(shared[:CONTEXT_SUMMARY_MAX_SHARED_NAMES])
+            if k > CONTEXT_SUMMARY_MAX_SHARED_NAMES:
+                quoted += f" and {k - CONTEXT_SUMMARY_MAX_SHARED_NAMES} more"
+            sentences.append(f"Shares {k} {_plural(k, 'connection')} ({quoted}) with "
+                             f"{_display_type(e['labels'])} '{e['name']}' in this view.")
+
+        same_type_by_shared = {}
+        for vid, e in peers.items():
+            if _display_type(e["labels"]) == ntype:
+                for s_name in e["shared"]:
+                    if s_degree.get(s_name, 0) >= CONTEXT_HUB_DEGREE_THRESHOLD:
+                        continue
+                    same_type_by_shared.setdefault(s_name, set()).add(vid)
+        if same_type_by_shared:
+            s_name, vids = sorted(same_type_by_shared.items(), key=lambda kv: (-len(kv[1]), kv[0]))[0]
+            group = len(vids) + 1
+            if group >= CONTEXT_SUMMARY_MIN_GROUP:
+                sentences.append(f"One of {group} {_plural(group, ntype)} in this view connected to '{s_name}'.")
+
+        return " ".join(sentences)
 
     def infer_context_on_demand(
         self,

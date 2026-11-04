@@ -2234,7 +2234,10 @@ app.post('/api/share/graph-link/:token/node_details', async (req, res) => {
                 'x-user-id': shareLinks.linkPrincipal(link.link_id),
                 ...(bentoOidcToken ? { Authorization: bentoOidcToken } : {}),
             },
-            body: JSON.stringify({ node_id: req.body && req.body.node_id, node_name: req.body && req.body.node_name }),
+            // visible_node_ids: the nodes on screen, for the panel summary. Not trusted: Bento keeps only
+            // ids the link's permissions can open (design 2026-11-03 §3.3).
+            body: JSON.stringify({ node_id: req.body && req.body.node_id, node_name: req.body && req.body.node_name,
+                                   visible_node_ids: Array.isArray(req.body && req.body.visible_node_ids) ? req.body.visible_node_ids : [] }),
         }, { label: '/api/share/graph-link/node_details' });
         if (!bentoResponse.ok) return res.status(bentoResponse.status).send(await bentoResponse.text());
         res.json(await bentoResponse.json());

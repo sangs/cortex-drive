@@ -460,6 +460,37 @@ export function snapshotGraph(graph: { nodes: GraphNode[]; links: GraphLink[] })
     return { nodes: graph.nodes.map(n => ({ ...n })), links: graph.links.map(l => ({ ...l })) };
 }
 
+// Bento panel "in this view" summary (design 2026-11-03 §3.2 A, §3.3). The panel sends the node_ids on
+// screen; the server keeps only ids the viewer can open and applies its own cap
+// (domain_registry.CONTEXT_VISIBLE_IDS_MAX). This cap only bounds the request size.
+export const PANEL_VISIBLE_IDS_MAX = 300;
+
+/** Sorted, de-duplicated node_ids on screen (display-only nodes such as groupers have none). */
+export function visibleNodeIds(nodes: Array<{ node_id?: unknown }>): string[] {
+    const ids = new Set<string>();
+    for (const n of nodes) {
+        if (typeof n.node_id === 'string' && n.node_id) ids.add(n.node_id);
+    }
+    return Array.from(ids).sort().slice(0, PANEL_VISIBLE_IDS_MAX);
+}
+
+/** Panel cache key: the summary depends on the view, so the same node in another view is refetched. */
+export function panelCacheKey(nodeKey: string, visibleIds: string[]): string {
+    return `${nodeKey}::${visibleIds.join(',')}`;
+}
+
+/**
+ * Fields from get_node_details that the panel keeps. `description` is the node's own (authored)
+ * description and is never replaced by a narrative (Impact Context shows it); the Narrative block reads
+ * `panel_narrative`, falling back to `combined_narrative` from an older server.
+ */
+export function panelNarrativeFields(payload: any): { panel_narrative?: string; combined_narrative?: string } {
+    return {
+        ...(typeof payload?.panel_narrative === 'string' ? { panel_narrative: payload.panel_narrative } : {}),
+        ...(typeof payload?.combined_narrative === 'string' ? { combined_narrative: payload.combined_narrative } : {}),
+    };
+}
+
 /** Push onto a bounded stack (oldest dropped). Returns a new array. */
 export function pushBounded<T>(stack: T[], item: T, limit: number = GRAPH_UNDO_STACK_LIMIT): T[] {
     const next = [...stack, item];

@@ -8,6 +8,7 @@ import {
     Lock, ExternalLink, X, Calendar, ChevronRight,
     Sparkles, Network, Loader2, Sun, Moon
 } from 'lucide-react';
+import { visibleNodeIds, panelCacheKey, panelNarrativeFields } from '@/utils/graphConstants';
 
 const EnterpriseGraph = dynamic(() => import('@/components/EnterpriseGraph'), { ssr: false });
 const BentoDetailPanel = dynamic(() => import('@/components/BentoDetailPanel'), { ssr: false });
@@ -206,6 +207,9 @@ export default function GraphViewPage() {
 
     const bentoAbortRef = useRef<AbortController | null>(null);
     const bentoCache    = useRef<Map<string, any>>(new Map());
+    // Read by hydrateNode (a stable callback) for the on-screen ids.
+    const graphDataRef  = useRef(graphData);
+    graphDataRef.current = graphData;
 
     useEffect(() => {
         fetch(`${GATEWAY}/api/share/graph-link/${params.token}`)
@@ -226,7 +230,9 @@ export default function GraphViewPage() {
         bentoAbortRef.current?.abort();
         bentoAbortRef.current = new AbortController();
 
-        const cacheKey = freshNode.node_id || freshNode.id || freshNode.name;
+        // The panel summary depends on what is on screen (design 2026-11-03 §3.2 A, §3.3).
+        const onScreenIds = visibleNodeIds(graphDataRef.current.nodes);
+        const cacheKey = panelCacheKey(freshNode.node_id || freshNode.id || freshNode.name, onScreenIds);
         if (bentoCache.current.has(cacheKey)) {
             setSelectedNode({ ...freshNode, ...bentoCache.current.get(cacheKey) });
             return;
@@ -238,7 +244,7 @@ export default function GraphViewPage() {
             const resp = await fetch(`${GATEWAY}/api/share/graph-link/${params.token}/node_details`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ node_name: freshNode.name, node_id: freshNode.node_id }),
+                body: JSON.stringify({ node_name: freshNode.name, node_id: freshNode.node_id, visible_node_ids: onScreenIds }),
                 signal: bentoAbortRef.current.signal,
             });
             if (resp.ok) {
@@ -248,20 +254,14 @@ export default function GraphViewPage() {
                     : (results.result?.content ? JSON.parse(results.result.content[0].text)[0] : results);
                 if (payload && !payload.error) {
                     const p = payload.properties || payload;
-                    // combined_narrative (2026-08-06) — authored PreparatoryNote content plus
-                    // inferred structural context, inline-labeled "Authored:"/"Inferred from
-                    // graph:". Preferred over the raw description fallback (see
-                    // documents/architecture/node-context-inference-2026-08-03.md §5 addendum).
-                    const hydratedDesc = payload.combined_narrative
-                        || (Array.isArray(payload.narratives) && payload.narratives.length > 0
-                            ? payload.narratives.join('\n\n')
-                            : (p.description && p.description.length > (freshNode.description?.length ?? 0) ? p.description : undefined));
+                    // `description` stays the node's own description (Impact Context); the narrative
+                    // goes in panel_narrative/combined_narrative (Narrative block), as on the dashboard.
                     const tech = payload.technologies || p.technologies || p.tech_stack || p.tools || freshNode.technologies;
                     const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
                     const directLinks = [p.link, p.url].filter(Boolean);
                     const hydrated = {
                         ...p,
-                        ...(hydratedDesc ? { description: hydratedDesc, text: hydratedDesc } : {}),
+                        ...panelNarrativeFields(payload),
                         technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                         links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                         guests: payload.guests || [],

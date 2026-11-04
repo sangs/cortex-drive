@@ -287,6 +287,31 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     );
 
+    // Narrative (design 2026-11-03 §3.2 A): panel_narrative is the node's authored notes plus a
+    // plain-language summary of what it connects to and what it shares with the nodes on screen, with
+    // inline "Authored:"/"Inferred from graph:" labels. combined_narrative is the fallback from an older
+    // server. Rendered as plain paragraphs, so this stays uncoupled from the backend's exact wording.
+    const narrativeText: string | undefined = node.panel_narrative || node.combined_narrative || node.text;
+    const narrativeBlock = (
+        <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
+            <div className="flex items-center gap-3 text-rose-400">
+                <MessageSquare className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
+            </div>
+            <div className="text-slate-100 text-sm leading-relaxed space-y-3">
+                {narrativeText ? (
+                    narrativeText.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
+                ) : (
+                    <p className="italic text-slate-500">
+                        {node.persona === 'structural'
+                            ? 'Structure nodes organize relationships; they do not contain distinct narratives.'
+                            : 'Narrative context is available for deeper audit. Click below to explore source data.'}
+                    </p>
+                )}
+            </div>
+        </div>
+    );
+
     // Rendered only where a bridge handler exists (the guest graph-view page passes none).
     const knowledgeBridge = onDiscoverBridge ? (
         <div className="p-6 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex flex-col gap-4">
@@ -476,6 +501,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                                 </div>
                             )}
 
+                            {narrativeBlock}
                             {resourceGallery}
                             {websiteSourceCard}
                             {knowledgeBridge}
@@ -484,16 +510,19 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                         // ── Career Domain Layout ───────────────────────────────
                         <>
                             <div className="grid grid-cols-2 gap-4">
-                                {/* Impact Context */}
-                                <div className="col-span-2 p-6 rounded-2xl bg-indigo-600/10 border border-indigo-500/10 flex flex-col gap-4">
-                                    <div className="flex items-center gap-3 text-indigo-300">
-                                        <Target className="w-4 h-4" />
-                                        <span className="text-xs font-semibold uppercase tracking-wider">Impact Context</span>
+                                {/* Impact Context: the node's own description only, hidden when it has none
+                                    (design 2026-11-03 §3.2; the narrative is in the Narrative block). */}
+                                {typeof node.description === 'string' && node.description.trim() && (
+                                    <div className="col-span-2 p-6 rounded-2xl bg-indigo-600/10 border border-indigo-500/10 flex flex-col gap-4">
+                                        <div className="flex items-center gap-3 text-indigo-300">
+                                            <Target className="w-4 h-4" />
+                                            <span className="text-xs font-semibold uppercase tracking-wider">Impact Context</span>
+                                        </div>
+                                        <p className="text-sm font-medium leading-relaxed text-slate-100">
+                                            {node.description}
+                                        </p>
                                     </div>
-                                    <p className="text-sm font-medium leading-relaxed text-slate-100">
-                                        {node.description || 'Metadata pending...'}
-                                    </p>
-                                </div>
+                                )}
 
                                 {/* Core Stack */}
                                 <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
@@ -553,32 +582,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                             {resourceGallery}
                             {websiteSourceCard}
 
-                            {/* Narrative — authored content and inferred structural context are merged
-                                server-side into one string with inline "Authored:"/"Inferred from graph:"
-                                labels (combined_narrative, 2026-08-06 — see
-                                documents/architecture/node-context-inference-2026-08-03.md §5 addendum).
-                                Rendered as plain paragraphs; the labels appear as literal text rather than
-                                being parsed into separate styled blocks, so this stays uncoupled from the
-                                backend's exact wording/format. */}
-                            <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
-                                <div className="flex items-center gap-3 text-rose-400">
-                                    <MessageSquare className="w-4 h-4" />
-                                    <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
-                                </div>
-                                <div className="text-slate-100 text-sm leading-relaxed space-y-3">
-                                    {node.combined_narrative ? (
-                                        node.combined_narrative.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
-                                    ) : node.text ? (
-                                        node.text.split('\n\n').map((para: string, i: number) => <p key={i}>{para}</p>)
-                                    ) : (
-                                        <p className="italic text-slate-500">
-                                            {node.persona === 'structural'
-                                                ? 'Structure nodes organize relationships; they do not contain distinct narratives.'
-                                                : 'Narrative context is available for deeper audit. Click below to explore source data.'}
-                                        </p>
-                                    )}
-                                </div>
-                            </div>
+                            {narrativeBlock}
 
                             {knowledgeBridge}
                         </>

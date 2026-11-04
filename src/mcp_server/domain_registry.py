@@ -194,6 +194,20 @@ def get_context_caps(per_relation: int = None, relation_group: int = None) -> tu
     group = relation_group if relation_group else CONTEXT_RELATION_GROUP_CAP
     return max(1, min(per, 10)), max(1, min(group, 15))
 
+# Bento panel "in this view" summary (bridge-discovery-and-bento-panel-design-2026-11-03.md §3.2 A, §3.3).
+# The browser sends the node_ids on screen; the server keeps only ids that pass the security clause
+# and caps the list. Every other cap bounds the work for a high-degree node.
+CONTEXT_VISIBLE_IDS_MAX = int(os.environ.get("CONTEXT_VISIBLE_IDS_MAX", "300"))
+CONTEXT_SUMMARY_MAX_TYPES = 4          # neighbour types named in the "connects to" sentence
+CONTEXT_SUMMARY_MAX_SHARED_NAMES = 3   # shared-neighbour names quoted per on-screen node
+CONTEXT_SUMMARY_MAX_PEERS = 2          # on-screen nodes given a "Shares N connections with" sentence
+CONTEXT_SUMMARY_MIN_GROUP = 2          # "One of N <type>s in this view" needs N >= this
+CONTEXT_SUMMARY_MIN_SHARED = 2         # "Shares N connections with" needs N >= this (one shared link says little)
+CONTEXT_SUMMARY_DATE_SCAN_MAX = 2000   # dated neighbours read for the time span
+CONTEXT_SUMMARY_PAIR_SCAN_MAX = 5000   # (on-screen node, shared neighbour) pairs read
+# Labels that mark a capability, not a node type; never used as a node's type in the summary.
+NON_TYPE_LABELS = ["Embeddable"]
+
 # Centralized Label Registry
 DISCOVERY_LABELS = [
     "Project", "Role", "Company", "Person", "Hackathon", "ThoughtLeadership", 

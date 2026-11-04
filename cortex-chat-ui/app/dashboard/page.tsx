@@ -66,6 +66,9 @@ import {
     pushBounded,
     GRAPH_UNDO_STACK_LIMIT,
     type GraphUndoSnapshot,
+    visibleNodeIds,
+    panelCacheKey,
+    panelNarrativeFields,
 } from "@/utils/graphConstants";
 
 // Bridge target domains (bridge-discovery-and-bento-panel-design-2026-11-03.md §1). The domain list
@@ -823,14 +826,16 @@ export default function DashboardPage() {
             bentoAbortController.current?.abort();
             bentoAbortController.current = new AbortController();
 
-            // Stale-While-Revalidate: show cached full data immediately if available.
-            const cacheKey = freshNode.node_id || freshNode.id || freshNode.name;
+            // Stale-While-Revalidate: show cached full data immediately if available. The panel summary
+            // depends on what is on screen, so the key includes the view (design 2026-11-03 §3.2 A).
+            const onScreenIds = visibleNodeIds(graphData.nodes);
+            const cacheKey = panelCacheKey(freshNode.node_id || freshNode.id || freshNode.name, onScreenIds);
             if (bentoCache.current.has(cacheKey)) {
                 setSelectedNode({ ...freshNode, ...bentoCache.current.get(cacheKey) });
                 return;
             }
 
-            // Show the partial graph node immediately; hydration will replace description.
+            // Show the partial graph node immediately; hydration adds the details and the narrative.
             setSelectedNode(freshNode);
             setIsBentoHydrating(true);
 
@@ -845,7 +850,8 @@ export default function DashboardPage() {
                     },
                     body: JSON.stringify({
                         node_name: freshNode.name,
-                        node_id: freshNode.node_id
+                        node_id: freshNode.node_id,
+                        visible_node_ids: onScreenIds
                     }),
                     signal: bentoAbortController.current.signal
                 });
@@ -856,23 +862,15 @@ export default function DashboardPage() {
 
                     if (payload && !payload.error) {
                         const p = payload.properties || payload;
-                        // combined_narrative (2026-08-06) — authored PreparatoryNote content plus
-                        // inferred structural context, inline-labeled "Authored:"/"Inferred from
-                        // graph:". Preferred over the raw description fallback, since it's populated
-                        // for essentially every non-Category node now (see
-                        // documents/architecture/node-context-inference-2026-08-03.md §5 addendum).
-                        const hydratedDesc = payload.combined_narrative
-                            || (Array.isArray(payload.narratives) && payload.narratives.length > 0
-                                ? payload.narratives.join('\n\n')
-                                : (p.description && p.description.length > (freshNode.description?.length ?? 0)
-                                    ? p.description
-                                    : undefined));
+                        // `description` stays the node's own description (Impact Context); the narrative
+                        // goes in panel_narrative/combined_narrative (Narrative block). Until 2026-11-03
+                        // the narrative overwrote description, so both boxes showed the same text.
                         const tech = payload.technologies || p.technologies || p.tech_stack || p.tools || freshNode.technologies;
                         const refLinks = payload.ref_urls || p.links || p.ref_urls || [];
                         const directLinks = [p.link, p.url].filter(Boolean);
                         const hydratedFields = {
                             ...p,
-                            ...(hydratedDesc ? { description: hydratedDesc, text: hydratedDesc } : {}),
+                            ...panelNarrativeFields(payload),
                             technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                             links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                             guests: payload.guests || [],
