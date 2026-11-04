@@ -1,9 +1,10 @@
 {
-  "generated_at": "2026-11-03T20:49:45.864639+00:00",
+  "generated_at": "2026-11-04T00:50:12.900034+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
-  "node_count": 48,
+  "node_count": 49,
   "domains": {
     "career": [
+      "Architectural Shifts for Platform Engineers in the Age of AI",
       "Capital Attribution & Market Risk Data Platform",
       "Cloud-Native Platform Orchestration & Workflow System",
       "Corporate Action Report Automation",
@@ -112,6 +113,13 @@
     ]
   },
   "entries": [
+    {
+      "name": "Architectural Shifts for Platform Engineers in the Age of AI",
+      "domain": "career",
+      "node_id": "38d97ae1-9369-4ce9-ac6f-9a90cc0e4436",
+      "tier": "PUBLIC",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
     {
       "name": "Capital Attribution & Market Risk Data Platform",
       "domain": "career",
