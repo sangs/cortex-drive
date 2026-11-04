@@ -156,7 +156,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         const people: { name: string; role: string }[] = [];
         connectedPairs.forEach(l => {
             const peerId = l.source === nodeId ? l.target : l.source;
-            const peer = allNodes.find(n => n.id === peerId && n.type === 'Person');
+            const peer = allNodes.find(n => n.id === peerId && n.type === 'Person' && !n.isGrouper);
             if (peer && !seen.has(peerId)) {
                 seen.add(peerId);
                 const role = (l.type === 'HOSTS' || peer.role === 'Host') ? 'Host' : 'Guest';
@@ -181,7 +181,8 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 .filter(l => l.source === nodeId || l.target === nodeId)
                 .map(l => l.source === nodeId ? l.target : l.source)
         );
-        return allNodes.filter(n => connectedIds.has(n.id) && TOPIC_NODE_TYPES.has(n.type));
+        // Group nodes ("Topics (4)") carry their members' type; they are not topics themselves.
+        return allNodes.filter(n => connectedIds.has(n.id) && TOPIC_NODE_TYPES.has(n.type) && !n.isGrouper);
     }, [node, allNodes, allLinks]);
 
     const transcriptChunks = React.useMemo(() => {

@@ -47,4 +47,8 @@ const guest = readFileSync(new URL('../app/graph-view/[token]/page.tsx', import.
 ok(!/onDiscoverBridge=/.test(guest), 'guest page passes no bridge handler');
 ok(/const knowledgeBridge = \(title: string\) => onDiscoverBridge \?/.test(panel), 'Bridge section renders only with a handler');
 
+// Group nodes ("Topics (4)", isGrouper) are never listed as topics or people (found in production, BERT)
+ok(/TOPIC_NODE_TYPES\.has\(n\.type\) && !n\.isGrouper/.test(panel), 'Topics section skips group nodes');
+ok(/n\.type === 'Person' && !n\.isGrouper/.test(panel), 'People section skips group nodes');
+
 console.log(`verify_panel_layout: ${passed} checks passed`);
