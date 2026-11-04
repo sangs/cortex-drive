@@ -3423,7 +3423,7 @@ class ExpertTools:
             MATCH (n)--(s)--(v)
             WHERE s <> n AND s <> v AND NOT s:{bridge_labels} AND s.name IS NOT NULL AND ({sec_s})
             RETURN DISTINCT v.node_id AS v_id, v.name AS v_name, labels(v) AS v_labels, s.name AS s_name,
-                   COUNT {{ (s)--() }} AS s_degree
+                   labels(s) AS s_labels, COUNT {{ (s)--() }} AS s_degree, COUNT {{ (v)--() }} AS v_degree
             LIMIT $pair_cap
             """
             pair_result = self._exec_query(pair_query, **self._security_params(), element_id=element_id,
@@ -3439,13 +3439,14 @@ class ExpertTools:
         2. the time span of its dated neighbours and the most recent one;
         3. the on-screen nodes it shares the most neighbours with;
         4. where it sits: "One of N <type>s in this view connected to 'X'".
-        Shared neighbours are listed most specific first (lowest degree); a sentence 3 needs at
-        least CONTEXT_SUMMARY_MIN_SHARED shared neighbours; a hub neighbour (degree >=
-        CONTEXT_HUB_DEGREE_THRESHOLD, e.g. the founder's Person node) never decides sentence 4,
-        because "connected to a hub" says nothing (same reason as design §5.5)."""
+        Weak shared neighbours are not counted at all (design §3.3b): hubs (degree >=
+        CONTEXT_HUB_DEGREE_THRESHOLD, e.g. the founder's Person node, linked to every career item)
+        and CONTEXT_SUMMARY_WEAK_LABELS (Category section headers). "Shared with a hub" says nothing
+        (same reason as design §5.5). The rest are listed most specific first (lowest degree)."""
         from domain_registry import (CONTEXT_SUMMARY_MAX_TYPES, CONTEXT_SUMMARY_MAX_SHARED_NAMES,
                                      CONTEXT_SUMMARY_MAX_PEERS, CONTEXT_SUMMARY_MIN_GROUP,
                                      CONTEXT_SUMMARY_MIN_SHARED, CONTEXT_HUB_DEGREE_THRESHOLD,
+                                     CONTEXT_SUMMARY_WEAK_LABELS,
                                      CONTENT_DOMAINS, get_source_domains, get_domain_display_name)
         name = node_row.get("name") or "This node"
         ntype = _display_type(node_row.get("labels"))
@@ -3487,8 +3488,15 @@ class ExpertTools:
                 sentences.append(f"Its {k} dated connections run from {lo} to {hi}; "
                                  f"the most recent is '{latest}' ({hi}).")
 
+        weak_labels = set(CONTEXT_SUMMARY_WEAK_LABELS)
         peers, s_degree = {}, {}
         for p in pair_rows or []:
+            # Weak shared neighbours (hubs, section headers) are not counted, and a weak on-screen node
+            # gets no sentence: "shares X with a section header / the founder hub" says nothing (§3.3b).
+            if (p.get("s_degree") or 0) >= CONTEXT_HUB_DEGREE_THRESHOLD or set(p.get("s_labels") or []) & weak_labels:
+                continue
+            if (p.get("v_degree") or 0) >= CONTEXT_HUB_DEGREE_THRESHOLD or set(p.get("v_labels") or []) & weak_labels:
+                continue
             entry = peers.setdefault(p["v_id"], {"name": p["v_name"], "labels": p.get("v_labels"), "shared": set()})
             entry["shared"].add(p["s_name"])
             s_degree[p["s_name"]] = max(s_degree.get(p["s_name"], 0), p.get("s_degree") or 0)
@@ -3507,8 +3515,6 @@ class ExpertTools:
         for vid, e in peers.items():
             if _display_type(e["labels"]) == ntype:
                 for s_name in e["shared"]:
-                    if s_degree.get(s_name, 0) >= CONTEXT_HUB_DEGREE_THRESHOLD:
-                        continue
                     same_type_by_shared.setdefault(s_name, set()).add(vid)
         if same_type_by_shared:
             s_name, vids = sorted(same_type_by_shared.items(), key=lambda kv: (-len(kv[1]), kv[0]))[0]

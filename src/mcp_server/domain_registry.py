@@ -202,7 +202,10 @@ CONTEXT_SUMMARY_MAX_TYPES = 4          # neighbour types named in the "connects 
 CONTEXT_SUMMARY_MAX_SHARED_NAMES = 3   # shared-neighbour names quoted per on-screen node
 CONTEXT_SUMMARY_MAX_PEERS = 2          # on-screen nodes given a "Shares N connections with" sentence
 CONTEXT_SUMMARY_MIN_GROUP = 2          # "One of N <type>s in this view" needs N >= this
-CONTEXT_SUMMARY_MIN_SHARED = 2         # "Shares N connections with" needs N >= this (one shared link says little)
+CONTEXT_SUMMARY_MIN_SHARED = 1         # "Shares N connections with" needs N >= this counted (non-weak) neighbours
+# Shared neighbours that say nothing about what two nodes have in common (section headers every item
+# is filed under). They, and hubs (CONTEXT_HUB_DEGREE_THRESHOLD), are not counted (design §3.3b).
+CONTEXT_SUMMARY_WEAK_LABELS = ["Category"]
 CONTEXT_SUMMARY_DATE_SCAN_MAX = 2000   # dated neighbours read for the time span
 CONTEXT_SUMMARY_PAIR_SCAN_MAX = 5000   # (on-screen node, shared neighbour) pairs read
 # Labels that mark a capability, not a node type; never used as a node's type in the summary.

@@ -31,8 +31,9 @@ from expert_tools import ExpertTools  # noqa: E402
 render = ExpertTools._render_view_summary
 
 
-def pair(vid, vname, s_name, vlabels=("Project",), s_degree=1):
-    return {"v_id": vid, "v_name": vname, "v_labels": list(vlabels), "s_name": s_name, "s_degree": s_degree}
+def pair(vid, vname, s_name, vlabels=("Project",), s_degree=1, s_labels=("Technology",)):
+    return {"v_id": vid, "v_name": vname, "v_labels": list(vlabels), "s_name": s_name, "s_degree": s_degree,
+            "s_labels": list(s_labels)}
 
 
 class RenderTest(unittest.TestCase):
@@ -61,13 +62,35 @@ class RenderTest(unittest.TestCase):
                       render(self.NODE, rows, []))
 
     def test_shared_neighbours_most_specific_first(self):
-        pairs = [pair("p1", "Project X", "NLP", s_degree=40), pair("p1", "Project X", "Attention", s_degree=3),
+        pairs = [pair("p1", "Project X", "NLP", s_degree=12), pair("p1", "Project X", "Attention", s_degree=3),
                  pair("p1", "Project X", "Transformers", s_degree=5)]
         self.assertIn("Shares 3 connections (Attention, Transformers, NLP) with Project 'Project X' in this view.",
                       render(self.NODE, [], pairs))
 
-    def test_one_shared_neighbour_is_not_a_sentence(self):
-        self.assertNotIn("Shares", render(self.NODE, [], [pair("p1", "Project X", "NLP")]))
+    def test_one_specific_shared_neighbour_is_a_sentence(self):
+        self.assertIn("Shares 1 connection (ML) with Project 'Project X' in this view.",
+                      render(self.NODE, [], [pair("p1", "Project X", "ML")]))
+
+    def test_hubs_and_categories_are_not_counted(self):
+        # Production case (design §3.3b): the founder hub and a Category section header.
+        hub = reg.CONTEXT_HUB_DEGREE_THRESHOLD
+        weak_only = [pair("p1", "InfoQ", "Sangeetha Ramadurai", s_degree=hub + 50, s_labels=["Person"]),
+                     pair("p1", "InfoQ", "Thought Leadership & Community", s_labels=["Category"])]
+        self.assertNotIn("Shares", render(self.NODE, [], weak_only))
+        mixed = weak_only[:1] + [pair("p2", "Agents", "ML"),
+                                 pair("p2", "Agents", "Thought Leadership & Community", s_labels=["Category"]),
+                                 pair("p2", "Agents", "Sangeetha Ramadurai", s_degree=hub, s_labels=["Person"])]
+        text = render(self.NODE, [], mixed)
+        self.assertIn("Shares 1 connection (ML) with Project 'Agents' in this view.", text)
+        self.assertNotIn("Sangeetha", text)
+        self.assertNotIn("Thought Leadership & Community", text)
+
+    def test_weak_on_screen_nodes_get_no_sentence(self):
+        # Live case (design §3.3b): InfoQ "shares" its certification with a Category and the founder hub.
+        hub = reg.CONTEXT_HUB_DEGREE_THRESHOLD
+        pairs = [pair("c1", "Education & Continuous Learning", "[2026] InfoQ Certified Architect", ["Category"]),
+                 dict(pair("h1", "Sangeetha Ramadurai", "[2026] InfoQ Certified Architect", ["Person"]), v_degree=hub)]
+        self.assertNotIn("Shares", render(self.NODE, [], pairs))
 
     def test_where_it_sits_ignores_hubs(self):
         node = {"name": "Doc A", "labels": ["DocumentSource"]}
@@ -75,10 +98,14 @@ class RenderTest(unittest.TestCase):
         pairs = [pair("d2", "Doc B", "NLP", ["DocumentSource"]), pair("d3", "Doc C", "NLP", ["DocumentSource"]),
                  pair("d2", "Doc B", "Founder", ["DocumentSource"], s_degree=hub),
                  pair("d3", "Doc C", "Founder", ["DocumentSource"], s_degree=hub),
-                 pair("d4", "Doc D", "Founder", ["DocumentSource"], s_degree=hub)]
+                 pair("d4", "Doc D", "Founder", ["DocumentSource"], s_degree=hub),
+                 pair("d2", "Doc B", "Section A", ["DocumentSource"], s_labels=["Category"]),
+                 pair("d3", "Doc C", "Section A", ["DocumentSource"], s_labels=["Category"]),
+                 pair("d4", "Doc D", "Section A", ["DocumentSource"], s_labels=["Category"])]
         text = render(node, [], pairs)
         self.assertIn("One of 3 DocumentSources in this view connected to 'NLP'.", text)
         self.assertNotIn("connected to 'Founder'", text)
+        self.assertNotIn("connected to 'Section A'", text)
 
     def test_nothing_to_say_is_empty(self):
         self.assertEqual(render(self.NODE, [], []), "")
