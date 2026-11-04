@@ -521,3 +521,92 @@ def classify_bridge_candidate(labels, domain: str) -> str:
 
 def get_domain_display_name(domain: str) -> str:
     return DOMAIN_MANIFESTS.get(domain, {}).get("display_name", domain)
+
+
+# ── Bento panel layouts (bridge-discovery-and-bento-panel-design-2026-11-03.md §4.2) ─────────────────
+# The server picks a node's layout from its own labels (never the chat's domain) and returns it with the
+# node details as `panel_layout`; the panel draws the listed sections in order and contains no type
+# lists. A section with no data for this user is hidden by the panel. Section ids are the panel's
+# renderers (cortex-chat-ui/components/BentoDetailPanel.tsx PANEL_SECTIONS; a test keeps them equal).
+# "half": the panel puts consecutive half-width sections side by side.
+PANEL_SECTION_IDS = [
+    "description", "people", "published", "topics", "excerpts", "tech_stack", "timeline",
+    "career_ledger", "source_document", "sections_outline", "live_source", "resources",
+    "narrative", "bridge",
+]
+PANEL_OUTLINE_MAX = 12   # sections listed in a document's Outline (top levels first)
+PANEL_OUTLINE_MIN_LEVEL = 1   # level 0 is the document root (repeats the title)
+PANEL_OUTLINE_MAX_LEVEL = 2
+
+
+def _sec(section_id: str, title: str, half: bool = False) -> dict:
+    return {"id": section_id, "title": title, **({"width": "half"} if half else {})}
+
+
+_NARRATIVE = _sec("narrative", "Narrative")
+_RESOURCES = _sec("resources", "Resource Gallery")
+_BRIDGE = _sec("bridge", "Knowledge Bridge")
+_TOPICS = _sec("topics", "Topics & Concepts")
+
+PANEL_LAYOUTS = {
+    # Any node that has no domain of its own (Concept, Technology, Person, Topic…) or an unknown type:
+    # a new ingestor works with no UI change.
+    "default": {
+        "sections": [_sec("description", "Summary"), _TOPICS, _NARRATIVE, _RESOURCES, _BRIDGE],
+        "primary_action": "Open Resource",
+    },
+    # By content domain (get_source_domains on the node's labels).
+    "domains": {
+        "podcast": {
+            "sections": [_sec("description", "Episode Summary"), _sec("people", "Guests", half=True),
+                         _sec("published", "Published", half=True), _TOPICS,
+                         _sec("excerpts", "Transcript Highlights"), _NARRATIVE, _RESOURCES, _BRIDGE],
+            "primary_action": "Open Episode",
+        },
+        "professional": {
+            "sections": [_sec("description", "Impact Context"), _sec("tech_stack", "Core Stack", half=True),
+                         _sec("timeline", "Timeline", half=True), _RESOURCES, _NARRATIVE, _BRIDGE],
+            "primary_action": "Open Resource",
+        },
+        "website": {
+            "sections": [_sec("description", "About This Source"), _sec("live_source", "Live Source"),
+                         _TOPICS, _RESOURCES, _NARRATIVE, _BRIDGE],
+            "primary_action": "Open Source",
+        },
+        "document": {
+            "sections": [_sec("description", "About This Document"), _sec("source_document", "Source Document"),
+                         _sec("sections_outline", "Outline"), _TOPICS, _NARRATIVE, _RESOURCES, _BRIDGE],
+            "primary_action": "Open Resource",
+        },
+    },
+    # Per-type overrides; checked before the domain.
+    "types": {
+        "Podcast": {
+            "sections": [_sec("description", "About This Podcast"), _sec("people", "Hosts"), _TOPICS,
+                         _NARRATIVE, _RESOURCES, _BRIDGE],
+            "primary_action": "Open Podcast",
+        },
+        "Company": {
+            "sections": [_sec("description", "Impact Context"), _sec("career_ledger", "Career Ledger"),
+                         _sec("tech_stack", "Core Stack", half=True), _sec("timeline", "Timeline", half=True),
+                         _RESOURCES, _NARRATIVE, _BRIDGE],
+            "primary_action": "Open Resource",
+        },
+        # Section headers organize the graph; they have no content of their own.
+        "Category": {"sections": [_sec("description", "Summary"), _NARRATIVE], "primary_action": "Open Resource"},
+    },
+}
+
+
+def get_panel_layout(labels) -> dict:
+    """The Bento panel layout for a node with these labels: a per-type override (labels in order), else
+    the layout of the first content domain the node belongs to (exclusive labels), else the default.
+    Returns a copy with `layout` naming what was chosen ("type:Company", "domain:podcast", "default")."""
+    import copy
+    for label in labels or []:
+        if label in PANEL_LAYOUTS["types"]:
+            return {**copy.deepcopy(PANEL_LAYOUTS["types"][label]), "layout": f"type:{label}"}
+    for domain in get_source_domains(labels):
+        if domain in PANEL_LAYOUTS["domains"]:
+            return {**copy.deepcopy(PANEL_LAYOUTS["domains"][domain]), "layout": f"domain:{domain}"}
+    return {**copy.deepcopy(PANEL_LAYOUTS["default"]), "layout": "default"}

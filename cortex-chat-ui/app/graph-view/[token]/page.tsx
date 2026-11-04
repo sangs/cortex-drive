@@ -8,7 +8,7 @@ import {
     Lock, ExternalLink, X, Calendar, ChevronRight,
     Sparkles, Network, Loader2, Sun, Moon
 } from 'lucide-react';
-import { visibleNodeIds, panelCacheKey, panelNarrativeFields } from '@/utils/graphConstants';
+import { visibleNodeIds, panelCacheKey, panelDetailFields } from '@/utils/graphConstants';
 
 const EnterpriseGraph = dynamic(() => import('@/components/EnterpriseGraph'), { ssr: false });
 const BentoDetailPanel = dynamic(() => import('@/components/BentoDetailPanel'), { ssr: false });
@@ -261,7 +261,7 @@ export default function GraphViewPage() {
                     const directLinks = [p.link, p.url].filter(Boolean);
                     const hydrated = {
                         ...p,
-                        ...panelNarrativeFields(payload),
+                        ...panelDetailFields(payload),
                         technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                         links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                         guests: payload.guests || [],

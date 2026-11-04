@@ -2,16 +2,24 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash, Radio, Loader2 } from 'lucide-react';
+import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash, Radio, Loader2, FileText, ListTree } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 import ShareModal from './ShareModal';
 import { useCapabilities } from '@/hooks/use-capabilities';
 import type { BridgeOptions } from '@/utils/bridgeTypes';
+import { groupHalfSections, type PanelSection } from '@/utils/graphConstants';
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
-// Node types that belong to the podcast domain — bento layout differs from career domain.
-const PODCAST_DOMAIN_TYPES = new Set(['Episode', 'Podcast']);
+// Layout (design 2026-11-03 §4.2): the server picks the sections for a node from its labels
+// (domain_registry.PANEL_LAYOUTS) and returns them as `panel_layout`; this panel only knows how to draw
+// each section (PANEL_SECTIONS below) and holds no node-type lists. Used before the details arrive or
+// with an older server that sends no layout:
+const PANEL_FALLBACK_SECTIONS: PanelSection[] = [
+    { id: 'description', title: 'Summary' }, { id: 'narrative', title: 'Narrative' },
+    { id: 'resources', title: 'Resource Gallery' }, { id: 'bridge', title: 'Knowledge Bridge' },
+];
+const PANEL_DEFAULT_PRIMARY_ACTION = 'Open Resource';
 
 // Relationship types that indicate a person appeared on or hosted an episode/podcast.
 const APPEARANCE_RELS = new Set(['GUEST_ON', 'INTERVIEWED_BY', 'FEATURE_GUEST', 'HOSTS']);
@@ -27,11 +35,10 @@ interface BentoDetailPanelProps {
     onDiscoverBridge?: (nodeId: string, domains: string[]) => void;
     // Bridge target domains from the server (list_bridge_domains); null until loaded.
     bridgeOptions?: BridgeOptions | null;
-    domainSignal?: string;
     isBentoHydrating?: boolean;
 }
 
-const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, bridgeOptions = null, domainSignal, isBentoHydrating = false }) => {
+const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = [], allLinks = [], onClose, onDiscoverBridge, bridgeOptions = null, isBentoHydrating = false }) => {
     const [shareModalOpen, setShareModalOpen] = React.useState(false);
     // Selected bridge target domains: [auto] by default; picking a domain replaces Auto, clearing
     // every domain returns to Auto. Ids come from the server; the panel holds no domain list.
@@ -127,7 +134,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
 
     // --- Career-domain derived data ---
     const careerLedger = React.useMemo(() => {
-        if (!node || node.type !== 'Company') return [];
+        if (!node) return [];
         const nodeId = node.id || node.name;
         return allLinks
             .filter(l => (l.target === nodeId || l.source === nodeId) && (l.type === 'HELD_ROLE' || l.title))
@@ -139,9 +146,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             .sort((a, b) => b.epoch - a.epoch);
     }, [node, allLinks]);
 
-    // --- Podcast-domain derived data ---
+    // --- People / topics / excerpts linked to the node on screen (shown only where the layout has them) ---
     const podcastPeople = React.useMemo(() => {
-        if (!node || !(domainSignal === 'podcast' || PODCAST_DOMAIN_TYPES.has(node.type))) return [];
+        if (!node) return [];
         const nodeId = node.id || node.name;
         const connectedPairs = allLinks
             .filter(l => (l.source === nodeId || l.target === nodeId) && APPEARANCE_RELS.has(l.type));
@@ -167,7 +174,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     }, [node, allNodes, allLinks]);
 
     const podcastTopics = React.useMemo(() => {
-        if (!node || !(domainSignal === 'podcast' || PODCAST_DOMAIN_TYPES.has(node.type))) return [];
+        if (!node) return [];
         const nodeId = node.id || node.name;
         const connectedIds = new Set(
             allLinks
@@ -178,7 +185,7 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     }, [node, allNodes, allLinks]);
 
     const transcriptChunks = React.useMemo(() => {
-        if (!node || !(domainSignal === 'podcast' || PODCAST_DOMAIN_TYPES.has(node.type))) return [];
+        if (!node) return [];
         const nodeId = node.id || node.name;
         const chunkIds = new Set(
             allLinks
@@ -194,9 +201,11 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     // All hooks must be above this early return.
     if (!node) return null;
 
-    // domainSignal from the active query is the primary discriminator — handles Person nodes
-    // that exist in both domains. Fallback to node.type for cases where signal isn't set.
-    const isPodcastDomain = domainSignal === 'podcast' || (!domainSignal && PODCAST_DOMAIN_TYPES.has(node.type));
+    const layout: { sections?: PanelSection[]; primary_action?: string } | undefined = node.panel_layout;
+    const sections: PanelSection[] = Array.isArray(layout?.sections) && layout.sections.length
+        ? layout.sections
+        : (isBentoHydrating ? PANEL_FALLBACK_SECTIONS.filter(sec => sec.id === 'description' || sec.id === 'narrative')
+                            : PANEL_FALLBACK_SECTIONS);
 
     // --- Shared UI: header, resource gallery, knowledge bridge ---
     const header = (
@@ -224,11 +233,11 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </header>
     );
 
-    const resourceGallery = displayLinks.length > 0 && (
+    const resourceGallery = (title: string) => displayLinks.length > 0 && (
         <div className="p-6 rounded-2xl bg-sky-500/5 border border-sky-500/10 flex flex-col gap-4">
             <div className="flex items-center gap-3 text-sky-400">
                 <ExternalLink className="w-4 h-4" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-sky-300">Resource Gallery</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-sky-300">{title}</span>
             </div>
             <div className="flex flex-col gap-2">
                 {displayLinks.map((link, idx) => (
@@ -242,13 +251,13 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     );
 
-    // --- A1/A2: live re-fetch + captured diagram images, WebsiteSource nodes only ---
-    const websiteSourceCard = node.type === 'WebsiteSource' && (
+    // --- A1/A2: live re-fetch + captured diagram images, for nodes with a registered base_url ---
+    const websiteSourceCard = (title: string) => node.base_url && (
         <div className="p-6 rounded-2xl bg-teal-500/5 border border-teal-500/10 flex flex-col gap-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-teal-400">
                     <Radio className="w-4 h-4" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-teal-300">Live Source</span>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-teal-300">{title}</span>
                 </div>
                 <button
                     onClick={handleViewLive}
@@ -292,11 +301,11 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     // inline "Authored:"/"Inferred from graph:" labels. combined_narrative is the fallback from an older
     // server. Rendered as plain paragraphs, so this stays uncoupled from the backend's exact wording.
     const narrativeText: string | undefined = node.panel_narrative || node.combined_narrative || node.text;
-    const narrativeBlock = (
+    const narrativeBlock = (title: string) => (
         <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
             <div className="flex items-center gap-3 text-rose-400">
                 <MessageSquare className="w-4 h-4" />
-                <span className="text-xs font-semibold uppercase tracking-wider">Narrative</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
                 {isBentoHydrating && (
                     <span className="ml-auto text-[9px] text-rose-400/60 animate-pulse uppercase tracking-widest">loading…</span>
                 )}
@@ -323,12 +332,12 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
     );
 
     // Rendered only where a bridge handler exists (the guest graph-view page passes none).
-    const knowledgeBridge = onDiscoverBridge ? (
+    const knowledgeBridge = (title: string) => onDiscoverBridge ? (
         <div className="p-6 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex flex-col gap-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-indigo-400">
                     <Network className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-300">Knowledge Bridge</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-300">{title}</span>
                 </div>
                 <span className="text-[8px] bg-indigo-500/20 px-2 py-0.5 rounded-full text-indigo-400 font-bold uppercase">Shortest-Path / Inferred</span>
             </div>
@@ -369,9 +378,9 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
         </div>
     ) : null;
 
-    const primaryActionLabel = isPodcastDomain
-        ? (displayLinks.length === 1 ? 'Open Episode' : 'View Resources')
-        : (displayLinks.length === 1 ? 'Open Resource' : 'View Resources');
+    const primaryActionLabel = displayLinks.length === 1
+        ? (layout?.primary_action || PANEL_DEFAULT_PRIMARY_ACTION)
+        : 'View Resources';
 
     const footer = displayLinks.length > 0 && (
         <footer className="mt-8 pt-6 border-t border-white/5">
@@ -382,6 +391,195 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
             </a>
         </footer>
     );
+
+    const skeleton = (
+        <div className="flex flex-col gap-2" aria-busy="true">
+            <div className="animate-pulse h-3 rounded bg-white/10 w-full" />
+            <div className="animate-pulse h-3 rounded bg-white/10 w-5/6" />
+            <div className="animate-pulse h-3 rounded bg-white/10 w-4/6" />
+        </div>
+    );
+    const hasText = (v: unknown) => typeof v === 'string' && v.trim().length > 0;
+    const publishedDate = node.published_date || node.aired_date || node.published_at;
+    const timelineDate = node.displayDate || node.year;
+    const outline: { sections?: { title: string; page_start?: number | null }[]; total?: number } | undefined = node.outline;
+    const technologies: string[] = node.technologies
+        ? (Array.isArray(node.technologies) ? node.technologies : [node.technologies]) : [];
+    const sourceFacts = ([
+        ['File', node.filename], ['Type', node.mime_type], ['Pages', node.page_count],
+        ['Last synced', typeof node.last_synced_at === 'string' ? node.last_synced_at.slice(0, 10) : null],
+    ] as [string, unknown][]).filter(([, v]) => v !== undefined && v !== null && v !== '') as [string, string | number][];
+
+    // One renderer per section id (domain_registry.PANEL_SECTION_IDS; a test keeps the two equal). A
+    // renderer returns nothing when it has no data for this node and user, which hides the section.
+    const PANEL_SECTIONS: Record<string, (title: string) => React.ReactNode> = {
+        'description': (title) => (hasText(node.description) || isBentoHydrating) && (
+            <div className="p-6 rounded-2xl bg-indigo-600/10 border border-indigo-500/10 flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-indigo-300">
+                    <Target className="w-4 h-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+                    {isBentoHydrating && (
+                        <span className="ml-auto text-[9px] text-indigo-400/60 animate-pulse uppercase tracking-widest">loading…</span>
+                    )}
+                </div>
+                {isBentoHydrating && !hasText(node.description) ? skeleton : (
+                    <p className="text-sm font-medium leading-relaxed text-slate-100 pr-1 max-h-48 overflow-y-auto">{node.description}</p>
+                )}
+            </div>
+        ),
+        'people': (title) => podcastPeople.length > 0 && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-emerald-400">
+                    <Mic className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                    {podcastPeople.map((p: { name: string; role: string }, i: number) => (
+                        <div key={i} className="flex items-center justify-between">
+                            <span className="text-xs text-slate-100">{p.name}</span>
+                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wider">{p.role}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        ),
+        'published': (title) => (publishedDate || node.number != null) && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-amber-400">
+                    <CalendarDays className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                    {node.number != null && (
+                        <div className="flex items-center gap-2 text-indigo-300">
+                            <Hash className="w-3 h-3" />
+                            <span className="text-sm font-bold">Episode {node.number}</span>
+                        </div>
+                    )}
+                    {publishedDate && <span className="text-xl font-bold text-amber-200">{publishedDate}</span>}
+                </div>
+            </div>
+        ),
+        'topics': (title) => podcastTopics.length > 0 && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-teal-400">
+                    <Tag className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {podcastTopics.map((t, i) => (
+                        <span key={i} className={`px-2 py-1 rounded-md text-[10px] font-mono border ${
+                            t.type === 'Technology'
+                                ? 'bg-teal-500/10 border-teal-500/20 text-teal-400'
+                                : t.type === 'Concept'
+                                ? 'bg-violet-500/10 border-violet-500/20 text-violet-400'
+                                : 'bg-sky-500/10 border-sky-500/20 text-sky-400'
+                        }`}>
+                            {t.name}
+                        </span>
+                    ))}
+                </div>
+            </div>
+        ),
+        'excerpts': (title) => transcriptChunks.length > 0 && (
+            <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-rose-400">
+                    <MessageSquare className="w-4 h-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-col gap-3">
+                    {transcriptChunks.map((chunk, i) => (
+                        <p key={i} className="text-slate-300 text-sm leading-relaxed border-l-2 border-rose-500/30 pl-3 italic">
+                            &quot;{chunk.text?.slice(0, 220)}{chunk.text?.length > 220 ? '…' : ''}&quot;
+                        </p>
+                    ))}
+                </div>
+            </div>
+        ),
+        'tech_stack': (title) => technologies.length > 0 && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-emerald-400">
+                    <Cpu className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {technologies.map((t: string) => (
+                        <span key={t} className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono">{t}</span>
+                    ))}
+                </div>
+            </div>
+        ),
+        'timeline': (title) => (timelineDate || node.isPresent || (node.startYear && node.endYear)) && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-amber-400">
+                    <History className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="flex flex-col">
+                    <span className="text-xl font-bold text-amber-200">{timelineDate || 'Active'}</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
+                        {node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : ''}
+                    </span>
+                </div>
+            </div>
+        ),
+        'career_ledger': (title) => careerLedger.length > 0 && (
+            <div className="p-6 rounded-2xl bg-slate-800/40 border border-white/5 flex flex-col gap-4">
+                <div className="flex items-center gap-3 text-indigo-400">
+                    <History className="w-4 h-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+                </div>
+                <div className="space-y-4">
+                    {careerLedger.map((entry, idx) => (
+                        <div key={idx} className="flex flex-col border-l-2 border-indigo-500/30 pl-4 py-1 relative">
+                            <div className="absolute -left-[5px] top-2 w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
+                            <span className="text-sm font-bold text-white leading-tight">{entry.title}</span>
+                            <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{entry.dates}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        ),
+        'source_document': (title) => sourceFacts.length > 0 && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-sky-400">
+                    <FileText className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                </div>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                    {sourceFacts.map(([k, v]) => (
+                        <React.Fragment key={k}>
+                            <dt className="text-slate-500">{k}</dt>
+                            <dd className="text-slate-100 break-all">{v}</dd>
+                        </React.Fragment>
+                    ))}
+                </dl>
+            </div>
+        ),
+        'sections_outline': (title) => outline?.sections && outline.sections.length > 0 && (
+            <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-violet-400">
+                    <ListTree className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
+                    {(outline.total ?? 0) > outline.sections.length && (
+                        <span className="ml-auto text-[9px] text-slate-500">{outline.sections.length} of {outline.total}</span>
+                    )}
+                </div>
+                <ol className="flex flex-col gap-1 text-xs text-slate-200">
+                    {outline.sections.map((sec, i) => (
+                        <li key={i} className="flex justify-between gap-3">
+                            <span className="truncate">{sec.title}</span>
+                            {sec.page_start != null && <span className="text-slate-500 shrink-0">p. {sec.page_start}</span>}
+                        </li>
+                    ))}
+                </ol>
+            </div>
+        ),
+        'live_source': (title) => websiteSourceCard(title),
+        'resources': (title) => resourceGallery(title),
+        'narrative': (title) => narrativeBlock(title),
+        'bridge': (title) => knowledgeBridge(title),
+    };
 
     return (
         <>
@@ -396,207 +594,17 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                 {header}
 
                 <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-                    {isPodcastDomain ? (
-                        // ── Podcast Domain Layout ──────────────────────────────
-                        <>
-                            {/* Episode / Podcast Summary */}
-                            <div className="col-span-2 p-6 rounded-2xl bg-indigo-600/10 border border-indigo-500/10 flex flex-col gap-4">
-                                <div className="flex items-center gap-3 text-indigo-300">
-                                    <Target className="w-4 h-4" />
-                                    <span className="text-xs font-semibold uppercase tracking-wider">
-                                        {node.type === 'Podcast' ? 'About This Podcast' : 'Episode Summary'}
-                                    </span>
-                                    {isBentoHydrating && (
-                                        <span className="ml-auto text-[9px] text-indigo-400/60 animate-pulse uppercase tracking-widest">loading…</span>
-                                    )}
-                                </div>
-                                {isBentoHydrating ? (
-                                    <div className="flex flex-col gap-2">
-                                        <div className="animate-pulse h-3 rounded bg-white/10 w-full" />
-                                        <div className="animate-pulse h-3 rounded bg-white/10 w-5/6" />
-                                        <div className="animate-pulse h-3 rounded bg-white/10 w-4/6" />
-                                    </div>
-                                ) : (
-                                    <p className="text-sm font-medium leading-relaxed text-slate-100 pr-1 max-h-48 overflow-y-auto">
-                                        {node.description || 'No summary available.'}
-                                    </p>
-                                )}
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                {/* Guests / Hosts */}
-                                <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 text-emerald-400">
-                                        <Mic className="w-4 h-4" />
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">
-                                            {node.type === 'Podcast' ? 'Hosts' : 'Guests'}
-                                        </span>
-                                    </div>
-                                    {podcastPeople.length > 0 ? (
-                                        <div className="flex flex-col gap-2">
-                                            {podcastPeople.map((p: { name: string; role: string }, i: number) => (
-                                                <div key={i} className="flex items-center justify-between">
-                                                    <span className="text-xs text-slate-100">{p.name}</span>
-                                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wider">{p.role}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-slate-300 text-xs font-medium">No guests found</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Published Date / Episode Number */}
-                                <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 text-amber-400">
-                                        <CalendarDays className="w-4 h-4" />
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Published</span>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                        {node.number != null && (
-                                            <div className="flex items-center gap-2 text-indigo-300">
-                                                <Hash className="w-3 h-3" />
-                                                <span className="text-sm font-bold">Episode {node.number}</span>
-                                            </div>
-                                        )}
-                                        <span className="text-xl font-bold text-amber-200">
-                                            {node.published_date || node.aired_date || node.published_at || '—'}
-                                        </span>
-                                        {!node.published_date && !node.aired_date && !node.published_at && (
-                                            <span className="text-[10px] text-slate-500 italic">Date unavailable</span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Topics & Concepts */}
-                            {podcastTopics.length > 0 && (
-                                <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 text-teal-400">
-                                        <Tag className="w-4 h-4" />
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Topics & Concepts</span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {podcastTopics.map((t, i) => (
-                                            <span key={i} className={`px-2 py-1 rounded-md text-[10px] font-mono border ${
-                                                t.type === 'Technology'
-                                                    ? 'bg-teal-500/10 border-teal-500/20 text-teal-400'
-                                                    : t.type === 'Concept'
-                                                    ? 'bg-violet-500/10 border-violet-500/20 text-violet-400'
-                                                    : 'bg-sky-500/10 border-sky-500/20 text-sky-400'
-                                            }`}>
-                                                {t.name}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Transcript Highlights */}
-                            {transcriptChunks.length > 0 && (
-                                <div className="p-6 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-4">
-                                    <div className="flex items-center gap-3 text-rose-400">
-                                        <MessageSquare className="w-4 h-4" />
-                                        <span className="text-xs font-semibold uppercase tracking-wider">Transcript Highlights</span>
-                                    </div>
-                                    <div className="flex flex-col gap-3">
-                                        {transcriptChunks.map((chunk, i) => (
-                                            <p key={i} className="text-slate-300 text-sm leading-relaxed border-l-2 border-rose-500/30 pl-3 italic">
-                                                "{chunk.text?.slice(0, 220)}{chunk.text?.length > 220 ? '…' : ''}"
-                                            </p>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {narrativeBlock}
-                            {resourceGallery}
-                            {websiteSourceCard}
-                            {knowledgeBridge}
-                        </>
-                    ) : (
-                        // ── Career Domain Layout ───────────────────────────────
-                        <>
-                            <div className="grid grid-cols-2 gap-4">
-                                {/* Impact Context: the node's own description only, hidden when it has none
-                                    (design 2026-11-03 §3.2; the narrative is in the Narrative block). */}
-                                {typeof node.description === 'string' && node.description.trim() && (
-                                    <div className="col-span-2 p-6 rounded-2xl bg-indigo-600/10 border border-indigo-500/10 flex flex-col gap-4">
-                                        <div className="flex items-center gap-3 text-indigo-300">
-                                            <Target className="w-4 h-4" />
-                                            <span className="text-xs font-semibold uppercase tracking-wider">Impact Context</span>
-                                        </div>
-                                        <p className="text-sm font-medium leading-relaxed text-slate-100">
-                                            {node.description}
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Core Stack */}
-                                <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 text-emerald-400">
-                                        <Cpu className="w-4 h-4" />
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Core Stack</span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {node.technologies ? (
-                                            (Array.isArray(node.technologies) ? node.technologies : [node.technologies]).map((t: string) => (
-                                                <span key={t} className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono">{t}</span>
-                                            ))
-                                        ) : (
-                                            <span className="text-slate-500 text-[10px] italic">
-                                                {node.persona === 'structural' ? 'N/A for structural anchor.' : 'Metadata pending...'}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Timeline */}
-                                <div className="p-5 rounded-2xl bg-white/5 border border-white/5 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 text-amber-400">
-                                        <History className="w-4 h-4" />
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Timeline</span>
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-xl font-bold text-amber-200">
-                                            {node.type === 'Episode' ? node.aired_date || node.year || '—' : node.displayDate || node.year || 'Active'}
-                                        </span>
-                                        <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
-                                            {node.type === 'Episode' ? 'Aired' : node.isPresent ? 'Currently Active' : node.startYear && node.endYear ? `${node.startYear} → ${node.endYear}` : 'Active Context'}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* Career Ledger (Company nodes only) */}
-                                {careerLedger.length > 0 && (
-                                    <div className="col-span-2 p-6 rounded-2xl bg-slate-800/40 border border-white/5 flex flex-col gap-4">
-                                        <div className="flex items-center gap-3 text-indigo-400">
-                                            <History className="w-4 h-4" />
-                                            <span className="text-xs font-semibold uppercase tracking-wider">Career Ledger</span>
-                                        </div>
-                                        <div className="space-y-4">
-                                            {careerLedger.map((entry, idx) => (
-                                                <div key={idx} className="flex flex-col border-l-2 border-indigo-500/30 pl-4 py-1 relative">
-                                                    <div className="absolute -left-[5px] top-2 w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
-                                                    <span className="text-sm font-bold text-white leading-tight">{entry.title}</span>
-                                                    <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">{entry.dates}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {resourceGallery}
-                            {websiteSourceCard}
-
-                            {narrativeBlock}
-
-                            {knowledgeBridge}
-                        </>
-                    )}
+                    {groupHalfSections(sections).map((group, gi) => {
+                        const rendered = group.map(sec => {
+                            const render = PANEL_SECTIONS[sec.id];
+                            const el = render ? render(sec.title) : null;
+                            return el ? <React.Fragment key={sec.id}>{el}</React.Fragment> : null;
+                        }).filter(Boolean);
+                        if (rendered.length === 0) return null;
+                        return rendered.length > 1
+                            ? <div key={gi} className="grid grid-cols-2 gap-4">{rendered}</div>
+                            : <React.Fragment key={gi}>{rendered}</React.Fragment>;
+                    })}
                 </div>
 
                 {footer}

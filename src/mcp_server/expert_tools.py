@@ -1510,6 +1510,18 @@ class ExpertTools:
                 # Non-fatal — the panel falls back to combined_narrative.
                 print(f"[get_node_details] view summary failed (non-fatal): {e}")
 
+        # Bento panel layout (design 2026-11-03 §4.2): chosen from the node's own labels, returned with
+        # the details so the panel holds no type lists. Data a section needs that is not already in the
+        # record is fetched here only when the layout has that section.
+        from domain_registry import get_panel_layout
+        layout = get_panel_layout(labels_list)
+        data["panel_layout"] = layout
+        if any(s["id"] == "sections_outline" for s in layout["sections"]):
+            try:
+                data["outline"] = self._collect_outline(data["element_id"])
+            except Exception as e:
+                print(f"[get_node_details] outline failed (non-fatal): {e}")
+
         return neo4j_json_dumps([data], indent=2)
 
     def view_source_live(self, url: str) -> str:
@@ -3368,6 +3380,27 @@ class ExpertTools:
     # ── Bento panel "in this view" summary (design 2026-11-03 §3.2 A, §3.3) ──────────────────────
     # Aggregates written as sentences instead of one sentence per edge (the edges are already on
     # screen). Every number and name comes from Neo4j rows; no LLM call (test_07 still holds).
+
+    def _collect_outline(self, element_id: str) -> dict:
+        """A document's top-level sections for the panel's Outline, in document order, security-filtered.
+        Returns {"sections": [{title, level, page_start}], "total": n} (total = all visible top levels)."""
+        from domain_registry import PANEL_OUTLINE_MAX, PANEL_OUTLINE_MIN_LEVEL, PANEL_OUTLINE_MAX_LEVEL
+        from schema_guard import DOCUMENT_OUTLINE_RELATIONSHIP
+        sec_s = self._get_security_clause("s")
+        query = f"""
+        MATCH (n) WHERE elementId(n) = $element_id
+        MATCH (n)-[:{DOCUMENT_OUTLINE_RELATIONSHIP}]->(s)
+        WHERE coalesce(s.level, 1) >= $min_level AND coalesce(s.level, 1) <= $max_level AND coalesce(s.title, s.name) IS NOT NULL AND ({sec_s})
+        WITH s ORDER BY coalesce(s.order, 0), coalesce(s.page_start, 0)
+        WITH collect({{title: coalesce(s.title, s.name), level: coalesce(s.level, 1), page_start: s.page_start}}) AS tops
+        RETURN tops[..$cap] AS sections, size(tops) AS total
+        """
+        rec = self._exec_query(query, **self._security_params(), element_id=element_id,
+                               min_level=PANEL_OUTLINE_MIN_LEVEL, max_level=PANEL_OUTLINE_MAX_LEVEL,
+                               cap=PANEL_OUTLINE_MAX).records
+        if not rec:
+            return {"sections": [], "total": 0}
+        return {"sections": rec[0]["sections"] or [], "total": rec[0]["total"] or 0}
 
     @staticmethod
     def _clean_visible_ids(visible_node_ids) -> list:

@@ -68,7 +68,7 @@ import {
     type GraphUndoSnapshot,
     visibleNodeIds,
     panelCacheKey,
-    panelNarrativeFields,
+    panelDetailFields,
 } from "@/utils/graphConstants";
 
 // Bridge target domains (bridge-discovery-and-bento-panel-design-2026-11-03.md §1). The domain list
@@ -870,7 +870,7 @@ export default function DashboardPage() {
                         const directLinks = [p.link, p.url].filter(Boolean);
                         const hydratedFields = {
                             ...p,
-                            ...panelNarrativeFields(payload),
+                            ...panelDetailFields(payload),
                             technologies: Array.isArray(tech) ? tech : (tech ? [tech] : []),
                             links: Array.from(new Set([...(freshNode.links || []), ...refLinks, ...directLinks])),
                             guests: payload.guests || [],
@@ -1634,7 +1634,6 @@ export default function DashboardPage() {
                                         onClose={() => setSelectedNode(null)}
                                         onDiscoverBridge={(nodeId, domains) => handleDiscoverBridge(nodeId, selectedNode, domains)}
                                         bridgeOptions={bridgeOptions}
-                                        domainSignal={domainSignal}
                                         isBentoHydrating={isBentoHydrating}
                                     />
                                 </div>

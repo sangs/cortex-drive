@@ -292,6 +292,9 @@ COMPOSITION_RELATIONSHIPS = [
     'HAS_BLOCK',
 ]
 
+# A DocumentSource's outline: its Section children (Bento panel "Outline" section, design 2026-11-03 §4).
+DOCUMENT_OUTLINE_RELATIONSHIP = 'HAS_SECTION'
+
 # Relationships confirmed as NON-composition. Listed explicitly so future code review
 # can verify no new composition edge has been silently added to TRAVERSAL_RELATIONSHIPS.
 NON_COMPOSITION_RELATIONSHIPS = [

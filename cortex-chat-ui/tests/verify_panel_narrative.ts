@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-    visibleNodeIds, panelCacheKey, panelNarrativeFields, PANEL_VISIBLE_IDS_MAX,
+    visibleNodeIds, panelCacheKey, panelDetailFields, PANEL_VISIBLE_IDS_MAX,
 } from '../utils/graphConstants.ts';
 
 let passed = 0;
@@ -29,9 +29,9 @@ eq(panelCacheKey('x', visibleNodeIds([{ node_id: 'b' }, { node_id: 'a' }])),
     panelCacheKey('x', visibleNodeIds([{ node_id: 'a' }, { node_id: 'b' }])), 'node order on screen does not matter');
 
 // Narrative fields
-eq(panelNarrativeFields({ panel_narrative: 'P', combined_narrative: 'C', description: 'D' }),
+eq(panelDetailFields({ panel_narrative: 'P', combined_narrative: 'C', description: 'D' }),
     { panel_narrative: 'P', combined_narrative: 'C' }, 'only the narrative fields, never description');
-eq(panelNarrativeFields({}), {}, 'older server without the fields: nothing added');
+eq(panelDetailFields({}), {}, 'older server without the fields: nothing added');
 
 // Hydration no longer writes the narrative into description (dashboard and guest link page)
 for (const file of ['app/dashboard/page.tsx', 'app/graph-view/[token]/page.tsx']) {
@@ -45,7 +45,7 @@ for (const file of ['app/dashboard/page.tsx', 'app/graph-view/[token]/page.tsx']
 const panel = readFileSync(new URL('../components/BentoDetailPanel.tsx', import.meta.url), 'utf8');
 ok(!panel.includes("node.description || 'Metadata pending...'"), 'Impact Context has no placeholder text');
 ok(/node\.panel_narrative \|\| node\.combined_narrative/.test(panel), 'Narrative prefers panel_narrative');
-eq((panel.match(/\{narrativeBlock\}/g) || []).length, 2, 'Narrative block in both the podcast and career layouts');
+ok(/'narrative': \(title\) => narrativeBlock\(title\)/.test(panel), 'Narrative is a section any layout can list (design §4.2)');
 ok(/aria-label="Loading narrative"/.test(panel) && /\{isBentoHydrating \? \(/.test(panel),
     'Narrative shows a loading skeleton while the panel hydrates (not the placeholder text)');
 

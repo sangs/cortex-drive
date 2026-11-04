@@ -480,15 +480,32 @@ export function panelCacheKey(nodeKey: string, visibleIds: string[]): string {
 }
 
 /**
- * Fields from get_node_details that the panel keeps. `description` is the node's own (authored)
- * description and is never replaced by a narrative (Impact Context shows it); the Narrative block reads
- * `panel_narrative`, falling back to `combined_narrative` from an older server.
+ * Top-level fields from get_node_details that the panel keeps (properties are spread separately).
+ * `description` is the node's own description and is never replaced by a narrative; the Narrative block
+ * reads `panel_narrative` (fallback `combined_narrative` from an older server); `panel_layout` is the
+ * server's section list for this node (design §4.2); `outline` feeds a document's Outline section.
  */
-export function panelNarrativeFields(payload: any): { panel_narrative?: string; combined_narrative?: string } {
+export function panelDetailFields(payload: any): { panel_narrative?: string; combined_narrative?: string; panel_layout?: unknown; outline?: unknown } {
     return {
         ...(typeof payload?.panel_narrative === 'string' ? { panel_narrative: payload.panel_narrative } : {}),
         ...(typeof payload?.combined_narrative === 'string' ? { combined_narrative: payload.combined_narrative } : {}),
+        ...(payload?.panel_layout && Array.isArray(payload.panel_layout.sections) ? { panel_layout: payload.panel_layout } : {}),
+        ...(payload?.outline && Array.isArray(payload.outline.sections) ? { outline: payload.outline } : {}),
     };
+}
+
+// Bento panel layout (design 2026-11-03 §4.2): one entry of the server's `panel_layout.sections`.
+export type PanelSection = { id: string; title: string; width?: 'half' };
+
+/** Consecutive half-width sections are drawn side by side (pairs); everything else on its own row. */
+export function groupHalfSections(sections: PanelSection[]): PanelSection[][] {
+    const groups: PanelSection[][] = [];
+    for (const sec of sections) {
+        const last = groups[groups.length - 1];
+        if (sec.width === 'half' && last && last.length === 1 && last[0].width === 'half') last.push(sec);
+        else groups.push([sec]);
+    }
+    return groups;
 }
 
 /** Push onto a bounded stack (oldest dropped). Returns a new array. */
