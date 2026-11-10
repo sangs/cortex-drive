@@ -162,4 +162,11 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    # Retired 2026-11-10 (vocabulary review): absorbed into seed_resume_graph.py §3b long ago, and its tool list
+    # (Governance, Explainability, AI Architecture as Technologies) is the modelling the review corrected.
+    # Running it would re-add those links. Use seed_resume_graph.py.
+    sys.exit("seed_cortex_drive_project.py is retired: use scripts/seed_resume_graph.py (§3b).")
+
+# Original entry point kept below for reference only (unreachable).
+if False:  # noqa: SIM108
+        run()

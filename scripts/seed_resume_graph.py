@@ -148,11 +148,12 @@ RESUME_CYPHER_QUERIES = [
     MATCH (pj:Startup {name: "Cortex-Drive"})
 
     WITH pj
+    // Technology = a concrete product, library, language or service the product uses (USES_TOOL).
+    // Practices, themes and categories are Concepts (DISCUSSES) — vocabulary review 2026-11-10.
     UNWIND [
         "Neo4j", "Graph Databases", "LLM", "MCP", "Vector Search",
-        "AI Agent", "FastAPI", "TypeScript", "Zero Trust Architecture",
-        "Knowledge Graph", "Retrieval-Augmented Generation",
-        "Governance", "Explainability", "AI Architecture"
+        "TypeScript", "Zero Trust Architecture",
+        "Knowledge Graph", "Retrieval-Augmented Generation"
     ] AS tech
     MERGE (t:Technology {name: tech})
     ON CREATE SET t.type = "Technology", t.tenant_id = 'SYSTEM', t.owner_id = 'user_SYSTEM_ADMIN'
@@ -162,7 +163,8 @@ RESUME_CYPHER_QUERIES = [
     UNWIND [
         "AI Architecture", "Graph UX", "Metadata Orchestration",
         "Enterprise Knowledge Management", "Federated Identity",
-        "Progressive Disclosure", "Semantic Search"
+        "Progressive Disclosure", "Semantic Search",
+        "AI Agent", "Explainability", "Governance"
     ] AS concept
     MERGE (c:Concept {name: concept})
     ON CREATE SET c.type = "Concept", c.tenant_id = 'SYSTEM', c.owner_id = 'user_SYSTEM_ADMIN'
@@ -553,7 +555,10 @@ TOOL USAGE:
     # 9. TECHNOLOGY MAPPING: CORTEX
     """
     WITH {
-        cortex: ["Neo4j", "BAML", "Python", "LangGraph", "Langflow", "AI Agent", "Claude Code", "Google Antigravity", "Software architecture", "AI", "Explainability", "Governance"]
+        // Only what the product really uses (vocabulary review 2026-11-10: LangGraph, Langflow, Claude Code,
+        // Google Antigravity removed; AI Agent, Explainability, Governance are Concepts in §3b; "AI" and
+        // "Software architecture" are too generic to be tools).
+        cortex: ["Neo4j", "BAML", "Python"]
     } as tech_map
     MATCH (pj:Project {name: "Cortex-Drive"})
     UNWIND tech_map.cortex as tool
@@ -627,15 +632,16 @@ TOOL USAGE:
     MERGE (pj)-[:USES_TOOL]->(t)
     """,
 
-    # 16. TECHNOLOGY MAPPING: INFOQ
+    # 16. CONCEPTS DISCUSSED: INFOQ ARTICLE (vocabulary review 2026-11-10)
+    # An article discusses concepts; it does not use tools. Matched by its exact name (a CONTAINS "InfoQ"
+    # match also catches the InfoQ certification). SYSTEM vocabulary, created only if missing (Invariant 9).
     """
-    WITH {
-        infoq: ["Software architecture", "AI", "C4 Model", "Explainability", "Governance"]
-    } as tech_map
-    MATCH (tl:ThoughtLeadership) WHERE tl.name CONTAINS "InfoQ"
-    UNWIND tech_map.infoq as tool
-    MERGE (t:Technology {name: tool})
-    MERGE (tl)-[:USES_TOOL]->(t)
+    WITH ["Software Architecture", "AI", "C4 Model", "Explainability", "Governance", "Platform Engineering"] AS concepts
+    MATCH (tl:ThoughtLeadership {name: "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"})
+    UNWIND concepts AS concept
+    MERGE (c:Concept {name: concept})
+    ON CREATE SET c.type = "Concept", c.tenant_id = 'SYSTEM', c.owner_id = 'user_SYSTEM_ADMIN'
+    MERGE (tl)-[:DISCUSSES]->(c)
     """,
 
     # 17. TECHNOLOGY MAPPING: IGNITE COMMUNITY
