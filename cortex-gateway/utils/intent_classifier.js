@@ -117,6 +117,20 @@ const MIN_ROUTING_NAME_CHARS = 3;
 // Short names (design §9) route only next to one of these words: "the BERT paper" → the BERT document.
 const DOCUMENT_REFERENCE_WORDS = INTENT_KEYWORDS_CONFIG.documentReferenceWords || [];
 
+// ─── Entity roles (cross-domain design 2026-11-09 §4.1 rule 1, S2-78) ─────────
+// A named person whose question is about their own work ("What has Sangeetha written about graph
+// databases?") is the **subject**: it outranks a source title that merely names the topic (the website
+// "Graph database"). A source title decides the domain only as a **container** ("the Graph database
+// page", "in the BERT paper"). Word lists live in config/intent_keywords.js.
+const CAREER_DOMAIN = 'career';
+const CROSS_DOMAIN = 'cross_domain';
+const CONTAINER_REFERENCE_WORDS = [...DOCUMENT_REFERENCE_WORDS, ...(INTENT_KEYWORDS_CONFIG.websiteReferenceWords || [])];
+const CONTAINER_PREPOSITIONS = ['on', 'in', 'from'];
+const SUBJECT_WORK_WORDS = INTENT_KEYWORDS_CONFIG.subjectWorkWords || [];
+const SUBJECT_WORK_PATTERN = SUBJECT_WORK_WORDS.length
+    ? new RegExp(`\\b(?:${SUBJECT_WORK_WORDS.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'i') : null;
+const PERSON_NAME_PART_MIN_CHARS = INTENT_KEYWORDS_CONFIG.personNamePartMinChars || 4;
+
 function _loadStaticCatalog() {
     try {
         const raw = JSON.parse(fs.readFileSync(STATIC_CATALOG_PATH, 'utf-8'));
@@ -161,6 +175,8 @@ function buildRoutingLookups(catalog, viewer) {
         : (!allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id))));
     const entity = new Map();   // lowerCaseName → domain
     const person = new Map();   // lowerCaseName → original-case name
+    const personWork = new Map();   // original-case name → work domains (catalog `work_domains`; absent = unknown)
+    const partOwners = new Map();   // lowerCaseNamePart → Set of original-case names
     const short = [];           // [{ pattern, domain, matched }]
     let withheld = 0;
     for (const e of _catalogEntries(catalog || {})) {
@@ -168,6 +184,13 @@ function buildRoutingLookups(catalog, viewer) {
         if (!canOpen(e)) { withheld++; continue; }
         if (e.domain === PERSON_ENTRY_DOMAIN) {
             person.set(e.name.toLowerCase(), e.name);
+            if (Array.isArray(e.work_domains)) personWork.set(e.name, e.work_domains);
+            for (const part of e.name.split(/\s+/)) {
+                if ([...part].length < PERSON_NAME_PART_MIN_CHARS || !/^\p{L}+$/u.test(part)) continue;
+                const key = part.toLowerCase();
+                if (!partOwners.has(key)) partOwners.set(key, new Set());
+                partOwners.get(key).add(e.name);
+            }
             continue;
         }
         entity.set(e.name.toLowerCase(), e.domain);
@@ -180,7 +203,13 @@ function buildRoutingLookups(catalog, viewer) {
             bridge.set(name.toLowerCase(), domains);
         }
     }
-    return { entity, person, short, bridge, withheld };
+    // A name part routes only if exactly one visible person has it ("Sangeetha"; a shared "David" never does).
+    const personPart = [];      // [{ pattern, name }]
+    for (const [part, names] of partOwners) {
+        if (names.size !== 1) continue;
+        personPart.push({ pattern: new RegExp(`(?<!\\p{L})${_escapeRegex(part)}(?!\\p{L})`, 'iu'), name: [...names][0] });
+    }
+    return { entity, person, personWork, personPart, short, bridge, withheld };
 }
 
 const STATIC_LOOKUPS = buildRoutingLookups(_loadStaticCatalog());
@@ -242,6 +271,31 @@ function getBridgeContext(question, lookups = STATIC_LOOKUPS) {
 function classifyNamedPerson(question, lookups = STATIC_LOOKUPS) {
     const match = _longestMatchLookup(question || '', lookups.person);
     return match ? match.value : null;
+}
+
+/**
+ * The subject of a question about a person's own work, or null (entity roles, §4.1 rule 1, S2-78).
+ * The person is named by full name or by a name part only they have, the question uses a work word
+ * ("written", "work", …), and the catalog says their work includes career content. A podcast guest
+ * (work only in podcast) or a catalog without `work_domains` never becomes a career subject.
+ */
+function _careerSubject(q, lookups) {
+    if (!SUBJECT_WORK_PATTERN || !SUBJECT_WORK_PATTERN.test(q)) return null;
+    const full = _longestMatchLookup(q, lookups.person);
+    const name = full ? full.value : ((lookups.personPart || []).find(p => p.pattern.test(q)) || {}).name;
+    if (!name) return null;
+    const work = (lookups.personWork && lookups.personWork.get(name)) || [];
+    return work.includes(CAREER_DOMAIN) ? name : null;
+}
+
+// True when a matched source title is used as a container: "the Graph database page", "in the BERT paper",
+// "on the Apache Iceberg website". Otherwise the title only names a topic.
+function _isContainerReference(q, matchedName) {
+    const name = _escapeRegex(matchedName);
+    const words = CONTAINER_REFERENCE_WORDS.map(_escapeRegex).join('|');
+    const after = words ? `${name}(?:'s)?\\s+(?:${words})\\b` : null;
+    const before = `\\b(?:${CONTAINER_PREPOSITIONS.join('|')})\\s+the\\s+${name}`;
+    return new RegExp(after ? `${before}|${after}` : before, 'i').test(q);
 }
 
 // ─── Phase S: Embedding similarity ───────────────────────────────────────────
@@ -398,12 +452,33 @@ async function classifyDomain(question, openaiClient, lookups = STATIC_LOOKUPS) 
                 return { domain: entity.domain, confident: true };
             }
         }
+        // Two domains named (S2-78): an explicit podcast/website scope plus a person's own career work
+        // ("Find podcasts and Sangeetha's work on graph databases") → cross_domain, not podcast alone.
+        // Document scope words are container-shaped ("in the document"), so they keep the document route.
+        if (![CAREER_DOMAIN, CROSS_DOMAIN, DOCUMENT_DOMAIN].includes(rx.domain_signal)) {
+            const subject = _careerSubject(q, lookups);
+            if (subject) {
+                console.log(`[CLASSIFY] phase=R(regex) domain=${rx.domain_signal} + career subject="${subject}" → ${CROSS_DOMAIN}`);
+                return { domain: CROSS_DOMAIN, confident: true };
+            }
+        }
         console.log(`[CLASSIFY] phase=R(regex) domain=${rx.domain_signal}`);
         return { domain: rx.domain_signal, confident: true };
     }
 
     // Phase E: Entity catalog — free, <1ms
     const entityMatch = _entityClassify(q, lookups);
+    // Entity roles (S2-78): a source title that only names the topic of a person's own work does not decide
+    // the domain — "What has Sangeetha written about graph databases?" is about her work, not the website
+    // "Graph database". A container reference ("the Graph database page") keeps the source route.
+    if (entityMatch && entityMatch.domain !== CAREER_DOMAIN && !entityMatch.short
+            && !_isContainerReference(q, entityMatch.matched)) {
+        const subject = _careerSubject(q, lookups);
+        if (subject) {
+            console.log(`[CLASSIFY] phase=E(entity) "${entityMatch.matched}" is a topic; career subject="${subject}" → ${CAREER_DOMAIN}`);
+            return { domain: CAREER_DOMAIN, confident: true };
+        }
+    }
     if (entityMatch) {
         console.log(`[CLASSIFY] phase=E(entity) domain=${entityMatch.domain} matched="${entityMatch.matched}"${entityMatch.short ? ' (short name)' : ''}`);
         return { domain: entityMatch.domain, confident: true };

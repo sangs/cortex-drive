@@ -130,6 +130,14 @@ const CASES = [
     // Zero-evidence removed word (2026-09-21 audit) — locks in that a query built entirely around
     // a removed word, with no other career signal present, honestly falls through to
     // confident=false rather than silently still matching something.
+    // S2-78 (2026-11-09): the plural "podcasts" was never matched by \bpodcast\b, so "Find podcasts …"
+    // fell through to a source-title match. Now an evidence-backed keyword.
+    {
+        query: 'Find podcasts about graph databases',
+        expected: 'podcast',
+        expectedConfident: true,
+        why: 'S2-78: plural "podcasts" must match Phase R like the singular'
+    },
     {
         query: 'Can you show me her resume',
         expected: 'career',

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-04T00:50:12.900034+00:00",
+  "generated_at": "2026-11-10T19:27:34.452411+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 49,
   "domains": {
@@ -378,126 +378,185 @@
       "domain": "person",
       "node_id": "1f560c27-ee2c-42e1-a395-08dc07cdffd6",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Dan Sotolongo",
       "domain": "person",
       "node_id": "a65c0781-4000-4e38-a659-b80c17a62dfd",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Daniel Weeks",
       "domain": "person",
       "node_id": "9d17b371-cb58-47ea-94ea-22b53fb1284b",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "website"
+      ]
     },
     {
       "name": "David Hughes",
       "domain": "person",
       "node_id": "49309b55-a7d6-422b-bc9a-b47c63f7b17d",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "David Soria Parra",
       "domain": "person",
       "node_id": "9ee2c1cf-4ce6-4718-91f3-a6258d90aa0d",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Edgar F. Codd",
       "domain": "person",
       "node_id": "a515d5e0-61b7-4a7d-997a-ba2d7b6aff7e",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "website"
+      ]
     },
     {
       "name": "Hannes M\u00fchleisen",
       "domain": "person",
       "node_id": "b18e95d2-3795-47c6-964b-45e150ee2e55",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Hendrycks and Gimpel",
       "domain": "person",
       "node_id": "ba2195dd-defd-4c95-a62c-6fe2ff266823",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "document"
+      ]
     },
     {
       "name": "Jacob Devlin",
       "domain": "person",
       "node_id": "cb56ca6a-7a24-4512-93cf-e6171ded5f64",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "document"
+      ]
     },
     {
       "name": "Jordi Mon Companys",
       "domain": "person",
       "node_id": "cea7591b-6b27-4f78-b714-6da545fa38d3",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Kenton Lee",
       "domain": "person",
       "node_id": "2fdfe3be-0ba7-4a52-90a2-a842533462a6",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "document"
+      ]
     },
     {
       "name": "Kristina Toutanova",
       "domain": "person",
       "node_id": "713246db-2967-469a-84ec-e36e82c0dfea",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "document"
+      ]
     },
     {
       "name": "Lee Atchison",
       "domain": "person",
       "node_id": "fb77241a-443a-4456-81f0-e78123ebd45e",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Mark Raasveldt",
       "domain": "person",
       "node_id": "fb267ef1-c75e-4740-83b5-1c3655d4ad23",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Ming-Wei Chang",
       "domain": "person",
       "node_id": "54fcc35f-5820-4384-ace0-89ac317402f6",
-      "tier": "org"
+      "tier": "org",
+      "work_domains": [
+        "document"
+      ]
     },
     {
       "name": "Prashanth Rao",
       "domain": "person",
       "node_id": "d022b003-1a8c-45d3-8d2e-a1575edd890a",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Ryan Blue",
       "domain": "person",
       "node_id": "67e74269-b1bf-48f1-8f86-f15916019c4e",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast",
+        "website"
+      ]
     },
     {
       "name": "Sangeetha Ramadurai",
       "domain": "person",
       "node_id": "87ecec17-df1d-4b84-baf6-1c8ea576abc0",
       "tier": "PUBLIC",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "career",
+        "podcast"
+      ]
     },
     {
       "name": "Tobias Macey",
       "domain": "person",
       "node_id": "d885ccda-d469-45f4-bd0b-19ff0e1ba995",
       "tier": "org",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "work_domains": [
+        "podcast"
+      ]
     },
     {
       "name": "Anthropic And Model Context Protocol (MCP) With David Soria Parra",

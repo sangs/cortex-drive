@@ -218,18 +218,28 @@ class ExpertTools:
         """M5-4 (design §1.3.5): in a single-domain search a shared-label node (Concept, Technology,
         Person, Topic, ReferenceLink) qualifies for the domain only if it is SYSTEM/PUBLIC or linked to a
         node whose label is exclusive to that domain. Returns "" for "all"/unknown domains (universal
-        discovery unchanged). Uses $shared_labels / $exclusive_labels — pass _provenance_params()."""
+        discovery unchanged). Uses $shared_labels / $exclusive_labels / $other_exclusive_labels — pass
+        _provenance_params().
+
+        Search exclusion rule (cross-domain design 2026-11-09 §4.4, Invariant 7): a node carrying a label
+        exclusive to another content domain and none of this domain's own is that domain's content and is
+        excluded here, at the query — e.g. a Publication+ThoughtLeadership item never enters a podcast
+        search. Same rule as bridges (classify_bridge_candidate). The gateway domain guard stays as the
+        safety net only."""
         from domain_registry import get_exclusive_labels
         if not get_exclusive_labels(domain):
             return ""
-        return (f"AND ({var}.tenant_id IN ['SYSTEM', 'PUBLIC']"
+        return (f"AND NOT (any(l IN labels({var}) WHERE l IN $other_exclusive_labels)"
+                f" AND NOT any(l IN labels({var}) WHERE l IN $exclusive_labels))"
+                f" AND ({var}.tenant_id IN ['SYSTEM', 'PUBLIC']"
                 f" OR NOT any(l IN labels({var}) WHERE l IN $shared_labels)"
                 f" OR EXISTS {{ MATCH ({var})--(prov) WHERE any(l IN labels(prov) WHERE l IN $exclusive_labels) }})")
 
     def _provenance_params(self, domain: str) -> dict:
-        from domain_registry import get_exclusive_labels, SHARED_ENTITY_LABELS
+        from domain_registry import get_exclusive_labels, get_other_exclusive_labels, SHARED_ENTITY_LABELS
         exclusive = get_exclusive_labels(domain)
-        return {"shared_labels": SHARED_ENTITY_LABELS, "exclusive_labels": exclusive} if exclusive else {}
+        return {"shared_labels": SHARED_ENTITY_LABELS, "exclusive_labels": exclusive,
+                "other_exclusive_labels": get_other_exclusive_labels(domain)} if exclusive else {}
 
     def _fragment_neighbor_aggregation(self, provenance: str = "") -> str:
         import json

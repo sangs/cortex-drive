@@ -96,6 +96,26 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                     entry["short_name"] = sn
             entries.append(entry)
 
+        # Persons' work domains (cross-domain design 2026-11-09 §4.1, S2-78): the routing domains of the
+        # titled nodes a person is directly linked to (roles, projects, talks → career; episodes → podcast).
+        # Lets the gateway send "What has <person> written about X?" to the domain their work lives in —
+        # career for the founder, not for a podcast guest. Same tiers as the entries; a routing hint only,
+        # answers stay filtered per user.
+        person_ids = [e["node_id"] for e in entries if e["domain"] == "person" and e["node_id"]]
+        if person_ids:
+            work_rows = session.run(
+                """
+                MATCH (p) WHERE p.node_id IN $ids
+                MATCH (p)--(w) WHERE w.tenant_id IN $tiers AND any(l IN labels(w) WHERE l IN $labels)
+                RETURN p.node_id AS id, collect(DISTINCT labels(w)) AS label_sets
+                """,
+                ids=person_ids, tiers=tiers, labels=sorted({l for ls in ROUTING_NAME_LABELS.values() for l in ls})).data()
+            work = {r["id"]: sorted({d for ls in r["label_sets"] if (d := _domain_for(set(ls))) and d != "person"})
+                    for r in work_rows}
+            for e in entries:
+                if e["domain"] == "person":
+                    e["work_domains"] = work.get(e["node_id"], [])
+
         # Bridge entities: Concept/Technology names connected to both website and podcast data. Matched
         # by name across the two MATCHes (the same concept can exist as a SYSTEM and an org node).
         website_rels = "|".join(BRIDGE_REL_TYPES_WEBSITE)

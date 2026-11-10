@@ -479,6 +479,18 @@ def get_source_domains(labels) -> list:
     return [d for d in CONTENT_DOMAINS if node_labels & set(get_exclusive_labels(d))]
 
 
+def get_other_exclusive_labels(domain: str) -> list:
+    """Labels exclusive to some *other* content domain (cross-domain design 2026-11-09 §4.4). A node carrying
+    one of these and none of `domain`'s own exclusive labels is the other domain's content: single-domain
+    search excludes it at the query (Invariant 7), and bridges do not count it as a `domain` target.
+    Empty for a non-content domain ("all", unknown)."""
+    domain = (domain or "").lower()
+    if domain not in CONTENT_DOMAINS:
+        return []
+    own = set(get_exclusive_labels(domain))
+    return sorted({l for d in CONTENT_DOMAINS if d != domain for l in get_exclusive_labels(d)} - own)
+
+
 def resolve_bridge_target_domains(requested, source_labels) -> list:
     """Turn a bridge request's domain list into concrete bridge-target domains.
     - "auto": every offered domain the source does not belong to (all of them for a source with
@@ -509,7 +521,7 @@ def classify_bridge_candidate(labels, domain: str) -> str:
         return "no"
     if node_labels & set(get_exclusive_labels(domain)):
         return "yes"
-    if any(node_labels & set(get_exclusive_labels(d)) for d in CONTENT_DOMAINS if d != domain):
+    if node_labels & set(get_other_exclusive_labels(domain)):
         return "no"
     target_labels = set(DOMAIN_MANIFESTS[domain]["node_set"]) | set(SHARED_ENTITY_LABELS)
     if not node_labels & target_labels:

@@ -52,8 +52,21 @@ module.exports = {
     // "the BERT paper's figure" → the document titled "BERT: Pre-training of…". Not Phase R keywords —
     // used only by Phase E with a source's short name, so "paper" alone never routes anything.
     documentReferenceWords: ['paper', 'document', 'report', 'deck', 'slides', 'whitepaper'],
+    // Entity roles (cross-domain design 2026-11-09 §4.1 rule 1, S2-78). A source title routes a question only
+    // as a *container*: next to one of these words ("the Graph database page", "in the BERT paper") or after
+    // "on/in/from the". Otherwise, when a person is named, the title is a topic, not a destination.
+    websiteReferenceWords: ['page', 'website', 'site', 'wiki', 'wikipedia'],
+    // Words that ask about a named person's own work. Used ONLY when the question also names a known person
+    // (never as Phase R keywords), so "written" alone still routes nothing. Evidence: S2-78 (daily log
+    // 2026-11-04 §4) — "What has Sangeetha written about graph databases?", "Find podcasts and Sangeetha's
+    // work on graph databases"; plus the evidence-backed career words authored/built/published/articles.
+    subjectWorkWords: ['written', 'wrote', 'writes', 'work', 'worked', 'authored', 'built', 'published', 'articles'],
+    // A named person is recognized by full name, or by a single name part of at least this many letters
+    // that belongs to exactly one visible person ("Sangeetha"; "David" is shared, so it never matches).
+    personNamePartMinChars: 4,
     singleWordAllowlist: [
         'podcast',      // user_queries.md Q1; live Episode content references "Data Engineering Podcast"; 13 real historical queries
+        'podcasts',     // S2-78 (daily log 2026-11-04 §4): "Find podcasts and Sangeetha's work on graph databases" — the plural is never matched by \bpodcast\b
         'career',       // user_queries.md Q3 canonical text + domain_signal; 23 real historical queries. KNOWN RISK (documented, not mitigated): could theoretically misroute a podcast-guest-career-content question into this domain (see verify_intent_classification.js's KNOWN_GAPS) — zero real occurrences found across 30 days of historical logs as of this audit. Revisit only if actually observed live, not preemptively — see the Phase R keyword-precision audit discussion for why speculative mitigation was rejected.
         'experience',   // live Category node named "Professional Experience"; Person bio content
         'education',    // live ProfessionalEducation/Institution ("MIT Professional Education"), Category "Education & Continuous Learning"
@@ -106,7 +119,7 @@ module.exports = {
             // guest (its only live match was a career-side ThoughtLeadership node — backwards as
             // a podcast trigger).
             patternSource: '\\bepisode|discuss',
-            keywords: ['podcast', 'talks about']
+            keywords: ['podcast', 'podcasts', 'talks about']
         },
         {
             domain_signal: 'cross_domain',
