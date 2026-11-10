@@ -165,6 +165,29 @@ BRIDGE_MIN_CANDIDATE_DEGREE = int(os.environ.get("BRIDGE_MIN_CANDIDATE_DEGREE", 
 # ranking key elsewhere (see the neighbor-ranking ORDER BY in get_cluster_context).
 BRIDGE_HUB_DEGREE_THRESHOLD = int(os.environ.get("BRIDGE_HUB_DEGREE_THRESHOLD", "25"))
 
+# ── Bridges v2: bounded search (cross-domain discovery design 2026-11-09 §4.3, Phase 1b) ─────────────
+# The search walks out from the clicked node one hop at a time inside Neo4j (never loading the whole
+# graph). Every reached node passes the caller's security clause (security on every hop). Degrees are
+# *structural visible* degrees: links that are not a similarity type (schema_guard.SIMILARITY_RELATIONSHIPS)
+# to neighbours the caller can see, counted only up to BRIDGE_HUB_DEGREE_THRESHOLD + 1 (cheap at any size).
+# A hub (above the threshold) and SYSTEM/PUBLIC vocabulary may end a path but are never walked through.
+BRIDGE_MAX_HOPS = int(os.environ.get("BRIDGE_MAX_HOPS", "3"))
+# One extra hop only when fewer than the requested number of bridges were found and time is left.
+BRIDGE_DEEPENING_MAX_HOPS = int(os.environ.get("BRIDGE_DEEPENING_MAX_HOPS", "4"))
+# Total time budget for one bridge search; a search that stops on the budget is labelled partial.
+BRIDGE_TIME_BUDGET_MS = int(os.environ.get("BRIDGE_TIME_BUDGET_MS", "1500"))
+# Bounds per hop: nodes expanded per hop, and neighbours read per expanded node.
+BRIDGE_FRONTIER_MAX = int(os.environ.get("BRIDGE_FRONTIER_MAX", "300"))
+BRIDGE_NEIGHBOURS_PER_NODE_MAX = int(os.environ.get("BRIDGE_NEIGHBOURS_PER_NODE_MAX", "60"))
+# Ranking: score = endpoint specificity × mean connector specificity × decay^(hops-1) × similarity penalty,
+# specificity = 1 / log(2 + structural visible degree). A path may use at most one similarity link.
+BRIDGE_LENGTH_DECAY = float(os.environ.get("BRIDGE_LENGTH_DECAY", "0.8"))
+BRIDGE_SIMILARITY_PENALTY = float(os.environ.get("BRIDGE_SIMILARITY_PENALTY", "0.5"))
+BRIDGE_MAX_SIMILARITY_LINKS_PER_PATH = 1
+# A path through a hub connector says little ("both link to the founder"): allowed as the last connector, ranked
+# well below paths through specific connectors (P4).
+BRIDGE_HUB_CONNECTOR_PENALTY = float(os.environ.get("BRIDGE_HUB_CONNECTOR_PENALTY", "0.25"))
+
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
 # BRIDGE_HUB_DEGREE_THRESHOLD above: a single generic technical word (e.g. "architecture") shared

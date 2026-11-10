@@ -225,6 +225,19 @@ CORTEX_DRIVE_RELATIONSHIPS = [
     'HAS_SOURCE', 'CONTAINS', 'BELONGS_TO_SOURCE'
 ]
 
+# Similarity links: added by jobs that join look-alike nodes, not stated facts (cross-domain design
+# 2026-11-09 §4.3, measured 2026-11-09: 76 % of all relationships). Bridges v2 leave them out of hub degree,
+# allow at most one per path and rank it lower. Checked against every relationship type in the graph
+# 2026-11-10; SIMILAR and IS_SIMILAR overlap only partly (2,022 of 5,704 SIMILAR rows), so both are listed.
+SIMILARITY_RELATIONSHIPS = ['IS_SIMILAR', 'SIMILAR', 'SEMANTICALLY_SIMILAR_KNN']
+
+# Own work: a person's link to their own work (authored a talk, held a role on a project, contributed, led,
+# is building). A bridge whose first hop from the source goes to a Person by one of these runs through the
+# source's own author/owner (P4, "the talk connects to its author"); such paths collapse into one
+# "same author" line (design 2026-11-09 §4.3). Listening/subscribing is not own work.
+OWN_WORK_RELATIONSHIPS = ['AUTHORED', 'CO_AUTHORED', 'CREATED', 'HELD_ROLE', 'CONTRIBUTED_TO', 'LED',
+                          'CURRENTLY_BUILDING']
+
 # Relationships permitted in neighbor-traversal Cypher queries (used in _fragment_neighbor_aggregation
 # and expand_node_topology). Add new relationship types here — never hardcode them in expert_tools.py.
 TRAVERSAL_RELATIONSHIPS = [

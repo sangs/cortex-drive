@@ -2466,11 +2466,11 @@ class ExpertTools:
         target_domain_labels = set(BRIDGE_ALL_DOMAINS_TARGET_LABELS)
         bridge_labels = get_bridge_label_string()
 
-        def _empty(summary: str, domains=None) -> str:
+        def _empty(summary: str, domains=None, search=None) -> str:
             return json.dumps({
                 "nodes": [], "virtual_links": [], "bridge_summary": summary, "confidence_tier": "none",
                 "target_domains": domains, "limit": limit, "max_limit": BRIDGE_MAX_LIMIT,
-                "show_more_step": BRIDGE_SHOW_MORE_STEP, "has_more": False,
+                "show_more_step": BRIDGE_SHOW_MORE_STEP, "has_more": False, "search": search,
             })
 
         # Bridge discovery is a READ-ONLY operation on content already visible to the user
@@ -2480,8 +2480,6 @@ class ExpertTools:
         # S2-42: the source lookup uses the same rule as every other read. It was tenant-wide for
         # everyone (guests included), which could return the name of a node the caller can't see.
         sec_source_read = self._get_security_clause("source")
-        sec_a = self._get_security_clause("a")
-        sec_b = self._get_security_clause("b")
 
         try:
             # Step 1: Resolve the source node. Exact match preferred; CONTAINS fallback for a
@@ -2501,7 +2499,8 @@ class ExpertTools:
                    OR source.name CONTAINS $source_node_name)
               AND ({sec_source_read})
             RETURN elementId(source) AS source_eid, coalesce(source.name, source.title) AS source_name,
-                   labels(source) AS source_labels,
+                   labels(source) AS source_labels, source.node_id AS source_node_ref,
+                   source.description AS source_description,
                    CASE WHEN source.node_id = $source_node_id
                           OR elementId(source) = $source_node_id THEN 0
                         WHEN toLower(source.name) = toLower($source_node_name) THEN 1
@@ -2530,49 +2529,38 @@ class ExpertTools:
                 if not domains:
                     return _empty(f"No bridge target domain available for {requested_domains}.", [])
 
-            # Step 2: Fetch the full security/domain-authorized adjacency. No relationship-type
-            # filter at all — every type is eligible, which is the whole point of this redesign
-            # (the old hardcoded whitelist missed WORKED_AT/CONTRIBUTED_TO, among others).
-            # Bridge-label nodes are excluded on BOTH endpoints of every edge, so they can never
-            # enter the adjacency list — stronger than an endpoint-only post-filter and avoids
-            # the AP-19 failure mode (a bridge-label node blocking all downstream traversal) by
-            # construction rather than by a post-hoc check. sec_a/sec_b already reference
-            # $tenant_id exactly when _security_params() supplies it (both derive from the same
-            # _get_security_clause branching), so no extra guest-mode kwarg is needed here.
-            edge_query = f"""
-            MATCH (a)-[r]-(b)
-            WHERE NOT a:{bridge_labels} AND NOT b:{bridge_labels}
-              AND ({sec_a}) AND ({sec_b})
-            RETURN elementId(a) AS a_id, coalesce(a.name, a.title) AS a_name, labels(a) AS a_labels,
-                   a.node_id AS a_node_id, a.description AS a_description,
-                   elementId(b) AS b_id, coalesce(b.name, b.title) AS b_name, labels(b) AS b_labels,
-                   b.node_id AS b_node_id, b.description AS b_description,
-                   type(r) AS rel_type,
-                   COUNT {{ (a)--() }} AS deg_a, COUNT {{ (b)--() }} AS deg_b
-            """
-            edge_result = self._exec_query(edge_query, **self._security_params())
+            # Step 2 (bridges v2, design 2026-11-09 §4.3): bounded search out from the source inside
+            # Neo4j — never the whole graph. Security on every hop; bridge-label nodes never enter
+            # (AP-19); hubs and SYSTEM/PUBLIC vocabulary end paths but are not walked through; every
+            # relationship type is eligible except that a path may use at most one similarity link.
+            import time
+            from domain_registry import (BRIDGE_TIME_BUDGET_MS, classify_bridge_candidate)
+            started = time.monotonic()
+            source_labels = source_row["source_labels"] or []
+            source_info = {
+                "name": source_name, "type": source_labels[0] if source_labels else "Unknown",
+                "labels": source_labels, "node_id": source_row["source_node_ref"],
+                "description": source_row["source_description"] or "", "degree": 0,
+                "tenant": None, "is_hub": False, "terminal": False,
+            }
 
-            adjacency: dict = {}
-            node_info: dict = {}
+            def _enough(info: dict) -> bool:
+                """Enough possible targets reached to stop at BRIDGE_MAX_HOPS (cheap, labels only)."""
+                count = 0
+                for nid, i in info.items():
+                    if nid == source_eid:
+                        continue
+                    if domains is None:
+                        hit = bool(target_domain_labels & set(i["labels"]))
+                    else:
+                        hit = any(classify_bridge_candidate(i["labels"], d) != "no" for d in domains)
+                    count += hit
+                return count > limit
 
-            def _remember(nid, name, labels_, node_id_, description_, degree_):
-                if nid not in node_info:
-                    node_info[nid] = {
-                        "name": name,
-                        "type": labels_[0] if labels_ else "Unknown",
-                        "labels": labels_ or [],
-                        "node_id": node_id_,
-                        "description": description_ or "",
-                        "degree": degree_ or 0,
-                    }
-
-            for rec in edge_result.records:
-                a_id, b_id, rel_type = rec["a_id"], rec["b_id"], rec["rel_type"]
-                deg_a, deg_b = rec["deg_a"], rec["deg_b"]
-                _remember(a_id, rec["a_name"], rec["a_labels"], rec["a_node_id"], rec["a_description"], deg_a)
-                _remember(b_id, rec["b_name"], rec["b_labels"], rec["b_node_id"], rec["b_description"], deg_b)
-                adjacency.setdefault(a_id, []).append((b_id, rel_type, deg_b))
-                adjacency.setdefault(b_id, []).append((a_id, rel_type, deg_a))
+            search = self._bounded_bridge_search(
+                source_eid, source_info, _enough, started + BRIDGE_TIME_BUDGET_MS / 1000.0)
+            node_info = search["node_info"]
+            bridge_parent = search["parent"]
 
             # Label-matched targets: any node in the authorized subgraph whose labels intersect
             # the target domain, excluding the source itself (matches labels() in full, not just
@@ -2682,18 +2670,39 @@ class ExpertTools:
             if not candidate_targets:
                 return _empty(f"No sufficiently-connected candidate nodes found in target domain '{domain_text}'.", domains)
 
-            # Several domains: explore every candidate so each domain can get its share of slots.
-            # One domain (or "all"): one target past the limit, only to tell whether more exist —
-            # ranking still uses the first `limit` found, exactly as before.
             multi_domain = domains is not None and len(domains) > 1
-            search_limit = len(candidate_targets) if multi_domain else limit + 1
-            found = self._dijkstra_to_targets(
-                adjacency, source_eid, candidate_targets, search_limit,
-                node_info=node_info, relevance_keywords=relevance_keywords, must_include=must_include,
-            )
+
+            # Paths from the bounded search; a path that starts at the source's own author (a Person
+            # reached by an own-work link: authored, held a role, contributed…) collapses into one "same author" line (P4).
+            from schema_guard import OWN_WORK_RELATIONSHIPS
+            paths: dict = {}
+            same_author: list = []
+            for tid in candidate_targets:
+                if tid not in bridge_parent:
+                    continue
+                path, rels, uses_sim = self._bridge_path(bridge_parent, tid)
+                first = node_info.get(path[1], {})
+                if (rels[0] in OWN_WORK_RELATIONSHIPS and "Person" in first.get("labels", [])
+                        and tid != must_include_id):
+                    if first.get("name") and first["name"] not in same_author:
+                        same_author.append(first["name"])
+                    continue
+                paths[tid] = (path, rels, uses_sim)
+            found = self._rank_bridge_paths(paths, node_info)
+            search_meta = {"hops": search["hops"], "partial": search["partial"],
+                           "visited": search["visited"], "same_author": same_author,
+                           "ms": round((time.monotonic() - started) * 1000)}
 
             if not found:
-                return _empty(f"No path found from '{source_name}' to any node in target domain '{domain_text}' within the authorized subgraph.", domains)
+                if same_author:
+                    summary = (f"'{source_name}' connects to other domains only through its own author or owner "
+                               f"({', '.join(same_author)}), which is not shown as a bridge.")
+                else:
+                    summary = (f"No path found from '{source_name}' to any node in target domain '{domain_text}' "
+                               f"within the authorized subgraph.")
+                if search_meta["partial"]:
+                    summary += " Partial result: the search stopped at its time limit."
+                return _empty(summary, domains, search_meta)
 
             # Relevance tiering (2026-08-29) — pure path weight rewards structural proximity, not
             # topical relevance: a highly-connected source (e.g. a Person node) has many one-hop
@@ -2868,9 +2877,14 @@ class ExpertTools:
             # are "taxonomy_expanded". Kept as the same three enum values for UX compatibility —
             # semantics now reflect path quality rather than IS_A/SUB_TOPIC_OF expansion (no
             # downstream gateway/UI code branches on this value beyond passing it through).
-            best_weight, best_path, _ = found[ranked[0][0]]
-            best_hops = len(best_path) - 1
-            confidence_tier = "explicit" if (best_hops <= 2 and best_weight <= best_hops * 2) else "taxonomy_expanded"
+            # Bridges v2: weights are rank positions now, so the tier is judged on the best path itself —
+            # explicit = at most 2 hops, no similarity link, no hub connector.
+            from schema_guard import SIMILARITY_RELATIONSHIPS as _SIM
+            best_tid = ranked[0][0]
+            _, best_path, best_rels = found[best_tid]
+            explicit = (len(best_rels) <= 2 and not any(r in _SIM for r in best_rels)
+                        and not any(node_info.get(c, {}).get("is_hub") for c in best_path[1:-1]))
+            confidence_tier = "explicit" if explicit else "taxonomy_expanded"
 
             from domain_registry import BRIDGE_SUMMARY_MAX_CLAUSES, get_domain_display_name
 
@@ -2898,6 +2912,11 @@ class ExpertTools:
                 for target_eid, (weight, path, rels) in extra_targets
             ]
             bridge_summary = f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."
+            if same_author:
+                bridge_summary += (f" Paths through its own author or owner ({', '.join(same_author)}) are not "
+                                   f"counted as bridges.")
+            if search_meta["partial"]:
+                bridge_summary += " Partial result: the search stopped at its time limit."
             if target_hint_unresolved:
                 bridge_summary += f" Note: requested target '{target_node_name}' was not found in domain '{target_domain}'."
             if dropped_structural_count > 0:
@@ -2916,12 +2935,162 @@ class ExpertTools:
                 "max_limit": BRIDGE_MAX_LIMIT,
                 "show_more_step": BRIDGE_SHOW_MORE_STEP,
                 "has_more": has_more,
+                # Bridges v2: hops searched, stopped on the time budget (partial), nodes reached, and
+                # authors whose paths were collapsed into one "same author" line (design §4.3).
+                "search": search_meta,
             }, indent=2)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             return json.dumps({"error": str(e)})
+
+    def _bridge_bfs_layer(self, frontier: list, seen: list) -> list:
+        """One hop of the bounded bridge search (design 2026-11-09 §4.3): every neighbour of the frontier
+        nodes that the caller may see (security on every hop), not yet reached, at most
+        BRIDGE_NEIGHBOURS_PER_NODE_MAX per node; a path that already used a similarity link may not use
+        another. Returns each neighbour with its structural visible degree, counted only up to
+        BRIDGE_HUB_DEGREE_THRESHOLD + 1 (a node with 5,000 links costs the same as one with 26)."""
+        from domain_registry import (BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_NEIGHBOURS_PER_NODE_MAX,
+                                     get_bridge_label_string)
+        from schema_guard import SIMILARITY_RELATIONSHIPS
+        bridge_labels = get_bridge_label_string()
+        query = f"""
+        UNWIND $frontier AS f
+        MATCH (a) WHERE elementId(a) = f.id
+        CALL (a, f) {{
+            MATCH (a)-[r]-(b)
+            WHERE NOT b:{bridge_labels} AND ({self._get_security_clause("b")})
+              AND NOT elementId(b) IN $seen
+              AND (NOT f.sim_used OR NOT type(r) IN $similarity_types)
+            RETURN r, b LIMIT $per_node
+        }}
+        WITH f, r, b
+        CALL (b) {{
+            MATCH (b)-[r2]-(x)
+            WHERE NOT type(r2) IN $similarity_types AND NOT x:{bridge_labels} AND ({self._get_security_clause("x")})
+            WITH x LIMIT $degree_cap
+            RETURN count(x) AS sdeg
+        }}
+        RETURN f.id AS parent, elementId(b) AS id, type(r) AS rel, type(r) IN $similarity_types AS is_sim,
+               labels(b) AS labels, coalesce(b.name, b.title) AS name, b.node_id AS node_id,
+               b.description AS description, b.tenant_id AS tenant, sdeg
+        """
+        result = self._exec_query(
+            query, **self._security_params(), frontier=frontier, seen=seen,
+            similarity_types=SIMILARITY_RELATIONSHIPS, per_node=BRIDGE_NEIGHBOURS_PER_NODE_MAX,
+            degree_cap=BRIDGE_HUB_DEGREE_THRESHOLD + 1,
+        )
+        return [dict(r) for r in result.records]
+
+    def _bounded_bridge_search(self, source_eid: str, source_info: dict, enough, deadline: float) -> dict:
+        """Bridges v2 search (design 2026-11-09 §4.3): walk out from the source one hop at a time inside
+        Neo4j. A hub (structural visible degree above BRIDGE_HUB_DEGREE_THRESHOLD) may be an endpoint
+        or the last connector, never walked through; SYSTEM/PUBLIC vocabulary is an endpoint only; the
+        source is always expanded. Stops at
+        BRIDGE_MAX_HOPS, or one hop later (BRIDGE_DEEPENING_MAX_HOPS) when `enough(node_info)` is false,
+        or at the time budget (`partial`). Read-only (Invariant 5).
+
+        Returns {"node_info", "parent": {id: (parent_id, rel, path_uses_similarity, hops)}, "hops",
+        "partial", "visited"}. Within one hop a node reached by a stated relationship is preferred to one
+        reached by a similarity link."""
+        import time
+        from domain_registry import (BRIDGE_DEEPENING_MAX_HOPS, BRIDGE_FRONTIER_MAX,
+                                     BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_MAX_HOPS)
+        from schema_guard import SEED_BUILTIN_VOCABULARY_LABELS
+        vocab = set(SEED_BUILTIN_VOCABULARY_LABELS)
+        global_tiers = {"SYSTEM", "PUBLIC"}
+
+        node_info = {source_eid: source_info}
+        parent: dict = {}
+        frontier = [{"id": source_eid, "sim_used": False, "last": False}]
+        hops, partial = 0, False
+        while frontier:
+            if hops >= 1 and time.monotonic() > deadline:   # the first hop always runs
+                partial = True
+                break
+            if hops >= BRIDGE_MAX_HOPS and (hops >= BRIDGE_DEEPENING_MAX_HOPS or enough(node_info)):
+                break
+            hops += 1
+            sim_used_of = {f["id"]: f["sim_used"] for f in frontier}
+            last_of = {f["id"]: f["last"] for f in frontier}
+            rows = self._bridge_bfs_layer(frontier, list(node_info))
+            reached: dict = {}
+            for r in rows:
+                path_sim = sim_used_of.get(r["parent"], False) or r["is_sim"]
+                best = reached.get(r["id"])
+                if best is None or (best[2] and not path_sim):   # prefer a stated-fact path
+                    reached[r["id"]] = (r["parent"], r["rel"], path_sim, r)
+            next_frontier = []
+            for nid, (pid, rel, path_sim, r) in reached.items():
+                labels = r["labels"] or []
+                node_info[nid] = {
+                    "name": r["name"], "type": labels[0] if labels else "Unknown", "labels": labels,
+                    "node_id": r["node_id"], "description": r["description"] or "", "degree": r["sdeg"] or 0,
+                    "tenant": r["tenant"],
+                }
+                parent[nid] = (pid, rel, path_sim, hops)
+                is_hub = (r["sdeg"] or 0) > BRIDGE_HUB_DEGREE_THRESHOLD
+                is_vocab = r["tenant"] in global_tiers and bool(set(labels) & vocab)
+                node_info[nid]["is_hub"] = is_hub
+                node_info[nid]["terminal"] = is_vocab
+                # Reached through a hub: an endpoint only. Vocabulary: an endpoint only (never scan
+                # every organization's links). Hub: may be the last connector (one more step, endpoints
+                # only), never walked through.
+                if last_of.get(pid) or is_vocab:
+                    continue
+                next_frontier.append((r["sdeg"] or 0, {"id": nid, "sim_used": path_sim, "last": is_hub}))
+            # Bound each hop: least-connected nodes first (the most specific connectors).
+            next_frontier.sort(key=lambda x: x[0])
+            frontier = [f for _, f in next_frontier[:BRIDGE_FRONTIER_MAX]]
+        return {"node_info": node_info, "parent": parent, "hops": hops, "partial": partial,
+                "visited": len(node_info)}
+
+    @staticmethod
+    def _bridge_path(parent: dict, target: str) -> tuple:
+        """(path node ids source→target, relationship types, uses a similarity link) from parent pointers."""
+        path, rels, cur = [target], [], target
+        uses_sim = parent[target][2]
+        while cur in parent:
+            pid, rel, _, _ = parent[cur]
+            path.append(pid)
+            rels.append(rel)
+            cur = pid
+        return path[::-1], rels[::-1], uses_sim
+
+    @staticmethod
+    def _rank_bridge_paths(paths: dict, node_info: dict) -> dict:
+        """Bridges v2 ranking (design §4.3): score = endpoint specificity × mean connector specificity ×
+        BRIDGE_LENGTH_DECAY^(hops-1) × BRIDGE_SIMILARITY_PENALTY (if a similarity link is used) ×
+        BRIDGE_HUB_CONNECTOR_PENALTY (if a connector is a hub), with
+        specificity = 1 / log(2 + structural visible degree). Then greedy diversification: a bridge whose
+        connectors were already used by a better one moves behind every bridge with fresh connectors.
+        `paths` = {target: (path, rels, uses_sim)}. Returns {target: (weight, path, rels)} in rank order,
+        weight ascending (lower = better, as the selection code expects)."""
+        import math
+        from domain_registry import BRIDGE_HUB_CONNECTOR_PENALTY, BRIDGE_LENGTH_DECAY, BRIDGE_SIMILARITY_PENALTY
+
+        def spec(nid):
+            return 1.0 / math.log(2 + (node_info.get(nid, {}).get("degree") or 0))
+
+        scored = []
+        for tid, (path, rels, uses_sim) in paths.items():
+            connectors = path[1:-1]
+            conn = sum(spec(c) for c in connectors) / len(connectors) if connectors else 1.0
+            score = spec(tid) * conn * (BRIDGE_LENGTH_DECAY ** (len(rels) - 1))
+            if uses_sim:
+                score *= BRIDGE_SIMILARITY_PENALTY
+            if any(node_info.get(c, {}).get("is_hub") for c in connectors):
+                score *= BRIDGE_HUB_CONNECTOR_PENALTY
+            scored.append((score, tid, path, rels))
+        scored.sort(key=lambda s: -s[0])
+        fresh, repeated, used = [], [], set()
+        for item in scored:
+            connectors = set(item[2][1:-1])
+            (repeated if connectors & used else fresh).append(item)
+            used |= connectors
+        ordered = fresh + repeated
+        return {tid: (rank + 1 - score, path, rels) for rank, (score, tid, path, rels) in enumerate(ordered)}
 
     def _bridge_domain_candidates(self, node_info: dict, source_eid: str, domains: list) -> dict:
         """AP-29 (bridge variant, domain_registry.classify_bridge_candidate): {element_id: domain} for
@@ -3066,96 +3235,6 @@ class ExpertTools:
         if not text or not keywords:
             return False
         return any(re.search(rf"\b{re.escape(kw)}\b", text) for kw in keywords)
-
-    @staticmethod
-    def _dijkstra_to_targets(
-        adjacency: dict,
-        source_id: str,
-        targets: set,
-        limit: int,
-        node_info: Optional[dict] = None,
-        relevance_keywords: Optional[set] = None,
-        must_include: Optional[set] = None,
-    ) -> dict:
-        """Single-source Dijkstra with a logarithmic hub-degree edge penalty, over an
-        already-fetched adjacency dict of {node_id: [(neighbor_id, rel_type, neighbor_degree)]}.
-
-        When relevance_keywords is given, a hop into a node whose name OR description (via
-        node_info) literally contains one of those keywords gets its weight multiplied by
-        domain_registry.BRIDGE_RELEVANCE_DISCOUNT — makes ranking query-aware without needing a
-        caller to already know the target (2026-07-23). Description is included (2026-08-29) since
-        it's already fetched for every node in the traversal and often carries the actual topical
-        language that a short name doesn't (e.g. a Technology node named "Governance" is an exact
-        match, but a Project's relevance to "AI governance" usually only shows up in its
-        description).
-
-        Stops once `limit` targets have been settled AND every id in `must_include` (if any) has
-        been found — Dijkstra pops nodes in non-decreasing distance order, so the first `limit`
-        targets popped are already the `limit` closest by weight; must_include just keeps the
-        search running past that point until a specific known target is also settled (or proven
-        unreachable), so a caller-supplied target hint isn't silently dropped for ranking outside
-        the top-`limit` (2026-07-23).
-
-        Returns {target_id: (total_weight, path_node_ids, path_rel_types)}.
-        """
-        import heapq
-        import math
-
-        from domain_registry import BRIDGE_RELEVANCE_DISCOUNT
-
-        node_info = node_info or {}
-        relevance_keywords = relevance_keywords or set()
-        must_include = must_include or set()
-
-        def edge_weight(neighbor_id: str, neighbor_degree: int) -> float:
-            w = 1 + math.log(1 + neighbor_degree)
-            if relevance_keywords:
-                info = node_info.get(neighbor_id, {})
-                text = f"{info.get('name') or ''} {info.get('description') or ''}".lower()
-                if ExpertTools._keyword_hit(text, relevance_keywords):
-                    w *= BRIDGE_RELEVANCE_DISCOUNT
-            return w
-
-        dist = {source_id: 0.0}
-        prev: dict = {}
-        visited: set = set()
-        heap = [(0.0, source_id)]
-        found: dict = {}
-        remaining = set(targets)
-
-        while heap:
-            d, node = heapq.heappop(heap)
-            if node in visited:
-                continue
-            visited.add(node)
-
-            if node in remaining:
-                path = [node]
-                rels = []
-                cur = node
-                while cur in prev:
-                    p, rel_type = prev[cur]
-                    path.append(p)
-                    rels.append(rel_type)
-                    cur = p
-                path.reverse()
-                rels.reverse()
-                found[node] = (d, path, rels)
-                remaining.discard(node)
-                still_need_must_include = bool(must_include - found.keys())
-                if (len(found) >= limit and not still_need_must_include) or not remaining:
-                    break
-
-            for neighbor, rel_type, deg_neighbor in adjacency.get(node, []):
-                if neighbor in visited:
-                    continue
-                nd = d + edge_weight(neighbor, deg_neighbor)
-                if nd < dist.get(neighbor, float("inf")):
-                    dist[neighbor] = nd
-                    prev[neighbor] = (node, rel_type)
-                    heapq.heappush(heap, (nd, neighbor))
-
-        return found
 
     def _resolve_context_node(self, node_id: Optional[str], node_name: Optional[str]) -> Optional[dict]:
         """Resolve a single node for infer_context_on_demand. Accepts both n.node_id (UUID,
