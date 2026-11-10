@@ -853,25 +853,32 @@ async def connect_knowledge_on_demand(
     user_id = user_id_var.get() or ""
     guest_anchor = guest_share_anchor_var.get() or ""
     allowed_ids = await _get_current_allowed_ids()
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    # Off the event loop (asyncio.to_thread, as for ingestion): the Neo4j calls are blocking, and the Bento
+    # panel sends one call per domain in parallel (design 2026-11-09 §4.3) — on the event loop they ran one
+    # after another (measured in production 2026-11-10: 4 parallel calls 4.4 s vs 1.3 s each).
+    def _bridges() -> str:
+        expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor,
+                             allowed_ids=allowed_ids)
+        try:
+            return expert.connect_knowledge_on_demand(
+                source_node_id=source_node_id,
+                source_node_name=source_node_name,
+                target_domain=target_domain,
+                min_anchors=min_anchors,
+                limit=limit,
+                target_node_name=target_node_name,
+                query_context=query_context,
+                target_domains=target_domains,
+                domain_filter=domain_filter,
+                visible_node_ids=visible_node_ids,
+            )
+        finally:
+            expert.close()
     try:
-        return expert.connect_knowledge_on_demand(
-            source_node_id=source_node_id,
-            source_node_name=source_node_name,
-            target_domain=target_domain,
-            min_anchors=min_anchors,
-            limit=limit,
-            target_node_name=target_node_name,
-            query_context=query_context,
-            target_domains=target_domains,
-            domain_filter=domain_filter,
-            visible_node_ids=visible_node_ids,
-        )
+        return await asyncio.to_thread(_bridges)
     except Exception as e:
         print(f"Error in connect_knowledge_on_demand: {e}")
         return json.dumps({"error": str(e)})
-    finally:
-        expert.close()
 
 @mcp.tool()
 async def list_bridge_domains() -> str:
