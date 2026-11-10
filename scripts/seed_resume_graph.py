@@ -694,21 +694,16 @@ TOOL USAGE:
 
     # 20. TECHNOLOGY MAPPING: EDUCATION & CERTS
     """
+    # The InfoQ certification carries no topic tags of its own (vocabulary review 2026-11-10): it is
+    # AWARDED_FOR the InfoQ article, which DISCUSSES the topics (§16), so they are reached through it.
     WITH {
-        mit: ["Logistic Regression", "Decision Trees", "Random Forest", "Bagging", "Boosting", "Hyper-parameter Tuning", "EDA", "Data Visualization", "Statistics", "Python", "ML"],
-        infoq_cert: ["Software architecture", "AI", "Platform Engineering", "Governance", "Explainability"]
+        mit: ["Logistic Regression", "Decision Trees", "Random Forest", "Bagging", "Boosting", "Hyper-parameter Tuning", "EDA", "Data Visualization", "Statistics", "Python", "ML"]
     } as tech_map
-    MATCH (e1:Certification) WHERE e1.name CONTAINS "InfoQ Certified Architect"
     MATCH (e2:ProfessionalEducation) WHERE e2.name CONTAINS "MIT: Applied Data Science"
-    
+
     UNWIND tech_map.mit as t1
     MERGE (tool1:Technology {name: t1})
     MERGE (e2)-[:USES_TOOL]->(tool1)
-    
-    WITH tech_map, e1
-    UNWIND tech_map.infoq_cert as t2
-    MERGE (tool2:Technology {name: t2})
-    MERGE (e1)-[:USES_TOOL]->(tool2)
     """
 ]
 
