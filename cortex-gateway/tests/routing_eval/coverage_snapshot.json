@@ -1,0 +1,189 @@
+{
+ "coverage": {
+  "acid transactions": [
+   "podcast",
+   "website"
+  ],
+  "ai agent": [
+   "career"
+  ],
+  "anthropic": [
+   "podcast"
+  ],
+  "apache iceberg": [
+   "podcast",
+   "website"
+  ],
+  "apache spark": [
+   "podcast",
+   "website"
+  ],
+  "aws lambda": [
+   "career"
+  ],
+  "baml": [
+   "career",
+   "podcast"
+  ],
+  "bert": [
+   "document",
+   "podcast"
+  ],
+  "blockchain": [],
+  "c++": [],
+  "cassandra": [
+   "career"
+  ],
+  "data lake": [
+   "podcast",
+   "website"
+  ],
+  "datamesh": [
+   "career"
+  ],
+  "delta lake": [
+   "podcast"
+  ],
+  "duckdb": [
+   "podcast"
+  ],
+  "ducklake": [
+   "podcast"
+  ],
+  "elasticsearch": [
+   "career"
+  ],
+  "explainability": [
+   "career",
+   "podcast"
+  ],
+  "federated identity": [
+   "career"
+  ],
+  "fine-tuning": [
+   "document"
+  ],
+  "glue benchmark": [
+   "document"
+  ],
+  "governance": [
+   "career",
+   "podcast"
+  ],
+  "graph database": [
+   "career",
+   "podcast",
+   "website"
+  ],
+  "graph databases": [
+   "career",
+   "podcast",
+   "website"
+  ],
+  "hive": [
+   "podcast",
+   "website"
+  ],
+  "java": [
+   "career",
+   "podcast",
+   "website"
+  ],
+  "kafka": [
+   "career",
+   "podcast"
+  ],
+  "knowledge graph": [
+   "career",
+   "podcast"
+  ],
+  "kotlin": [
+   "podcast"
+  ],
+  "kubernetes": [
+   "career",
+   "podcast"
+  ],
+  "lakehouse": [
+   "career",
+   "podcast"
+  ],
+  "langgraph": [
+   "career",
+   "podcast"
+  ],
+  "mcp": [
+   "career",
+   "podcast"
+  ],
+  "microservices": [
+   "career"
+  ],
+  "model context protocol": [
+   "podcast"
+  ],
+  "neo4j": [
+   "career",
+   "podcast"
+  ],
+  "openai": [
+   "career",
+   "document",
+   "podcast"
+  ],
+  "presto": [
+   "podcast",
+   "website"
+  ],
+  "python": [
+   "career",
+   "podcast",
+   "website"
+  ],
+  "quantum computing": [],
+  "rag": [
+   "career",
+   "podcast"
+  ],
+  "react": [
+   "career"
+  ],
+  "retrieval-augmented generation": [
+   "career",
+   "podcast"
+  ],
+  "rust": [
+   "podcast"
+  ],
+  "self-attention": [
+   "document"
+  ],
+  "semantic search": [
+   "career"
+  ],
+  "snowflake": [
+   "career",
+   "podcast"
+  ],
+  "terraform": [
+   "career"
+  ],
+  "transformers": [
+   "document",
+   "podcast"
+  ],
+  "trino": [
+   "podcast",
+   "website"
+  ],
+  "vector search": [
+   "career",
+   "podcast"
+  ],
+  "zero trust": [
+   "career"
+  ]
+ },
+ "generated_at": "2026-11-10T21:40:28.852176+00:00",
+ "viewer": "owner (internal call)"
+}

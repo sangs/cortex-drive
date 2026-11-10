@@ -446,6 +446,9 @@ SHARED_ENTITY_LABELS = list(DOCUMENT_ENTITY_LABELS)
 # The content domains whose node sets are compared to find each one's exclusive labels. "structural" and
 # "federated" are views over other domains' labels, not content domains, so they're left out.
 CONTENT_DOMAINS = ["professional", "podcast", "website", "document"]
+# Routing v2 coverage check (cross-domain design 2026-11-09 §4.1 rule 3): shared vocabulary labels whose name, when a
+# content node links to one, counts as that content covering the topic.
+COVERAGE_TOPIC_LABELS = ["Technology", "Concept", "Topic"]
 # Never evidence of a domain: built-in vocabulary and the section headers (SYSTEM/PUBLIC landmarks).
 _NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
 

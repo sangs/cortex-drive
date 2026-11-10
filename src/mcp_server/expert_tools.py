@@ -3193,6 +3193,48 @@ class ExpertTools:
         order = {tid: i for i, (tid, _) in enumerate(items)}
         return sorted(chosen, key=lambda kv: order[kv[0]])
 
+    def domain_coverage(self, terms: list, domains: Optional[list] = None) -> dict:
+        """Routing v2 coverage check (cross-domain discovery design 2026-11-09 §4.1 rule 3): for each content
+        domain, does the caller see anything on these terms? A domain covers a term when a visible node with a
+        label exclusive to that domain mentions it (name, title, description or text) or links directly to a
+        visible Technology/Concept/Topic whose name contains it ("zero trust" → "Zero Trust Architecture"). One `LIMIT 1` query per domain, security clause on every
+        node (never reveals what the caller cannot open). Matching is case-insensitive, whole words, and tolerant
+        of a plural "s". Text is scanned per domain (fine at today's size; a full-text index is the scale path). Returns {domain: bool} for the enabled bridge-target domains (or the given ones)."""
+        import re
+        from domain_registry import COVERAGE_TOPIC_LABELS, get_bridge_target_domains, get_exclusive_labels
+        variants = set()
+        for t in terms or []:
+            t = str(t).strip().lower()
+            if len(t) < 2:
+                continue
+            variants |= {t, t[:-1] if t.endswith("s") else t + "s"}
+        domains = [d for d in (domains or get_bridge_target_domains()) if d in get_bridge_target_domains()]
+        coverage = {d: False for d in domains}
+        if not variants:
+            return coverage
+        topic_labels = "|".join(COVERAGE_TOPIC_LABELS)
+        # Whole words only: "bert" must not match "Robert" (case-insensitive, across lines).
+        patterns = [f"(?is).*\\b{re.escape(v)}\\b.*" for v in sorted(variants)]
+        for d in domains:
+            labels = [l for l in get_exclusive_labels(d) if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", l)]
+            if not labels:
+                continue
+            result = self._exec_query(
+                f"""
+                MATCH (n:{'|'.join(labels)})
+                WHERE ({self._get_security_clause("n")})
+                  AND (any(p IN $patterns WHERE coalesce(n.name, n.title, '') =~ p
+                                              OR coalesce(n.description, '') =~ p
+                                              OR coalesce(n.text, '') =~ p)
+                       OR EXISTS {{ MATCH (n)--(t:{topic_labels})
+                                    WHERE any(p IN $patterns WHERE coalesce(t.name, '') =~ p)
+                                      AND ({self._get_security_clause("t")}) }})
+                RETURN 1 AS hit LIMIT 1
+                """,
+                **self._security_params(), patterns=patterns)
+            coverage[d] = bool(result.records)
+        return coverage
+
     def list_bridge_domains(self) -> str:
         """Bridge-target domains for the Bento panel's domain chips (design 2026-11-03 §1.2): id,
         display name, and whether the caller can see any node in the domain (yes/no, not counts)."""

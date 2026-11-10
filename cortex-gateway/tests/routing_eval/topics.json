@@ -1,0 +1,12 @@
+{
+ "_comment": "Topics used by routing_eval_set.json. Coverage per topic is snapshotted from the live graph by scripts/generate_routing_coverage_snapshot.py (owner view).",
+ "topics": [
+  "graph databases", "graph database", "knowledge graph", "neo4j", "apache iceberg", "trino", "presto", "hive",
+  "kafka", "kubernetes", "python", "java", "snowflake", "aws lambda", "datamesh", "terraform", "cassandra",
+  "elasticsearch", "mcp", "model context protocol", "langgraph", "ai agent", "anthropic", "openai", "duckdb",
+  "ducklake", "delta lake", "lakehouse", "data lake", "apache spark", "acid transactions", "governance",
+  "explainability", "rag", "retrieval-augmented generation", "bert", "transformers", "self-attention",
+  "fine-tuning", "glue benchmark", "zero trust", "microservices", "react", "c++", "baml", "vector search",
+  "semantic search", "federated identity", "quantum computing", "blockchain", "rust", "kotlin"
+ ]
+}
