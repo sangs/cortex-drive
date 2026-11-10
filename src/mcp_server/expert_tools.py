@@ -2391,9 +2391,19 @@ class ExpertTools:
         target_node_name: Optional[str] = None,
         query_context: Optional[str] = None,
         target_domains: Optional[list] = None,
+        domain_filter: Optional[list] = None,
+        visible_node_ids: Optional[list] = None,
     ) -> str:
         """
         Discover virtual cross-domain knowledge bridges for a specific node.
+
+        domain_filter / visible_node_ids (2026-11-10, design 2026-11-09 §4.3, Bento panel progress): the
+        panel resolves nothing itself — it sends the same target_domains in one call per offered domain,
+        each with domain_filter=[that domain]; the server resolves target_domains as usual, keeps only the
+        filtered domains and gives each its share of the limit (ceil(limit / resolved domain count)), so
+        the parallel calls together return what one call would. A domain outside the resolved list returns
+        an empty result with "skipped": true. visible_node_ids (node_ids on screen, capped at
+        CONTEXT_VISIBLE_IDS_MAX) are never returned as targets; they may still connect a path.
 
         Finds the shortest weighted path — every relationship type is eligible, no
         hardcoded relationship-type whitelist — from the source node to each candidate
@@ -2458,6 +2468,7 @@ class ExpertTools:
             get_bridge_label_string, get_bridge_limit,
         )
         limit = get_bridge_limit(limit)
+        reported_limit = limit   # the limit the caller asked for; "Show more" builds on it
         relevance_keywords = self._extract_bridge_keywords(query_context)
 
         # Domain mode (named domains / "auto", AP-29 rule) vs the legacy "all" label list.
@@ -2469,7 +2480,7 @@ class ExpertTools:
         def _empty(summary: str, domains=None, search=None) -> str:
             return json.dumps({
                 "nodes": [], "virtual_links": [], "bridge_summary": summary, "confidence_tier": "none",
-                "target_domains": domains, "limit": limit, "max_limit": BRIDGE_MAX_LIMIT,
+                "target_domains": domains, "limit": reported_limit, "max_limit": BRIDGE_MAX_LIMIT,
                 "show_more_step": BRIDGE_SHOW_MORE_STEP, "has_more": False, "search": search,
             })
 
@@ -2528,6 +2539,16 @@ class ExpertTools:
                 domains = resolve_bridge_target_domains(requested_domains, source_row["source_labels"])
                 if not domains:
                     return _empty(f"No bridge target domain available for {requested_domains}.", [])
+                if domain_filter:
+                    import math
+                    wanted = {str(d).strip().lower() for d in domain_filter}
+                    share = math.ceil(limit / len(domains))
+                    domains = [d for d in domains if d in wanted]
+                    if not domains:
+                        out = json.loads(_empty("Not a bridge target domain for this node.", []))
+                        out["skipped"] = True
+                        return json.dumps(out)
+                    limit = share * len(domains)   # this call's share; the response still reports reported_limit
 
             # Step 2 (bridges v2, design 2026-11-09 §4.3): bounded search out from the source inside
             # Neo4j — never the whole graph. Security on every hop; bridge-label nodes never enter
@@ -2662,6 +2683,12 @@ class ExpertTools:
             # target_node_name hint is exempted (§8a's guarantee of inclusion must survive
             # regardless of degree) — see domain_registry.BRIDGE_MIN_CANDIDATE_DEGREE.
             from domain_registry import BRIDGE_MIN_CANDIDATE_DEGREE
+            # Nodes already on screen are not offered as bridges (they may still connect a path).
+            from domain_registry import CONTEXT_VISIBLE_IDS_MAX
+            on_screen = {str(v) for v in (visible_node_ids or [])[:CONTEXT_VISIBLE_IDS_MAX]}
+            if on_screen:
+                label_matched_targets = {nid for nid in label_matched_targets
+                                         if nid == must_include_id or node_info[nid].get("node_id") not in on_screen}
             candidate_targets = {
                 nid for nid in label_matched_targets
                 if nid == must_include_id or node_info[nid]["degree"] >= BRIDGE_MIN_CANDIDATE_DEGREE
@@ -2931,7 +2958,7 @@ class ExpertTools:
                 "bridge_summary": bridge_summary,
                 "confidence_tier": confidence_tier,
                 "target_domains": domains,
-                "limit": limit,
+                "limit": reported_limit,
                 "max_limit": BRIDGE_MAX_LIMIT,
                 "show_more_step": BRIDGE_SHOW_MORE_STEP,
                 "has_more": has_more,

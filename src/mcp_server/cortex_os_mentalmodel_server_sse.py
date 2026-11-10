@@ -827,7 +827,9 @@ async def connect_knowledge_on_demand(
     limit: int = Field(default_factory=lambda: BRIDGE_DEFAULT_LIMIT, description=f"Maximum number of bridge targets to return. Default {BRIDGE_DEFAULT_LIMIT} (env-var configurable), capped at {BRIDGE_MAX_LIMIT}."),
     target_node_name: Optional[str] = Field(None, description="If you already know the specific target node the user is asking about (e.g. it's named literally in their question), pass its name here — it will be included in the results even if it wouldn't otherwise rank in the top `limit`. Exact match preferred, partial-name fallback."),
     query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Improves ranking by favoring bridges through nodes whose names match words in the question — useful when no specific target is known."),
-    target_domains: Optional[List[str]] = Field(None, description="Domains to bridge INTO, overriding target_domain: domain ids from list_bridge_domains and/or 'auto' (every domain the source does not belong to). The limit is split evenly across several domains.")
+    target_domains: Optional[List[str]] = Field(None, description="Domains to bridge INTO, overriding target_domain: domain ids from list_bridge_domains and/or 'auto' (every domain the source does not belong to). The limit is split evenly across several domains."),
+    domain_filter: Optional[List[str]] = Field(None, description="Bento panel only: after target_domains is resolved, search only these domains, each with its share of the limit (the panel runs one call per domain in parallel to show progress). Leave empty in chat."),
+    visible_node_ids: Optional[List[str]] = Field(None, description="Bento panel only: node_ids already on screen; they are not returned as bridge targets (they may still connect a path). Leave empty in chat.")
 ) -> str:
     """
     Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
@@ -862,6 +864,8 @@ async def connect_knowledge_on_demand(
             target_node_name=target_node_name,
             query_context=query_context,
             target_domains=target_domains,
+            domain_filter=domain_filter,
+            visible_node_ids=visible_node_ids,
         )
     except Exception as e:
         print(f"Error in connect_knowledge_on_demand: {e}")

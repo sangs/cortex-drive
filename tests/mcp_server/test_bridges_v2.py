@@ -183,6 +183,33 @@ class LiveBridgesTest(unittest.TestCase):
         self.assertEqual(out["search"]["hops"], 1, "the first hop always runs")
         self.assertIn("Partial result", out["bridge_summary"])
 
+    def test_per_domain_calls_share_the_limit_and_skip_own_domain(self):
+        sid = self.node(self.SOURCES[0])
+        full = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"]))
+        share = math.ceil(full["limit"] / len(full["target_domains"]))
+        for d in full["target_domains"]:
+            part = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"],
+                                                                     domain_filter=[d]))
+            self.assertEqual(part["target_domains"], [d])
+            self.assertEqual(part["limit"], full["limit"], "the caller's limit is reported for Show more")
+            targets = [n for n in part["nodes"] if n.get("bridge_reason")]
+            self.assertLessEqual(len(targets), share)
+            self.assertTrue(all(n.get("bridge_domain") == d for n in targets))
+        own = [d for d in reg.get_bridge_target_domains() if d not in full["target_domains"]]
+        for d in own:
+            part = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"],
+                                                                     domain_filter=[d]))
+            self.assertTrue(part.get("skipped"), d)
+
+    def test_nodes_on_screen_are_not_offered_again(self):
+        sid = self.node(self.SOURCES[0])
+        full = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"]))
+        first = [n for n in full["nodes"] if n.get("bridge_reason")][:2]
+        again = json.loads(self.tools.connect_knowledge_on_demand(
+            source_node_id=sid, target_domains=["auto"], visible_node_ids=[n["node_id"] for n in first]))
+        names = {n["name"] for n in again["nodes"] if n.get("bridge_reason")}
+        self.assertFalse(names & {n["name"] for n in first})
+
     def test_member_sees_only_what_they_may(self):
         member = ExpertTools(tenant_id=os.environ.get("TENANT_ID", ""), requesting_user_id="user_test_member_no_shares",
                              allowed_ids=[])
