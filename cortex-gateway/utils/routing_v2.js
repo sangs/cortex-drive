@@ -99,8 +99,9 @@ function result(mode, domains, extra = {}) {
 /**
  * @param {string} question
  * @param {object} lookups  buildRoutingLookups(...) for this asker
- * @param {{coverage?: (terms: string[]) => Promise<Record<string, boolean>>}} [opts]
- *        coverage: per-domain "does the asker see anything on these terms" (gateway domain names).
+ * @param {{coverage?: (terms: string[]) => Promise<Record<string, boolean>|null>, resolvedPersons?: string[]}} [opts]
+ *        coverage: per-domain "does the asker see anything on these terms" (gateway domain names); null = unavailable.
+ *        resolvedPersons: people chosen in a clarifying question (only names in the asker's catalog are used).
  */
 async function routeQuestion(question, lookups, opts = {}) {
     const q = String(question || '');
@@ -120,12 +121,15 @@ async function routeQuestion(question, lookups, opts = {}) {
     // A person named inside a title ("Iceberg at Netflix and Beyond with Ryan Blue") is part of that title.
     const insideTitle = p => titles.some(t => overlaps(t, p));
     let subject = persons.filter(p => !insideTitle(p)).map(p => p.value);
+    // A person chosen in a clarifying question (§4.5), already checked against the asker's visible catalog.
+    const resolved = (opts.resolvedPersons || []).filter(n => [...(lookups.person || new Map()).values()].includes(n));
+    if (resolved.length) subject = resolved;
     const outsideTitles = (re) => { const m = re.exec(q); return m && !titles.some(t => m.index < t.end && m.index + m[0].length > t.start); };
     if (!subject.length) {
         const part = (lookups.personPart || []).find(p => outsideTitles(p.pattern));
         if (part) subject = [part.name];
     }
-    const shared = !subject.length ? (lookups.personPartShared || []).find(p => outsideTitles(p.pattern)) : null;
+    const shared = !subject.length && !resolved.length ? (lookups.personPartShared || []).find(p => outsideTitles(p.pattern)) : null;
     const work = name => (lookups.personWork && lookups.personWork.get(name)) || [];
     const subjectDomains = new Set(subject.flatMap(work));
     const subjectWork = subject.length && WORK_RE && WORK_RE.test(q);
@@ -135,10 +139,12 @@ async function routeQuestion(question, lookups, opts = {}) {
     for (const d of Object.keys(kinds)) scores[d] = (scores[d] || 0) + SCORE.contentKind;
     const extra = () => ({ domain_scores: scores, roles, content_kind: Object.keys(kinds).sort()[0] || null });
 
+    let coverageUnavailable = false;
     async function covered() {
         if (!topicHits.length || !opts.coverage) return new Set();
         // The words the asker used ("zero trust"), which also match the node's full name.
         const c = await opts.coverage(topicHits.map(t => q.slice(t.start, t.end)));
+        if (c == null) { coverageUnavailable = true; return new Set(); }   // never read a failed check as "no data"
         const out = new Set(Object.entries(c || {}).filter(([d, hit]) => hit && enabled(d)).map(([d]) => d));
         out.forEach(d => bump(d, SCORE.coverage));
         return out;
@@ -193,10 +199,29 @@ async function routeQuestion(question, lookups, opts = {}) {
     if (topicHits.length) {
         const domains = await covered();
         if (domains.size) return result(domains.size > 1 ? 'cross' : 'single', domains, extra());
+        if (coverageUnavailable) return result('discovery', [], { ...extra(), coverage_unavailable: true });
         return result('discovery', [], { ...extra(), no_data: true });
     }
     // 8. Nothing recognised.
     return result('discovery', [], extra());
 }
 
-module.exports = { routeQuestion };
+/** What the browser sees of a routing v2 decision (no names the asker cannot open: roles come from their catalog). */
+function routingSummary(r) {
+    return { version: 'v2', mode: r.mode, domains: r.domains, roles: r.roles, ...(r.no_data ? { no_data: true } : {}) };
+}
+/** Clarify and "no data" answers (§4.5): no search, no LLM, never cached (no graph). */
+function routingV2EarlyResponse(r, fallbackSignal) {
+    if (r.mode === 'clarify' && r.clarify) {
+        return { answer: r.clarify.question, clarify: r.clarify, raw_data: null, domain_signal: r.domain || fallbackSignal,
+                 routing: routingSummary(r) };
+    }
+    if (r.no_data) {
+        const topics = r.roles.topic.length ? r.roles.topic.join(', ') : 'this question';
+        return { answer: `No data found in Cortex-Drive for "${topics}".`, raw_data: null, domain_signal: fallbackSignal,
+                 routing: routingSummary(r) };
+    }
+    return null;
+}
+
+module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse };

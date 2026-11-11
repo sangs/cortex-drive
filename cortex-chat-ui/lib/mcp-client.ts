@@ -1,3 +1,4 @@
+import type { ClarifyChoice } from '../utils/clarify';
 export class MCPClient {
     private serverUrl: string;
     private messageUrl: string | null = null;
@@ -62,7 +63,8 @@ export class MCPClient {
     /**
      * Sends a natural language query to the Gateway's orchestration endpoint.
      */
-    async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal, conversationId?: string) {
+    async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal, conversationId?: string,
+                clarifyChoice?: ClarifyChoice) {
         const baseUrl = new URL(this.serverUrl);
         const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
         const gatewayUrl = `${gatewayBase}/query`;
@@ -82,7 +84,8 @@ export class MCPClient {
             method: "POST",
             headers,
             signal,
-            body: JSON.stringify({ question, history, forceRefresh, conversationId }),
+            // clarify_choice: the option picked in a clarifying question (routing v2, design 2026-11-09 §4.5).
+            body: JSON.stringify({ question, history, forceRefresh, conversationId, ...(clarifyChoice ? { clarify_choice: clarifyChoice } : {}) }),
         });
 
         if (!response.ok) {

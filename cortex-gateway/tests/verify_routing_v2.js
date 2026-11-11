@@ -10,7 +10,8 @@
 process.env.ENABLE_DOCUMENT_DOMAIN = 'true';
 const assert = require('assert');
 const { buildRoutingLookups } = require('../utils/intent_classifier.js');
-const { routeQuestion } = require('../utils/routing_v2.js');
+const { routeQuestion, routingV2EarlyResponse } = require('../utils/routing_v2.js');
+const { createDomainCoverage, resolveClarifyChoice } = require('../utils/domain_coverage.js');
 
 let passed = 0;
 const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m); passed++; };
@@ -61,6 +62,32 @@ const route = (q, lk = owner, cov = full) => routeQuestion(q, lk, { coverage: co
     eq([r.mode, r.domains, r.domain], ['bridge', ['career'], 'cross_domain'], 'influence → bridge over named domains');
     r = await route('Hello');
     eq([r.mode, r.domains, r.confident], ['discovery', [], false], 'nothing recognised → discovery');
+
+    // A failed coverage check is never "no data"
+    r = await route('Tell me about Kafka', owner, async () => null);
+    eq([r.mode, r.no_data, r.coverage_unavailable], ['discovery', undefined, true], 'coverage unavailable → fall back, not no_data');
+    eq(routingV2EarlyResponse(r, 'career'), null, 'no early answer when coverage is unavailable');
+    r = await route('Tell me about Kafka', owner, none);
+    eq(routingV2EarlyResponse(r, 'career').answer, 'No data found in Cortex-Drive for "Kafka".', 'no_data → deterministic answer');
+    r = await route('What has David said about MCP?');
+    const early = routingV2EarlyResponse(r, 'career');
+    eq([early.answer, early.raw_data, early.clarify.options.length], ['Which David?', null, 3], 'clarify → question + options, no graph (never cached)');
+
+    // Clarify choice: only visible people; then the question routes to that person
+    eq(resolveClarifyChoice({ kind: 'person', name: 'David Soria Parra' }, owner), ['David Soria Parra'], 'visible choice kept');
+    eq(resolveClarifyChoice({ kind: 'person', name: 'David Hughes' }, sharedOne), [], 'choice of a hidden person dropped');
+    eq(resolveClarifyChoice({ kind: 'person', names: ['David Hughes', 'Nobody'] }, owner), [], 'any unknown name → whole choice dropped');
+    r = await routeQuestion('What has David said about MCP?', owner, { coverage: full, resolvedPersons: ['David Soria Parra'] });
+    eq([r.mode, r.domains, r.roles.subject], ['single', ['podcast'], ['David Soria Parra']], 'chosen person → no second question');
+
+    // Coverage client: maps domains, null on failure / timeout / no requester
+    const ok = createDomainCoverage({ post: async () => ({ coverage: { professional: true, podcast: false, extra: true } }), log: { warn() {} } });
+    eq(await ok({ tenantId: 't', userId: 'u' }, ['kafka']), { career: true, podcast: false }, 'professional → career; unknown keys dropped');
+    eq(await ok({ tenantId: 't', userId: '' }, ['kafka']), null, 'no requester → null (never a whole-tenant call)');
+    const slow = createDomainCoverage({ post: () => new Promise(r2 => setTimeout(r2, 200)), timeoutMs: 20, log: { warn() {} } });
+    eq(await slow({ tenantId: 't', userId: 'u' }, ['kafka']), null, 'slow → null');
+    const bad = createDomainCoverage({ post: async () => { throw new Error('500'); }, log: { warn() {} } });
+    eq(await bad({ tenantId: 't', userId: 'u' }, ['kafka']), null, 'error → null');
 
     console.log(`verify_routing_v2: ${passed} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

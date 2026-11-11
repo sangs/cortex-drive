@@ -453,6 +453,8 @@ CONTENT_DOMAINS = ["professional", "podcast", "website", "document"]
 # Routing v2 coverage check (cross-domain design 2026-11-09 §4.1 rule 3): shared vocabulary labels whose name, when a
 # content node links to one, counts as that content covering the topic.
 COVERAGE_TOPIC_LABELS = ["Technology", "Concept", "Topic"]
+# Terms checked per routing coverage request (a question rarely names more than a few topics).
+DOMAIN_COVERAGE_MAX_TERMS = 5
 # Never evidence of a domain: built-in vocabulary and the section headers (SYSTEM/PUBLIC landmarks).
 _NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
 

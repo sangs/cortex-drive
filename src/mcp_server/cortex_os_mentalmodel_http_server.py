@@ -10,6 +10,7 @@ import redis as redis_lib
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from expert_tools import ExpertTools
+from domain_registry import DOMAIN_COVERAGE_MAX_TERMS
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -182,6 +183,33 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(result).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/domain_coverage":
+            # Routing v2 coverage check (cross-domain design 2026-11-09 §4.1 rule 3): per content domain, does the
+            # asker see anything on these terms? Same identity handling as /get_node_details; a requester is
+            # required (an empty x-user-id would be an internal whole-tenant call).
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                user_id = self.headers.get("x-user-id") or ""
+                guest_share_anchor = self.headers.get("x-guest-share-anchor") or ""
+                if not tenant_id or not user_id:
+                    self.send_error(400, "x-tenant-id and x-user-id required")
+                    return
+                terms = [str(t) for t in (params.get("terms") or [])][:DOMAIN_COVERAGE_MAX_TERMS]
+                allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
+                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
+                                     guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
+                try:
+                    coverage = expert.domain_coverage(terms)
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"coverage": coverage}).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/entity_catalog":

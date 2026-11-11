@@ -687,6 +687,25 @@ const shareLinks = createShareLinks({
     },
 });
 
+// Routing v2 (cross-domain design 2026-11-09 §4.1, §4.5): off unless ROUTING_V2=true.
+const ROUTING_V2_ENABLED = process.env.ROUTING_V2 === 'true';
+const { routeQuestion, routingSummary, routingV2EarlyResponse } = require('./utils/routing_v2');
+const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
+const domainCoverage = createDomainCoverage({
+    post: async ({ tenantId, userId, guestAnchor, terms }) => {
+        const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+        const token = await getCloudRunToken(bentoBase);
+        const res = await fetch(`${bentoBase}/domain_coverage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, 'x-user-id': userId,
+                       ...(guestAnchor ? { 'x-guest-share-anchor': guestAnchor } : {}), ...(token ? { Authorization: token } : {}) },
+            body: JSON.stringify({ terms }),
+        });
+        if (!res.ok) throw new Error(`Bento /domain_coverage → ${res.status}`);
+        return res.json();
+    },
+});
+
 // Routing catalog (S2-60): per-tenant, refetched from Bento when a source is added; static file as fallback.
 const { createEntityCatalogStore } = require('./utils/entity_catalog');
 async function bentoEntityCatalog(tenantId) {
@@ -3346,7 +3365,7 @@ app.post('/api/cache/invalidate', authMiddleware, async (req, res) => {
  * Used by the Dashboard for backward compatibility.
  */
 app.post('/query', authMiddleware, async (req, res) => {
-    const { question, history, forceRefresh, conversationId } = req.body;
+    const { question, history, forceRefresh, conversationId, clarify_choice: clarifyChoice } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
 
@@ -3367,7 +3386,8 @@ app.post('/query', authMiddleware, async (req, res) => {
         console.log(`[QUERY] Starting orchestration for: ${question}`);
 
         // Cache lookup — keyed per tenant AND user so permission-scoped responses are not shared.
-        const cacheKey = buildQueryCacheKey(tenantId, userId, question);
+        // A clarify choice (routing v2, design §4.5) changes the answer, so it is part of the key.
+        const cacheKey = buildQueryCacheKey(tenantId, userId, clarifyChoice ? `${question}\u0000${JSON.stringify(clarifyChoice)}` : question);
         if (!forceRefresh) {
             const cached = await getCachedQueryResponse(cacheKey);
             if (cached) {
@@ -3392,8 +3412,32 @@ app.post('/query', authMiddleware, async (req, res) => {
         const routingLookups = buildRoutingLookups(await entityCatalogStore.getCatalog(routingTenant),
                                                    { isOwner: isOwner(userId), allowedIds, userId });
         if (routingLookups.withheld) console.log(`[CLASSIFY] ${routingLookups.withheld} catalog name(s) withheld (not visible to this user)`);
-        const { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai, routingLookups);
+        let { domain: domainSignal, confident: domainConfident } = await classifyDomain(question, openai, routingLookups);
         console.log(`[QUERY] domain_signal=${domainSignal} confident=${domainConfident}`);
+
+        // Routing v2 (cross-domain design 2026-11-09 §4.1, §4.5), behind ROUTING_V2. Deterministic: no LLM. Clarify and
+        // "no data" answer here without search or LLM; single/bridge replace today's signal; cross and plain discovery
+        // keep today's routing until cross mode (step 4) and the §4.5 overview exist. A failed coverage check never
+        // becomes "no data" (it falls back to today's routing).
+        let routingV2 = null;
+        if (ROUTING_V2_ENABLED) {
+            routingV2 = await routeQuestion(question, routingLookups, {
+                coverage: terms => domainCoverage({ tenantId, userId, guestAnchor: req.headers['x-guest-share-anchor'] || '' }, terms),
+                resolvedPersons: resolveClarifyChoice(clarifyChoice, routingLookups),
+            });
+            console.log(`[ROUTING_V2] mode=${routingV2.mode} domains=${routingV2.domains.join(',')} subject=${routingV2.roles.subject.length} topics=${routingV2.roles.topic.length}${routingV2.no_data ? ' no_data' : ''}${routingV2.coverage_unavailable ? ' coverage_unavailable' : ''}`);
+            const early = routingV2EarlyResponse(routingV2, domainSignal);
+            if (early) {
+                persistConversationTurn({ tenantId, userId, conversationId, userContent: question, assistantContent: early.answer,
+                                          domainSignal: early.domain_signal, graphSnapshot: null })
+                    .catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
+                return res.send(early);
+            }
+            if (routingV2.mode === 'single' || routingV2.mode === 'bridge') {
+                domainSignal = routingV2.domain;
+                domainConfident = true;
+            }
+        }
 
         const bridgeContext = resolveBridgeContext(domainSignal, question, routingLookups);
         const crossDomainInstruction = buildCrossDomainInstruction(bridgeContext);
@@ -4015,6 +4059,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                     answer: auditedAnswer,
                     raw_data: hasGraph ? JSON.stringify(accumulatedGraph) : null,
                     domain_signal: domainSignal,
+                    ...(routingV2 ? { routing: routingSummary(routingV2) } : {}),
                     is_targeted_career: isTargetedCareer,
                     access_scope: accessScope,
                     ...(citedSources.size ? { cited_sources: [...citedSources].map(([source_id, current_snapshot_id]) => ({ source_id, current_snapshot_id })) } : {})

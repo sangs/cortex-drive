@@ -35,6 +35,8 @@ import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
 import { useMCP } from "@/hooks/use-mcp";
 import type { BridgeOptions, BridgeProgressItem } from "@/utils/bridgeTypes";
+import { clarifyChoiceFor, readClarify } from "@/utils/clarify";
+import type { Clarify, ClarifyChoice, ClarifyOption } from "@/utils/clarify";
 import { bridgeCallDomains, bridgeDomainName, bridgeProgressText, combineBridgeSummaries } from "@/utils/bridgeTypes";
 import { useCapabilities } from "@/hooks/use-capabilities";
 
@@ -617,9 +619,12 @@ export default function DashboardPage() {
         userMsg: string,
         historyMessages: { role: string; content: any }[],
         forceRefresh: boolean,
-        convId: string
+        convId: string,
+        clarifyChoice?: ClarifyChoice,
+        shownAs?: string,
     ) => {
-        setMessages(prev => [...prev, { role: "user", content: userMsg }]);
+        // shownAs: a clarify option is shown as the user's reply; the original question is what is sent.
+        setMessages(prev => [...prev, { role: "user", content: shownAs || userMsg }]);
         setIsProcessing(true);
 
         try {
@@ -636,14 +641,16 @@ export default function DashboardPage() {
             setLastBridge(null);
             setUndoStack([]);
 
-            const result = await query(userMsg, history, forceRefresh, convId);
+            const result = await query(userMsg, history, forceRefresh, convId, clarifyChoice);
 
             if (result.access_scope) setAccessScope(result.access_scope);
 
-            // 1. Add assistant text answer
+            // 1. Add assistant text answer (a clarifying question keeps its options and the question it is about)
+            const clarify = readClarify(result.clarify);
             setMessages(prev => [...prev, {
                 role: "assistant",
-                content: result.answer
+                content: result.answer,
+                ...(clarify ? { clarify, clarifyFor: userMsg } : {}),
             }]);
 
             if (result.raw_data) {
@@ -1229,6 +1236,14 @@ export default function DashboardPage() {
         }
     };
 
+    // Clarifying question (routing v2, design §4.5): the chosen option re-sends the original question with the choice;
+    // the gateway re-checks it against what this user can see. Typing a new question instead simply moves on.
+    const handleClarifyChoice = (question: string, clarify: Clarify, option: ClarifyOption) => {
+        const choice = clarifyChoiceFor(option, clarify);
+        if (!question || !choice) return;
+        executeQuery(question, [...messages], false, conversationId, choice, option.label);
+    };
+
     const handleShowMoreBridges = () => {
         if (!lastBridge || !lastBridge.hasMore) return;
         const nextLimit = Math.min(lastBridge.limit + lastBridge.step, lastBridge.maxLimit);
@@ -1471,6 +1486,19 @@ export default function DashboardPage() {
                             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`max-w-[95%] ${msg.role === 'user' ? 'bg-secondary p-5 rounded-2xl text-foreground font-medium shadow-sm ring-1 ring-border' : 'text-foreground'}`}>
                                     <A2UIRenderer message={msg.content} />
+                                    {msg.clarify && i === messages.length - 1 && !isProcessing && (
+                                        <div className="flex flex-wrap gap-2 mt-3" role="group" aria-label={msg.clarify.question}>
+                                            {(msg.clarify as Clarify).options.map((opt: ClarifyOption) => (
+                                                <button
+                                                    key={opt.label}
+                                                    onClick={() => handleClarifyChoice(msg.clarifyFor, msg.clarify, opt)}
+                                                    className="px-3 py-1.5 rounded-xl text-xs font-bold border border-border bg-white/80 hover:bg-indigo-50 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 transition-all"
+                                                >
+                                                    {opt.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))}
