@@ -113,6 +113,9 @@ function _regexClassify(q) {
 const STATIC_CATALOG_PATH = path.join(__dirname, '../config/entity_catalog.json');
 const GLOBAL_TIERS = new Set(['SYSTEM', 'PUBLIC']);
 const PERSON_ENTRY_DOMAIN = 'person';
+// Routing v2 topics (design 2026-11-09 §4.1 rule 1): shared vocabulary names. Kept apart from titles — a topic never
+// routes by itself in v1; routing v2 (utils/routing_v2.js) uses it with the coverage check.
+const TOPIC_ENTRY_DOMAIN = 'topic';
 const MIN_ROUTING_NAME_CHARS = 3;
 // Short names (design §9) route only next to one of these words: "the BERT paper" → the BERT document.
 const DOCUMENT_REFERENCE_WORDS = INTENT_KEYWORDS_CONFIG.documentReferenceWords || [];
@@ -177,11 +180,18 @@ function buildRoutingLookups(catalog, viewer) {
     const person = new Map();   // lowerCaseName → original-case name
     const personWork = new Map();   // original-case name → work domains (catalog `work_domains`; absent = unknown)
     const partOwners = new Map();   // lowerCaseNamePart → Set of original-case names
+    const topics = new Map();       // lowerCaseName or alias → canonical topic name
     const short = [];           // [{ pattern, domain, matched }]
     let withheld = 0;
     for (const e of _catalogEntries(catalog || {})) {
         if (!e.name || e.name.length < MIN_ROUTING_NAME_CHARS) continue;
         if (!canOpen(e)) { withheld++; continue; }
+        if (e.domain === TOPIC_ENTRY_DOMAIN) {
+            for (const n of [e.name, ...(e.aliases || [])]) {
+                if (n && n.length >= MIN_ROUTING_NAME_CHARS && !topics.has(n.toLowerCase())) topics.set(n.toLowerCase(), e.name);
+            }
+            continue;
+        }
         if (e.domain === PERSON_ENTRY_DOMAIN) {
             person.set(e.name.toLowerCase(), e.name);
             if (Array.isArray(e.work_domains)) personWork.set(e.name, e.work_domains);
@@ -209,7 +219,12 @@ function buildRoutingLookups(catalog, viewer) {
         if (names.size !== 1) continue;
         personPart.push({ pattern: new RegExp(`(?<!\\p{L})${_escapeRegex(part)}(?!\\p{L})`, 'iu'), name: [...names][0] });
     }
-    return { entity, person, personWork, personPart, short, bridge, withheld };
+    // Name parts that more than one visible person has ("David"): routing v2 asks which one (design §4.5).
+    const personPartShared = [];   // [{ pattern, names }]
+    for (const [part, names] of partOwners) {
+        if (names.size > 1) personPartShared.push({ pattern: new RegExp(`(?<!\\p{L})${_escapeRegex(part)}(?!\\p{L})`, 'iu'), names: [...names].sort() });
+    }
+    return { entity, person, personWork, personPart, personPartShared, topics, short, bridge, withheld };
 }
 
 const STATIC_LOOKUPS = buildRoutingLookups(_loadStaticCatalog());

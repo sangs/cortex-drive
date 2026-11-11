@@ -67,12 +67,36 @@ function report(name, r, showFails) {
     if (showFails) for (const f of r.fails) console.log(`  ✗ ${f.id} [${f.origin}] ${JSON.stringify(f.q)} want ${f.mode} ${f.domains} got ${f.got.mode} ${f.got.domains}`);
 }
 
-module.exports = { evaluate, report, predictV1, GATE, DOMAINS };
+/** Routing v2 with the static catalog and the coverage snapshot standing in for the live check. */
+const missingCoverage = new Set();
+function snapshotCoverage(terms) {
+    const snap = require('./coverage_snapshot.json').coverage;
+    const out = Object.fromEntries(DOMAINS.map(d => [d, false]));
+    for (const t of terms) {
+        const k = t.toLowerCase();
+        const hit = snap[k] || snap[k.endsWith('s') ? k.slice(0, -1) : `${k}s`];
+        if (!hit) { missingCoverage.add(k); continue; }
+        hit.forEach(d => { out[d] = true; });
+    }
+    return out;
+}
+let v2Lookups = null;
+async function predictV2(q) {
+    const { buildRoutingLookups } = require('../../utils/intent_classifier.js');
+    const { routeQuestion } = require('../../utils/routing_v2.js');
+    v2Lookups = v2Lookups || buildRoutingLookups(require('../../config/entity_catalog.json'));
+    const r = await routeQuestion(q, v2Lookups, { coverage: async terms => snapshotCoverage(terms) });
+    return { domains: r.domains, mode: r.mode };
+}
+
+module.exports = { evaluate, report, predictV1, predictV2, missingCoverage, GATE, DOMAINS };
 
 if (require.main === module) {
     (async () => {
-        const r = await evaluate(predictV1);
-        report('routing v1 (today)', r, process.argv.includes('--fails'));
+        const v2 = process.argv.includes('--v2');
+        const r = await evaluate(v2 ? predictV2 : predictV1);
+        report(v2 ? 'routing v2' : 'routing v1 (today)', r, process.argv.includes('--fails'));
+        if (v2 && missingCoverage.size) console.log(`topics missing from coverage_snapshot.json: ${[...missingCoverage].sort().join(', ')}`);
         if (process.argv.includes('--gate')) {
             const ok = r.exact >= GATE.exact && r.recall >= GATE.recall && r.precision >= GATE.precision;
             console.log(ok ? 'GATE passed' : `GATE failed (needs exact ≥ ${GATE.exact}, recall ≥ ${GATE.recall}, precision ≥ ${GATE.precision})`);

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-10T19:33:06.390911+00:00",
+  "generated_at": "2026-11-11T00:55:11.301108+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 49,
   "domains": {
@@ -544,8 +544,7 @@
       "tier": "PUBLIC",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
       "work_domains": [
-        "career",
-        "podcast"
+        "career"
       ]
     },
     {
@@ -627,6 +626,1768 @@
       "node_id": "0e80a8f7-a8f2-4df1-8ab7-5fb1ce886d72",
       "tier": "org",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "A2A (Application to Application)",
+      "domain": "topic",
+      "node_id": "48601240-8440-487c-9cff-f7c82ea36d13",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "A2A",
+        "Application to Application"
+      ]
+    },
+    {
+      "name": "ACE",
+      "domain": "topic",
+      "node_id": "af26dda1-4252-47f1-8d5f-8bfac4b0892c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "ACID transactions",
+      "domain": "topic",
+      "node_id": "7a9bd3a3-32d4-428f-af57-bf0124ba7176",
+      "tier": "org"
+    },
+    {
+      "name": "ACID transactions",
+      "domain": "topic",
+      "node_id": "f437165c-707e-4d12-8f05-e5ad52f6b369",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AI Agent",
+      "domain": "topic",
+      "node_id": "da28686f-8637-42aa-98ce-5a13c7ac97b6",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AI Agent",
+      "domain": "topic",
+      "node_id": "2e38e294-1b4e-4c21-a747-21a061c06e1f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AI Agent (OpenAI)",
+      "domain": "topic",
+      "node_id": "769a036e-a767-402a-9744-c6da91ff9632",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "AI Agent",
+        "OpenAI"
+      ]
+    },
+    {
+      "name": "AI Architecture",
+      "domain": "topic",
+      "node_id": "72f1c37c-8b5b-4fdd-aece-5fc049294d2a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "API",
+      "domain": "topic",
+      "node_id": "67cfb998-e7e2-4058-9d0e-46dbb065bbec",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AWS",
+      "domain": "topic",
+      "node_id": "cd413869-6496-49b8-952f-43f0a271bf50",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AWS Lambda",
+      "domain": "topic",
+      "node_id": "b46a7592-6722-462e-b446-bed09c2ee870",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Ablation study",
+      "domain": "topic",
+      "node_id": "3c2eb60c-f251-48e7-b58f-3953b9295578",
+      "tier": "org"
+    },
+    {
+      "name": "Adam optimizer",
+      "domain": "topic",
+      "node_id": "8897d28a-5ecb-4420-a829-e9b36809ca0d",
+      "tier": "org"
+    },
+    {
+      "name": "Agent",
+      "domain": "topic",
+      "node_id": "aa502244-a5c8-4454-8dca-9c61f63ba891",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Al Agent",
+      "domain": "topic",
+      "node_id": "86e23c63-528a-4956-b2de-ba9f3167d305",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Anthropic",
+      "domain": "topic",
+      "node_id": "c1975aad-91fd-4b9d-bcf6-5aac8849b06a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Beam",
+      "domain": "topic",
+      "node_id": "b22f6701-1ed0-4d2c-9c28-afb18fb084bd",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Flink",
+      "domain": "topic",
+      "node_id": "e911a724-7901-44ab-90eb-0e5817e2f9b6",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Hive",
+      "domain": "topic",
+      "node_id": "57e44281-eb6e-44c4-a0df-d614de44bc82",
+      "tier": "org"
+    },
+    {
+      "name": "Apache Hudi",
+      "domain": "topic",
+      "node_id": "2910cebf-e40e-4b22-b7d9-d1d8cffc7f8a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Iceberg",
+      "domain": "topic",
+      "node_id": "44c4e4b7-418e-415e-943b-e01b4d81ccb8",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Iceberg",
+      "domain": "topic",
+      "node_id": "0db22502-3bc1-4d2d-88ec-46593ad60ca3",
+      "tier": "org"
+    },
+    {
+      "name": "Apache Iceberg Table Format and Data Lakes",
+      "domain": "topic",
+      "node_id": "e3eac1e9-4fa6-4531-a8e5-c8019b3b92a4",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "Apache Kafka",
+      "domain": "topic",
+      "node_id": "cb8c7729-57d8-406b-b5ca-3f4943110c34",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Apache Parquet",
+      "domain": "topic",
+      "node_id": "b1e9b34a-49e3-4241-aace-5c4a073b2d72",
+      "tier": "org"
+    },
+    {
+      "name": "Apache Spark",
+      "domain": "topic",
+      "node_id": "d1eac6a7-e62a-495c-9e48-f3a3be314501",
+      "tier": "org"
+    },
+    {
+      "name": "Apache Spark Streaming",
+      "domain": "topic",
+      "node_id": "d5333b15-c26a-4c1b-b1aa-d89e726bd4ca",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Arrow ecosystem",
+      "domain": "topic",
+      "node_id": "05651085-4483-42f2-b5cb-ccf33542b37c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "AutoGen",
+      "domain": "topic",
+      "node_id": "203c9bc6-cb51-4591-a4ac-63a00c77ad29",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "BAML",
+      "domain": "topic",
+      "node_id": "ebac3912-b152-4e4b-94fd-a899ea67956d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "BAML (Binding and Modeling Language)",
+      "domain": "topic",
+      "node_id": "ced7a070-92af-4a9f-ae8d-a821e46a6a7c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "BAML",
+        "Binding and Modeling Language"
+      ]
+    },
+    {
+      "name": "BAML's Playground",
+      "domain": "topic",
+      "node_id": "60a5ce10-9e63-4db1-b07d-f72123595419",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "BAML: Prompts as Structured Functions",
+      "domain": "topic",
+      "node_id": "af4b077a-d33d-42c0-a207-3996f2b5c567",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "BERT",
+      "domain": "topic",
+      "node_id": "41ab59bc-1481-4235-9d2b-75ab272d2682",
+      "tier": "org"
+    },
+    {
+      "name": "Bagging",
+      "domain": "topic",
+      "node_id": "3308fc48-feaa-421c-bb5c-7f6dc5b0bf87",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Base64 format",
+      "domain": "topic",
+      "node_id": "dc8aad08-dd69-468b-8a9e-2fcfa6ce5576",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Batch Systems",
+      "domain": "topic",
+      "node_id": "d3980a60-e893-4354-9e27-9bca0e31f912",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Bidirectional Transformer",
+      "domain": "topic",
+      "node_id": "9843b8f0-d659-4097-afd0-ad13b6fc12f5",
+      "tier": "org"
+    },
+    {
+      "name": "Bidirectional pre-training",
+      "domain": "topic",
+      "node_id": "889edbd6-0c23-4b57-99a7-e8c113827489",
+      "tier": "org"
+    },
+    {
+      "name": "BooksCorpus",
+      "domain": "topic",
+      "node_id": "fb9d0843-7cdb-4dce-bb30-39e751110ae2",
+      "tier": "org"
+    },
+    {
+      "name": "Boosting",
+      "domain": "topic",
+      "node_id": "a95255bf-e223-4074-a6fd-df3e13585396",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "C++",
+      "domain": "topic",
+      "node_id": "44aa1176-e5e5-4bbe-bc78-5c0cba53357e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "C4 Model",
+      "domain": "topic",
+      "node_id": "70f960fe-9f61-427a-9c17-eeb01dc69593",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "CORBA",
+      "domain": "topic",
+      "node_id": "b06a9232-7ced-49d5-b812-d39783a42fb7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cassandra",
+      "domain": "topic",
+      "node_id": "759c4b9a-ca04-4701-8b6b-497476129bb3",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Claude",
+      "domain": "topic",
+      "node_id": "13428571-160e-4f5c-a6d3-63ab64185d85",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cloud Computing",
+      "domain": "topic",
+      "node_id": "1e36f7ad-d1b5-4d0e-909b-0b4471399637",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cloud TPU",
+      "domain": "topic",
+      "node_id": "60394b83-0d18-49d2-a79d-77600d290db1",
+      "tier": "org"
+    },
+    {
+      "name": "CloudWatch",
+      "domain": "topic",
+      "node_id": "3e3e137e-fe42-40f4-a4b0-33571a0fbc09",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cloze task",
+      "domain": "topic",
+      "node_id": "dc65c497-fae9-4019-821e-634c76e95305",
+      "tier": "org"
+    },
+    {
+      "name": "CoLA",
+      "domain": "topic",
+      "node_id": "48f69eaa-b614-497e-a3c1-183d745b5a7b",
+      "tier": "org"
+    },
+    {
+      "name": "CoNLL-2003",
+      "domain": "topic",
+      "node_id": "acee20f3-4f1f-4953-aa6e-e932bd103965",
+      "tier": "org"
+    },
+    {
+      "name": "Cody AI Agent",
+      "domain": "topic",
+      "node_id": "931a8c7d-c1df-46b9-81d3-db49c77607bb",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Contextual word embeddings",
+      "domain": "topic",
+      "node_id": "5109c147-59fc-4fa8-8ca0-3caa8d1f8c07",
+      "tier": "org"
+    },
+    {
+      "name": "Crew",
+      "domain": "topic",
+      "node_id": "d558e809-af7b-4aed-b1f9-3e85e7b13bb7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cursor",
+      "domain": "topic",
+      "node_id": "8c11a469-885e-43aa-9d41-b1d857791f0e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Cypher",
+      "domain": "topic",
+      "node_id": "a0b22faa-ff18-411c-b0df-4f2d8ef25163",
+      "tier": "org"
+    },
+    {
+      "name": "DB2",
+      "domain": "topic",
+      "node_id": "430eeb09-79c7-4881-8559-a9d46b2d77ab",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Data Visualization",
+      "domain": "topic",
+      "node_id": "5c3d3045-00b4-41ab-898d-034d65a1e72d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Data lake",
+      "domain": "topic",
+      "node_id": "c1dba691-31c7-4d87-9d15-08ae6c412c73",
+      "tier": "org"
+    },
+    {
+      "name": "Data warehouse",
+      "domain": "topic",
+      "node_id": "c291e214-0110-45b3-9512-5fecf1c4a43e",
+      "tier": "org"
+    },
+    {
+      "name": "DataMesh",
+      "domain": "topic",
+      "node_id": "f9e6b6de-2042-4360-8edb-8f06961ac6d1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Database",
+      "domain": "topic",
+      "node_id": "af65e569-83f2-456d-bf28-893916ef686b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Datadog",
+      "domain": "topic",
+      "node_id": "08e7197d-7501-42af-8608-faea36214067",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Dataflow",
+      "domain": "topic",
+      "node_id": "369c4268-2570-4fa1-bfda-8385167b448e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Decision Support",
+      "domain": "topic",
+      "node_id": "06b8a4c6-c56e-4029-bc6a-1d464fe0ad24",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Decision Trees",
+      "domain": "topic",
+      "node_id": "a7065700-79b7-4bad-9d56-dd16e4ab6d2f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Deep bidirectional model",
+      "domain": "topic",
+      "node_id": "1ee7a2bd-dc02-4e46-ac88-89bf9a65b19c",
+      "tier": "org"
+    },
+    {
+      "name": "Delayed View Semantics and Incremental Processing",
+      "domain": "topic",
+      "node_id": "065ba928-31d3-48e1-839c-30924b68eb97",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "Delta Lake",
+      "domain": "topic",
+      "node_id": "8dab991f-29b7-46d0-bc92-5f4160554063",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Docker",
+      "domain": "topic",
+      "node_id": "a167e076-7a31-450e-86c6-13c9a3dcbd43",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Donew",
+      "domain": "topic",
+      "node_id": "3e69e9c6-0401-452b-a166-f0ea43ca6188",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Duck Lake: The SQL-Backed Open Standard for Simplified Lakehouse Metadata",
+      "domain": "topic",
+      "node_id": "1b6ace77-54b9-4ace-a5d2-a2f93383dd17",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "DuckDB",
+      "domain": "topic",
+      "node_id": "19f43c4d-2d5c-4344-8d6d-91586d4df60a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "DuckLake",
+      "domain": "topic",
+      "node_id": "70973461-f62b-4640-a77b-99f461660e60",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Dynamic Tables",
+      "domain": "topic",
+      "node_id": "a96ef4e5-6620-491e-b325-b935336b7440",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "EDA",
+      "domain": "topic",
+      "node_id": "77e8b7e9-5beb-4e96-b216-391a0ed44365",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "EKS",
+      "domain": "topic",
+      "node_id": "264aac77-1810-4dc3-be82-8716d36111f5",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "ELMo",
+      "domain": "topic",
+      "node_id": "5fd63a65-27a5-4bb8-ae79-7ca02dc9916b",
+      "tier": "org"
+    },
+    {
+      "name": "EMR",
+      "domain": "topic",
+      "node_id": "84e0ff18-557f-4555-a574-b0b2512d0b05",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Edge",
+      "domain": "topic",
+      "node_id": "ae691b71-ef06-4ea4-ae51-6ce441d51f99",
+      "tier": "org"
+    },
+    {
+      "name": "Elasticsearch",
+      "domain": "topic",
+      "node_id": "b1095cca-28e3-41eb-b957-1a5c4dd39bb3",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Embeddable Graph Databases with KuzuDB",
+      "domain": "topic",
+      "node_id": "031b3552-1d7d-4336-a6b7-80c0e3ad18cd",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "English Wikipedia",
+      "domain": "topic",
+      "node_id": "97173fb3-3f18-4825-a76b-bb564602be8b",
+      "tier": "org"
+    },
+    {
+      "name": "Enterprise Knowledge Management",
+      "domain": "topic",
+      "node_id": "c31dd1a6-6e2a-4c10-8ec4-24d610cf7c82",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Explainability",
+      "domain": "topic",
+      "node_id": "3efa2d56-3ba6-4ca9-93a1-ab874381d22d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Feature-based approach",
+      "domain": "topic",
+      "node_id": "23e10773-64fe-4cf2-9c3e-6d9bf3ab38db",
+      "tier": "org"
+    },
+    {
+      "name": "Federated Identity",
+      "domain": "topic",
+      "node_id": "1c9639db-3fac-417d-9622-84fa99f1608b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Fine-tuning",
+      "domain": "topic",
+      "node_id": "167e27f7-30d5-426f-9d43-6799418ccbd3",
+      "tier": "org"
+    },
+    {
+      "name": "Flink",
+      "domain": "topic",
+      "node_id": "4bb2fc45-936b-4367-99cb-3eb68697e1b6",
+      "tier": "org"
+    },
+    {
+      "name": "Foundation models",
+      "domain": "topic",
+      "node_id": "12ed4206-a2db-4e48-a0e0-a5f0dcb147db",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "GLUE benchmark",
+      "domain": "topic",
+      "node_id": "58257898-6523-434f-bb47-6e534c4be3cc",
+      "tier": "org"
+    },
+    {
+      "name": "GLUE benchmark",
+      "domain": "topic",
+      "node_id": "d7ecc586-ff61-4361-9e82-ff3104f59dc9",
+      "tier": "org"
+    },
+    {
+      "name": "GQL",
+      "domain": "topic",
+      "node_id": "c4f874de-bc8e-4db2-9a7f-f082c767fc43",
+      "tier": "org"
+    },
+    {
+      "name": "GWT",
+      "domain": "topic",
+      "node_id": "f69d3f40-6ed1-4467-8f65-8a565515cdab",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Git",
+      "domain": "topic",
+      "node_id": "07695481-f104-4171-b7bb-a74ea34430cf",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Glue",
+      "domain": "topic",
+      "node_id": "9c8d8ad7-948c-407b-b415-748a14093478",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "GoLang",
+      "domain": "topic",
+      "node_id": "cb7344ab-df06-4e78-874a-e95c039bafdf",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Governance",
+      "domain": "topic",
+      "node_id": "529afa23-ac52-4bfd-ace5-47159c8ab38c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Graph Database",
+      "domain": "topic",
+      "node_id": "0eaf8ed1-24b7-4956-af5f-18956a29ae99",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Graph Databases",
+      "domain": "topic",
+      "node_id": "4ce8b9f5-16f6-4404-8216-908199f3b644",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Graph UX",
+      "domain": "topic",
+      "node_id": "9e784ed3-d0da-44f6-a8cc-66c0dbf08572",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Graph database",
+      "domain": "topic",
+      "node_id": "0097a720-1324-41ae-b7cc-c9d83ea270f1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Gremlin",
+      "domain": "topic",
+      "node_id": "c45f5da7-1082-497f-b9a3-cb7c0fee75f4",
+      "tier": "org"
+    },
+    {
+      "name": "HDFS",
+      "domain": "topic",
+      "node_id": "367b9e77-9a81-4fe7-838c-1fb2daebb144",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Hadoop ecosystem",
+      "domain": "topic",
+      "node_id": "aa808171-53c3-478b-8db8-e62aa29cf3b7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Haystack",
+      "domain": "topic",
+      "node_id": "95e8627c-4bee-4a2e-b454-d690889fd7cf",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Hibernate",
+      "domain": "topic",
+      "node_id": "f6d35829-26e4-4617-9ba6-d7aacb30df59",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Hive",
+      "domain": "topic",
+      "node_id": "6f89902d-8f5b-475d-b085-2eb438be8e06",
+      "tier": "org"
+    },
+    {
+      "name": "Hive",
+      "domain": "topic",
+      "node_id": "f2986e64-4909-4f6a-9ab4-a3ec40ba8752",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Hyper-parameter Tuning",
+      "domain": "topic",
+      "node_id": "f632cff9-c435-4057-a6d1-0e266f3ba2f7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "IBM Watson",
+      "domain": "topic",
+      "node_id": "dda54db2-5a1c-4fb3-9766-38d3f1ef60d8",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Impala",
+      "domain": "topic",
+      "node_id": "4fbf8c9b-3af3-4a43-b511-ada18b2194b2",
+      "tier": "org"
+    },
+    {
+      "name": "Incremental View Maintenance Engines",
+      "domain": "topic",
+      "node_id": "a07da051-b3a9-4261-8828-a03421d2ebf0",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Index-free adjacency",
+      "domain": "topic",
+      "node_id": "606d4fa7-9e91-4aca-9946-886a76d4733c",
+      "tier": "org"
+    },
+    {
+      "name": "Infrastructure as Code",
+      "domain": "topic",
+      "node_id": "11e54e05-1211-473a-aeb4-38f04513b866",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "JSON",
+      "domain": "topic",
+      "node_id": "bec05f6f-1e79-4713-b296-77990a16e494",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "JSON-RPC",
+      "domain": "topic",
+      "node_id": "4f23ed8c-8149-46b7-a9d3-f37650c2060f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Java",
+      "domain": "topic",
+      "node_id": "ac5fe7a5-3652-4716-b262-8f91222d1c02",
+      "tier": "org"
+    },
+    {
+      "name": "Java",
+      "domain": "topic",
+      "node_id": "cfc942b1-8445-4734-b063-2b70d6c15981",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Jenkins",
+      "domain": "topic",
+      "node_id": "659b9bf0-32c2-43b9-80d0-866928547fd8",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Kafka",
+      "domain": "topic",
+      "node_id": "90472c47-790e-4db8-9a60-759e0268e873",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Kafka Streams",
+      "domain": "topic",
+      "node_id": "2fd51d76-1870-48fb-8b87-99a65012e63d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Knowledge Graph",
+      "domain": "topic",
+      "node_id": "4733e6df-7dc3-469f-afcf-de40bcfd041c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Kubernetes",
+      "domain": "topic",
+      "node_id": "8b683343-523b-4190-b617-955eb4f7d3f7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Kuzu",
+      "domain": "topic",
+      "node_id": "3ecdd6f0-b807-4d07-b6fb-cc2a4986ac02",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "KuzuDB",
+      "domain": "topic",
+      "node_id": "5d9b1b9c-343c-43cb-9ee6-568c8c9f819d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "LLM",
+      "domain": "topic",
+      "node_id": "19016b6f-305c-4415-8359-047ed35ec09f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Labeled-property graph",
+      "domain": "topic",
+      "node_id": "bb016be2-0fb1-41bd-b429-2b157cfd0d3b",
+      "tier": "org"
+    },
+    {
+      "name": "Lake Formation",
+      "domain": "topic",
+      "node_id": "b36c3be3-1b35-4d26-8c8c-08c212b90217",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Lakehouse Architectures",
+      "domain": "topic",
+      "node_id": "b0bd3d07-fe5d-46e1-a474-274b9e131c7b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "Lakehouse"
+      ]
+    },
+    {
+      "name": "Lakehouse ecosystem",
+      "domain": "topic",
+      "node_id": "f5d23c39-f850-4d75-9ad8-1276e9a1bb32",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Lance tables",
+      "domain": "topic",
+      "node_id": "05b1ad75-c49d-4a7c-b9a6-39d482bf7e0a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "LangChain",
+      "domain": "topic",
+      "node_id": "84c9524d-89c6-4fef-a433-c1d0c1bc4e1c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "LangGraph",
+      "domain": "topic",
+      "node_id": "7ab67b8c-139b-4851-ad1c-aef56439425e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Langflow",
+      "domain": "topic",
+      "node_id": "7895b4d7-8dea-4305-9ef9-1369be1045a5",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Language Server Protocol (LSP)",
+      "domain": "topic",
+      "node_id": "372f9770-860a-4d8f-ab35-4160b9ed3240",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "LSP",
+        "Language Server Protocol"
+      ]
+    },
+    {
+      "name": "Language model pre-training",
+      "domain": "topic",
+      "node_id": "fa702785-fcd6-491f-9a14-17e1cce7e6c3",
+      "tier": "org"
+    },
+    {
+      "name": "Language models",
+      "domain": "topic",
+      "node_id": "741d8c73-ded0-4a2e-8bb0-65cc822ca2d6",
+      "tier": "org"
+    },
+    {
+      "name": "Language models (LLMs)",
+      "domain": "topic",
+      "node_id": "cbce5c73-198d-47a0-8c58-887d2946c5d9",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "LLMs",
+        "Language models"
+      ]
+    },
+    {
+      "name": "Lava agent model",
+      "domain": "topic",
+      "node_id": "4f0f6061-9183-4a33-9e92-2b8131ebcd7e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Lead Tools API",
+      "domain": "topic",
+      "node_id": "22895658-4388-4c67-95c6-af4f8ee9a588",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "LlamaIndex",
+      "domain": "topic",
+      "node_id": "093a40d4-cf27-4b73-bbbf-8e14b973c5d2",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Logistic Regression",
+      "domain": "topic",
+      "node_id": "b60782c3-9c44-4a63-91ef-29ba440e446c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "MCP",
+      "domain": "topic",
+      "node_id": "360e7b8f-5e46-4824-b290-a557145ebe09",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "MNLI",
+      "domain": "topic",
+      "node_id": "4e479eff-300f-4f58-bc7d-7d0b515122da",
+      "tier": "org"
+    },
+    {
+      "name": "MRPC",
+      "domain": "topic",
+      "node_id": "f3c8733b-af0d-4e30-b9e1-44acd2960ecf",
+      "tier": "org"
+    },
+    {
+      "name": "MSK",
+      "domain": "topic",
+      "node_id": "0763df7a-f6ce-4c7a-9f48-be4341e4cddb",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Machine learning",
+      "domain": "topic",
+      "node_id": "1623fbde-0280-483d-af17-c35523dac929",
+      "tier": "org"
+    },
+    {
+      "name": "Manifest files",
+      "domain": "topic",
+      "node_id": "795dfa65-e9eb-495e-a02d-7fb3bcfa421e",
+      "tier": "org"
+    },
+    {
+      "name": "Masked Language Model",
+      "domain": "topic",
+      "node_id": "b846a99a-c332-49fa-b17b-d761e89cb29a",
+      "tier": "org"
+    },
+    {
+      "name": "Masked language model",
+      "domain": "topic",
+      "node_id": "c451dac3-b6c4-489b-afa8-1d8cc2615890",
+      "tier": "org"
+    },
+    {
+      "name": "Materialise",
+      "domain": "topic",
+      "node_id": "883a38a3-a76b-4c11-a5b7-6298f4707acb",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Materialized Views",
+      "domain": "topic",
+      "node_id": "1ad242e5-a58a-4af1-9bb2-32d88eeec3bb",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Metadata Orchestration",
+      "domain": "topic",
+      "node_id": "7bf5d148-1dcd-4bec-a932-b7bac2c5ffba",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Metadata management",
+      "domain": "topic",
+      "node_id": "41ce0598-4d31-416f-ade1-725ef5a17f68",
+      "tier": "org"
+    },
+    {
+      "name": "Microservices",
+      "domain": "topic",
+      "node_id": "420c64a0-56a0-4211-a02d-25c347b955b4",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Model Context Protocol",
+      "domain": "topic",
+      "node_id": "7e07ac69-c990-43c5-81fb-6254bfca7c8d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Model Context Protocol (MCP): The Open Standard for Context-Aware AI",
+      "domain": "topic",
+      "node_id": "790968a0-e4b3-4652-8b64-88df034f1afe",
+      "tier": "org",
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+    },
+    {
+      "name": "MonetDB",
+      "domain": "topic",
+      "node_id": "f8ea8cd0-4cc5-444e-9627-73ebfa83b4f3",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "MongoDB",
+      "domain": "topic",
+      "node_id": "1a5c27cb-4c6e-4070-b89f-1db0e8d877c1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Multimodal graph RAG",
+      "domain": "topic",
+      "node_id": "f0439133-a77c-46ff-a0cf-490536025fb5",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "NER",
+      "domain": "topic",
+      "node_id": "701746f6-94c5-4d2d-9abc-6332138f9068",
+      "tier": "org"
+    },
+    {
+      "name": "Natural language processing",
+      "domain": "topic",
+      "node_id": "9dc75619-637f-4a1a-8bdd-f7c8c79a82c5",
+      "tier": "org"
+    },
+    {
+      "name": "Neo4j",
+      "domain": "topic",
+      "node_id": "d7f83d94-5718-457b-98af-8bd218f8171e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Next Sentence Prediction",
+      "domain": "topic",
+      "node_id": "14fc186d-726c-4fd4-8cfd-31f9d38bb2fd",
+      "tier": "org"
+    },
+    {
+      "name": "Next sentence prediction",
+      "domain": "topic",
+      "node_id": "1d882022-65dd-469d-9b7e-06e5dee44591",
+      "tier": "org"
+    },
+    {
+      "name": "NoSQL",
+      "domain": "topic",
+      "node_id": "9d1f2810-0ead-4614-9fdd-4e6933725df7",
+      "tier": "org"
+    },
+    {
+      "name": "Node",
+      "domain": "topic",
+      "node_id": "026c0eef-f06c-42b4-ba77-d10b88780ed7",
+      "tier": "org"
+    },
+    {
+      "name": "OpenAI",
+      "domain": "topic",
+      "node_id": "ee9186cf-242f-43ea-a361-7608ed0d701f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "OpenAI GPT",
+      "domain": "topic",
+      "node_id": "de460e0a-41d3-4c7c-8efb-c5388e635ca9",
+      "tier": "org"
+    },
+    {
+      "name": "Parquet",
+      "domain": "topic",
+      "node_id": "7bb130e8-db91-469d-b0a8-02d5807b0310",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Pig",
+      "domain": "topic",
+      "node_id": "fcd28e81-7f3c-4820-95bb-9cf0a88481a7",
+      "tier": "org"
+    },
+    {
+      "name": "Pig",
+      "domain": "topic",
+      "node_id": "ef03c246-dffd-43bf-a43f-58f356144087",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Platform Engineering",
+      "domain": "topic",
+      "node_id": "a50c0d62-cef7-4c0a-9eed-44f04e0dfa63",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Polars data fraome",
+      "domain": "topic",
+      "node_id": "450c909c-d126-4620-acda-f3b06d49eb2a",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Postgres",
+      "domain": "topic",
+      "node_id": "95975517-42c6-4d4e-827b-af47edd21977",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Pre-training",
+      "domain": "topic",
+      "node_id": "7df1a5f1-3099-453a-9e05-8d4ebdcc2e57",
+      "tier": "org"
+    },
+    {
+      "name": "Presto",
+      "domain": "topic",
+      "node_id": "b8234f50-9d56-48a7-b898-d875c9bbdb55",
+      "tier": "org"
+    },
+    {
+      "name": "Presto",
+      "domain": "topic",
+      "node_id": "2b17be12-d0be-4669-bec9-a498e9e66bd5",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Progressive Disclosure",
+      "domain": "topic",
+      "node_id": "5cc27463-f85c-427d-a0f9-c8d2f78ac744",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Property",
+      "domain": "topic",
+      "node_id": "a1c70d79-3b91-4ae7-918c-e0d0020afc56",
+      "tier": "org"
+    },
+    {
+      "name": "Protocol Buffer",
+      "domain": "topic",
+      "node_id": "daf54b30-8e68-4342-a0c0-76895bda2588",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Public Cloud",
+      "domain": "topic",
+      "node_id": "e19a1c27-c9ae-417d-8c9e-e5633bca689f",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Pydantic",
+      "domain": "topic",
+      "node_id": "63d3cb3b-8786-4251-9d5a-870621e5374b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Python",
+      "domain": "topic",
+      "node_id": "22c798da-4c5e-42b4-afe7-f4975be6f4df",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Python",
+      "domain": "topic",
+      "node_id": "47ba6fb6-7a77-4c08-9e2a-e2a7498ff38e",
+      "tier": "org"
+    },
+    {
+      "name": "QNLI",
+      "domain": "topic",
+      "node_id": "ee10bbb4-7afd-4894-a5bc-439cdb8b0b9f",
+      "tier": "org"
+    },
+    {
+      "name": "QQP",
+      "domain": "topic",
+      "node_id": "8bc97e97-4c07-457e-8306-64e792736819",
+      "tier": "org"
+    },
+    {
+      "name": "Quarkus",
+      "domain": "topic",
+      "node_id": "83debf56-5bc1-468e-aa9b-9172c85cbb75",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Question Answering",
+      "domain": "topic",
+      "node_id": "7c4a7575-65a5-4446-9946-c8614bba0f1e",
+      "tier": "org"
+    },
+    {
+      "name": "RAG (Retrieval-Augmented Generation)",
+      "domain": "topic",
+      "node_id": "03b94837-a462-4086-ba16-80e70439d45b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "RAG",
+        "Retrieval-Augmented Generation"
+      ]
+    },
+    {
+      "name": "RDF",
+      "domain": "topic",
+      "node_id": "6adbd5cc-bd68-4d2d-9a6a-30a8e15b7dd6",
+      "tier": "org"
+    },
+    {
+      "name": "RDS",
+      "domain": "topic",
+      "node_id": "0c2e96c7-4b81-49e3-84b6-329916967019",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "RTE",
+      "domain": "topic",
+      "node_id": "bfdbcc99-2e4c-4779-b653-c379b49982ac",
+      "tier": "org"
+    },
+    {
+      "name": "Random Forest",
+      "domain": "topic",
+      "node_id": "dff16173-98f1-4a8d-86e3-804d41f66d29",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "React",
+      "domain": "topic",
+      "node_id": "ddc78402-c8a4-4bd9-b51a-ee7e860b2161",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Redshift",
+      "domain": "topic",
+      "node_id": "79e8e037-4016-4fd9-97cb-a3697f5b331e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Representation learning",
+      "domain": "topic",
+      "node_id": "f3ac4903-ba5d-4ce5-82a9-51dd3d590899",
+      "tier": "org"
+    },
+    {
+      "name": "Retrieval-Augmented Generation",
+      "domain": "topic",
+      "node_id": "8de7d77e-78a8-43fb-b6cb-0fd5683e4338",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Rust",
+      "domain": "topic",
+      "node_id": "c20e6532-28a6-4774-a17e-6987370ef26c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "SPARQL",
+      "domain": "topic",
+      "node_id": "3707c786-e3ca-492a-850f-224818859ff4",
+      "tier": "org"
+    },
+    {
+      "name": "SQL",
+      "domain": "topic",
+      "node_id": "d00e3078-ed39-4415-a772-b5529672f080",
+      "tier": "org"
+    },
+    {
+      "name": "SQL",
+      "domain": "topic",
+      "node_id": "2bfc983c-f95c-4169-b843-a5933c9ac733",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "SQuAD",
+      "domain": "topic",
+      "node_id": "5f73b42a-1dea-4999-8784-70a4651df80f",
+      "tier": "org"
+    },
+    {
+      "name": "SST-2",
+      "domain": "topic",
+      "node_id": "3e9affc7-b8ca-430e-a111-2a4bd751068e",
+      "tier": "org"
+    },
+    {
+      "name": "STS-B",
+      "domain": "topic",
+      "node_id": "d3562003-cbf3-41b0-a995-b48382201011",
+      "tier": "org"
+    },
+    {
+      "name": "SWAG",
+      "domain": "topic",
+      "node_id": "1c7a2830-fc1b-48a1-bc3f-c3ebcd66271d",
+      "tier": "org"
+    },
+    {
+      "name": "Scala",
+      "domain": "topic",
+      "node_id": "11966bd8-1922-4e59-85da-ca5f94b32290",
+      "tier": "org"
+    },
+    {
+      "name": "Scaling and consistency",
+      "domain": "topic",
+      "node_id": "c309223a-d565-4cc8-9c27-e5cd6b1cf839",
+      "tier": "org"
+    },
+    {
+      "name": "SecDB",
+      "domain": "topic",
+      "node_id": "8a78b60a-2cf2-4f26-8679-d2df6b93e9c7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Self-attention mechanism",
+      "domain": "topic",
+      "node_id": "ea717662-67e2-4cc1-9dbb-7b2e9043c7f2",
+      "tier": "org",
+      "aliases": [
+        "Self-attention"
+      ]
+    },
+    {
+      "name": "Semantic Search",
+      "domain": "topic",
+      "node_id": "23b297e1-9eda-4d18-ae17-c7e7668de104",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Sentence Pair Classification",
+      "domain": "topic",
+      "node_id": "b5019914-3f4f-4346-b231-df39719f38fc",
+      "tier": "org"
+    },
+    {
+      "name": "Sentence-level tasks",
+      "domain": "topic",
+      "node_id": "bd9e4f04-b53c-4389-86d1-59ef3a8cfd8f",
+      "tier": "org"
+    },
+    {
+      "name": "Single Sentence Classification",
+      "domain": "topic",
+      "node_id": "e403b161-7374-4958-aca4-ac744872d625",
+      "tier": "org"
+    },
+    {
+      "name": "Single Sentence Tagging",
+      "domain": "topic",
+      "node_id": "01875f8f-8a7b-4c4d-9489-39a7be21ea63",
+      "tier": "org"
+    },
+    {
+      "name": "Slang",
+      "domain": "topic",
+      "node_id": "96f29b1c-9e01-4f37-b76e-4107f79e3fe1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Snapshot isolation",
+      "domain": "topic",
+      "node_id": "2923541a-5f9e-4663-a3fd-03728ca739a9",
+      "tier": "org"
+    },
+    {
+      "name": "Snowflake",
+      "domain": "topic",
+      "node_id": "963c23c4-2555-4a99-b540-c5930a747036",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Software Architecture",
+      "domain": "topic",
+      "node_id": "aba72942-129a-40d8-aec3-88b132c603ae",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "Software"
+      ]
+    },
+    {
+      "name": "Spark",
+      "domain": "topic",
+      "node_id": "5706df6f-acad-4373-8940-462ced87b858",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Spring",
+      "domain": "topic",
+      "node_id": "f558eebe-f774-4649-a95f-1c28e912d0f7",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Starburst",
+      "domain": "topic",
+      "node_id": "e4112b36-132d-4abd-aaec-3cfe2259cc3b",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Statistics",
+      "domain": "topic",
+      "node_id": "bc56c496-4b16-4341-99fc-85ef8f871939",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Step Function",
+      "domain": "topic",
+      "node_id": "f0088661-9abd-4ba0-b9dc-bdf6981f7197",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Streaming Programming Models",
+      "domain": "topic",
+      "node_id": "26ab04ee-c52f-4913-b006-a69cecd2bd77",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Streaming Technology",
+      "domain": "topic",
+      "node_id": "c7e15c38-c681-4a1f-bbaf-4f7ebfa28499",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Struts",
+      "domain": "topic",
+      "node_id": "3ebbd5e7-e1ab-4f22-b208-fa2094fbc8d3",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Sybase",
+      "domain": "topic",
+      "node_id": "0c4079e7-ed3c-4719-bdf3-542f4c757dbf",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Tabular",
+      "domain": "topic",
+      "node_id": "35b45b64-d350-4546-ba1e-826af128ee60",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Tabular.io",
+      "domain": "topic",
+      "node_id": "bb754335-e003-4cdb-a932-81d1b989da74",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Terraform",
+      "domain": "topic",
+      "node_id": "ac8e03fc-6e2b-4cb3-8c58-69ae345046f1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Text-only RAG",
+      "domain": "topic",
+      "node_id": "a7bad394-6c51-476f-b983-8db6092c5fd1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Thrift API",
+      "domain": "topic",
+      "node_id": "5a806cd2-6d25-46da-a55c-aecbb4616d6d",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Time travel",
+      "domain": "topic",
+      "node_id": "b93b6d82-3067-46b7-8eee-377c94227744",
+      "tier": "org"
+    },
+    {
+      "name": "Token-level tasks",
+      "domain": "topic",
+      "node_id": "6566c08f-aab5-4ee8-94c1-3518a7b5efee",
+      "tier": "org"
+    },
+    {
+      "name": "Tomcat",
+      "domain": "topic",
+      "node_id": "a182451d-1542-4736-8c41-36d3549d5f49",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "TopDB",
+      "domain": "topic",
+      "node_id": "9867f162-33a1-42ce-bfd3-aa12ab6c0225",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Transfer learning",
+      "domain": "topic",
+      "node_id": "6eec8950-4da3-47f8-b703-d17c4323abf3",
+      "tier": "org"
+    },
+    {
+      "name": "Transfer learning from supervised data",
+      "domain": "topic",
+      "node_id": "89267fb0-140e-4272-9f53-caa5a6bafb42",
+      "tier": "org"
+    },
+    {
+      "name": "Transformer",
+      "domain": "topic",
+      "node_id": "896590f7-db47-4af2-bb45-82cfc1e6ddb4",
+      "tier": "org"
+    },
+    {
+      "name": "Transformer encoder",
+      "domain": "topic",
+      "node_id": "74783bbb-cbfe-4cf1-aa20-023af029b653",
+      "tier": "org"
+    },
+    {
+      "name": "Trino",
+      "domain": "topic",
+      "node_id": "7b054cae-6627-4979-8d34-4a5da77a620b",
+      "tier": "org"
+    },
+    {
+      "name": "Trino",
+      "domain": "topic",
+      "node_id": "259e6b2f-0959-422f-949b-ac42ac4fc9b0",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "TriviaQA",
+      "domain": "topic",
+      "node_id": "22dbac56-9b8c-4bf9-bb37-e9a6b944e441",
+      "tier": "org"
+    },
+    {
+      "name": "TypeScript",
+      "domain": "topic",
+      "node_id": "a9525f94-7cb9-4717-881b-fb04c5eb2232",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Umbra",
+      "domain": "topic",
+      "node_id": "e6d2d48c-9d6a-4c4c-8452-c4a448c282d2",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "VC++",
+      "domain": "topic",
+      "node_id": "dab959ce-1834-49f6-a47a-962b45ee046c",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "VS Code",
+      "domain": "topic",
+      "node_id": "dc0ed990-c312-412e-b976-bf06329cfef5",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Vector Search",
+      "domain": "topic",
+      "node_id": "ef3cc289-0b86-4ac2-abfe-5a8e4734e9d6",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "Vector database",
+      "domain": "topic",
+      "node_id": "986e35cc-934b-4ac7-bf80-18f3923416db",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "WordPiece embeddings",
+      "domain": "topic",
+      "node_id": "7fc91717-5fca-4aaf-88e9-44ae13a4e97b",
+      "tier": "org"
+    },
+    {
+      "name": "WordPiece tokenization",
+      "domain": "topic",
+      "node_id": "2231ae52-1a9c-408e-89ac-4febc4ce313a",
+      "tier": "org"
+    },
+    {
+      "name": "Zero Trust Architecture",
+      "domain": "topic",
+      "node_id": "fd0eda44-9d66-415d-8816-ab8a230137b1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN",
+      "aliases": [
+        "Zero Trust"
+      ]
+    },
+    {
+      "name": "parquet files",
+      "domain": "topic",
+      "node_id": "89b8d744-ee12-4c94-ab2f-664ae444c7c0",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "parquet format",
+      "domain": "topic",
+      "node_id": "034bbe70-a14e-4d16-9f38-38e7a52b4cc1",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
+    },
+    {
+      "name": "tensor2tensor",
+      "domain": "topic",
+      "node_id": "91da0db6-2bd0-435f-88ac-b1b70a33b32a",
+      "tier": "org"
+    },
+    {
+      "name": "write-ahead log",
+      "domain": "topic",
+      "node_id": "3b62469b-3a9f-4088-b590-0c00ce98ff9e",
+      "tier": "SYSTEM",
+      "owner_id": "user_SYSTEM_ADMIN"
     },
     {
       "name": "Apache Iceberg",

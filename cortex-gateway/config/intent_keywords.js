@@ -64,6 +64,28 @@ module.exports = {
     // A named person is recognized by full name, or by a single name part of at least this many letters
     // that belongs to exactly one visible person ("Sangeetha"; "David" is shared, so it never matches).
     personNamePartMinChars: 4,
+    // ── Routing v2 (cross-domain design 2026-11-09 §4.1; utils/routing_v2.js) ──────────────────────────────
+    // Explicit scope: a word that names where to look. Forces those domains (rule 2: content-kind words such as
+    // "discussion" or "talk" only add weight and are NOT listed here). Includes container words ("the … page",
+    // "the … episode"). Evidence: the labelled routing set (tests/routing_eval) and its rules G1/G2.
+    routingScopeWords: {
+        podcast: ['podcast', 'podcasts', 'episode', 'episodes', 'podcast guests'],
+        document: ['my documents', 'my files', 'documents', 'paper', 'papers', 'pdf', 'whitepaper', 'slides', 'deck'],
+        website: ['page', 'pages', 'website', 'websites', 'wikipedia', 'wiki'],
+        career: ['career', 'thought leadership', 'certifications', 'certification', 'hackathons', 'companies'],
+    },
+    // Content kind: adds weight to a domain's score, never decides (rule 2).
+    routingContentKindWords: {
+        podcast: ['discussion', 'discussed', 'discuss', 'discusses', 'talk', 'talks', 'said', 'say', 'experts'],
+        career: ['written', 'wrote', 'article', 'articles', 'built', 'worked'],
+        document: ['written', 'article', 'study'],
+        website: ['article'],
+    },
+    // Bridge phrasing beyond Phase R's cross_domain patterns.
+    routingBridgePatternSource: '\\bconnect(?:s|ed)?\\s+across\\b|\\brelation(?:ship)?\\s+between\\b',
+    // A career title's head before these separators also names it ("Volarisation Engine @ IBM Dev Day 2026").
+    routingTitleHeadSeparators: [' @ ', ' (', ': '],
+    routingTitleHeadMinWords: 2,
     singleWordAllowlist: [
         'podcast',      // user_queries.md Q1; live Episode content references "Data Engineering Podcast"; 13 real historical queries
         'podcasts',     // S2-78 (daily log 2026-11-04 §4): "Find podcasts and Sangeetha's work on graph databases" — the plural is never matched by \bpodcast\b

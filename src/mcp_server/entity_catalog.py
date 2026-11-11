@@ -14,9 +14,11 @@ Design: documents/architecture/entity-catalog-freshness-design-2026-10-27.md
 import re
 from datetime import datetime, timezone
 
-from domain_registry import ROUTING_NAME_LABELS, ROUTING_PERSON_LABELS, ROUTING_SOURCE_DOMAINS
-from schema_guard import (ENTITY_CATALOG_VERSION_KEY_PREFIX, SOURCE_SHORT_NAME_MIN_CHARS,
-                          SOURCE_SHORT_NAME_SEPARATORS)
+from domain_registry import (CONTENT_DOMAINS, ROUTING_NAME_LABELS, ROUTING_PERSON_LABELS, ROUTING_SOURCE_DOMAINS,
+                             ROUTING_TOPIC_LABELS, TOPIC_ALIAS_GENERIC_SUFFIXES, TOPIC_ALIAS_MIN_CHARS,
+                             get_exclusive_labels)
+from schema_guard import (CONSUMPTION_RELATIONSHIPS, ENTITY_CATALOG_VERSION_KEY_PREFIX, SIMILARITY_RELATIONSHIPS,
+                          SOURCE_SHORT_NAME_MIN_CHARS, SOURCE_SHORT_NAME_SEPARATORS)
 
 GLOBAL_TIERS = ["SYSTEM", "PUBLIC"]
 ORG_TIER = "org"
@@ -51,6 +53,20 @@ def short_name(title: str):
         return None
     s = head[0].strip()
     return s if len(s) >= SOURCE_SHORT_NAME_MIN_CHARS else None
+
+
+def topic_aliases(name: str) -> list:
+    """Extra names a topic answers to: both sides of a parenthesis, and the name without a trailing generic word."""
+    import re as _re
+    out = set()
+    m = _re.fullmatch(r"\s*(.+?)\s*\((.+)\)\s*", name)
+    parts = [m.group(1), m.group(2)] if m else [name]
+    for p in parts:
+        out.add(p.strip())
+        words = p.strip().split()
+        if len(words) > 1 and words[-1].lower() in TOPIC_ALIAS_GENERIC_SUFFIXES:
+            out.add(" ".join(words[:-1]))
+    return sorted(a for a in out if len(a) >= TOPIC_ALIAS_MIN_CHARS and a.lower() != name.lower())
 
 
 def _domain_for(labels: set):
@@ -97,7 +113,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             entries.append(entry)
 
         # Persons' work domains (cross-domain design 2026-11-09 §4.1, S2-78): the routing domains of the
-        # titled nodes a person is directly linked to (roles, projects, talks → career; episodes → podcast).
+        # titled nodes a person is directly linked to (roles, projects, talks → career; episodes → podcast),
+        # not counting consumption (listening, subscribing) or similarity links.
         # Lets the gateway send "What has <person> written about X?" to the domain their work lives in —
         # career for the founder, not for a podcast guest. Same tiers as the entries; a routing hint only,
         # answers stay filtered per user.
@@ -106,15 +123,49 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             work_rows = session.run(
                 """
                 MATCH (p) WHERE p.node_id IN $ids
-                MATCH (p)--(w) WHERE w.tenant_id IN $tiers AND any(l IN labels(w) WHERE l IN $labels)
+                MATCH (p)-[r]-(w) WHERE w.tenant_id IN $tiers AND any(l IN labels(w) WHERE l IN $labels)
+                  AND NOT type(r) IN $not_work
                 RETURN p.node_id AS id, collect(DISTINCT labels(w)) AS label_sets
                 """,
-                ids=person_ids, tiers=tiers, labels=sorted({l for ls in ROUTING_NAME_LABELS.values() for l in ls})).data()
+                ids=person_ids, tiers=tiers, labels=sorted({l for ls in ROUTING_NAME_LABELS.values() for l in ls}),
+                not_work=CONSUMPTION_RELATIONSHIPS + SIMILARITY_RELATIONSHIPS).data()
             work = {r["id"]: sorted({d for ls in r["label_sets"] if (d := _domain_for(set(ls))) and d != "person"})
                     for r in work_rows}
             for e in entries:
                 if e["domain"] == "person":
                     e["work_domains"] = work.get(e["node_id"], [])
+
+        # Topics (routing v2, design 2026-11-09 §4.1 rule 1): shared vocabulary names linked to real content
+        # (a node with a content domain's exclusive label), with aliases. Visibility per entry like titles.
+        content_labels = sorted({l for d in CONTENT_DOMAINS for l in get_exclusive_labels(d)})
+        topic_rows = session.run(
+            """
+            MATCH (t) WHERE any(l IN labels(t) WHERE l IN $topic_labels) AND t.name IS NOT NULL
+              AND t.tenant_id IN $tiers
+              AND EXISTS { MATCH (t)-[r]-(c) WHERE NOT type(r) IN $sim AND c.tenant_id IN $tiers
+                           AND (any(l IN labels(c) WHERE l IN $content_labels)
+                                // podcast technologies hang off an episode's Topic (Episode-HAS_TOPIC-Topic-COVERS_TECHNOLOGY)
+                                OR (c:Topic AND EXISTS { MATCH (c)-[r2]-(e) WHERE NOT type(r2) IN $sim
+                                                          AND any(l IN labels(e) WHERE l IN $content_labels)
+                                                          AND e.tenant_id IN $tiers })) }
+            RETURN DISTINCT t.name AS name, t.node_id AS node_id, t.tenant_id AS tenant, t.owner_id AS owner_id
+            """,
+            topic_labels=ROUTING_TOPIC_LABELS, tiers=tiers, content_labels=content_labels,
+            sim=SIMILARITY_RELATIONSHIPS).data()
+        seen_topics = set()
+        for r in topic_rows:
+            name = (r["name"] or "").strip()
+            if len(name) < TOPIC_ALIAS_MIN_CHARS or (name.lower(), r["node_id"]) in seen_topics:
+                continue
+            seen_topics.add((name.lower(), r["node_id"]))
+            entry = {"name": name, "domain": "topic", "node_id": r["node_id"],
+                     "tier": r["tenant"] if r["tenant"] in GLOBAL_TIERS else ORG_TIER}
+            if r["owner_id"]:
+                entry["owner_id"] = r["owner_id"]
+            aliases = topic_aliases(name)
+            if aliases:
+                entry["aliases"] = aliases
+            entries.append(entry)
 
         # Bridge entities: Concept/Technology names connected to both website and podcast data. Matched
         # by name across the two MATCHes (the same concept can exist as a SYSTEM and an org node).

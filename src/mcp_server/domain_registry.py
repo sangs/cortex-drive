@@ -472,6 +472,12 @@ ROUTING_NAME_LABELS = {
 ROUTING_PERSON_LABELS = ["Person"]
 # Sources whose titles get short names (S2-60 §9).
 ROUTING_SOURCE_DOMAINS = ["website", "document"]
+# Routing v2 topics (design 2026-11-09 §4.1 rule 1): shared vocabulary names the catalog offers as topics, kept only
+# when linked to real content; aliases drop a trailing generic word ("Zero Trust Architecture" → "Zero Trust") or
+# split a parenthesis ("RAG (Retrieval-Augmented Generation)" → "RAG", "Retrieval-Augmented Generation").
+ROUTING_TOPIC_LABELS = ["Technology", "Concept", "Topic"]
+TOPIC_ALIAS_GENERIC_SUFFIXES = ["architecture", "architectures", "mechanism", "framework", "frameworks"]
+TOPIC_ALIAS_MIN_CHARS = 3
 
 
 def get_exclusive_labels(domain: str) -> list:

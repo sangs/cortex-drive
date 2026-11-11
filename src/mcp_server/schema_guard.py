@@ -235,6 +235,10 @@ SIMILARITY_RELATIONSHIPS = ['IS_SIMILAR', 'SIMILAR', 'SEMANTICALLY_SIMILAR_KNN']
 # is building). A bridge whose first hop from the source goes to a Person by one of these runs through the
 # source's own author/owner (P4, "the talk connects to its author"); such paths collapse into one
 # "same author" line (design 2026-11-09 §4.3). Listening/subscribing is not own work.
+# Consumption: a person listening to, subscribing to or learning from content. Not their own work — excluded when
+# the routing catalog decides which domains a person's work lives in (routing v2, design 2026-11-09 §4.1).
+CONSUMPTION_RELATIONSHIPS = ['LISTENS_TO', 'LISTENS_TO_EPISODE', 'SUBSCRIBES_TO', 'LEARNING_FROM']
+
 OWN_WORK_RELATIONSHIPS = ['AUTHORED', 'CO_AUTHORED', 'CREATED', 'HELD_ROLE', 'CONTRIBUTED_TO', 'LED',
                           'CURRENTLY_BUILDING']
 
