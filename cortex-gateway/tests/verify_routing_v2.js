@@ -80,6 +80,14 @@ const route = (q, lk = owner, cov = full) => routeQuestion(q, lk, { coverage: co
     r = await routeQuestion('What has David said about MCP?', owner, { coverage: full, resolvedPersons: ['David Soria Parra'] });
     eq([r.mode, r.domains, r.roles.subject], ['single', ['podcast'], ['David Soria Parra']], 'chosen person → no second question');
 
+    // A domain the check did not report is unknown, not empty (production Bento without the document domain)
+    r = await route('Tell me about Kafka', owner, async () => ({ career: false, podcast: false, website: false }));
+    eq([r.no_data, r.coverage_unavailable], [undefined, true], 'document not reported → no "no data"');
+    // The owner sees SYSTEM/PUBLIC entries even when someone else is their owner_id
+    const sys = buildRoutingLookups({ entries: [{ name: 'Graph Databases', domain: 'topic', node_id: 't', tier: 'SYSTEM', owner_id: 'user_SYSTEM_ADMIN' }] },
+                                    { isOwner: true, allowedIds: [], userId: 'owner' });
+    eq(sys.topics.has('graph databases'), true, 'owner keeps built-in topics');
+
     // Coverage client: maps domains, null on failure / timeout / no requester
     const ok = createDomainCoverage({ post: async () => ({ coverage: { professional: true, podcast: false, extra: true } }), log: { warn() {} } });
     eq(await ok({ tenantId: 't', userId: 'u' }, ['kafka']), { career: true, podcast: false }, 'professional → career; unknown keys dropped');

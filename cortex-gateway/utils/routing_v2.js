@@ -27,6 +27,7 @@ const SAFE_DEFAULT = 'career';
 const CAREER = 'career';
 const DOCUMENT = 'document';
 const CROSS_DOMAIN = 'cross_domain';
+const KNOWN_DOMAINS = ['career', 'podcast', 'website', 'document'];
 const SCORE = { scope: 1.0, subject: 0.9, title: 0.9, coverage: 0.6, contentKind: 0.1 };
 
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -133,7 +134,7 @@ async function routeQuestion(question, lookups, opts = {}) {
     const work = name => (lookups.personWork && lookups.personWork.get(name)) || [];
     const subjectDomains = new Set(subject.flatMap(work));
     const subjectWork = subject.length && WORK_RE && WORK_RE.test(q);
-    const roles = { subject, topic: topicHits.map(t => t.value), container: titleOnly.filter(t => scope.has(t.value)).map(t => t.value) };
+    const roles = { subject, topic: topicHits.map(t => t.value), container: titleOnly.filter(t => scope.has(t.value)).map(t => q.slice(t.start, t.end)) };
     const scores = {};
     const bump = (d, s) => { if (enabled(d)) scores[d] = Math.max(scores[d] || 0, s); };
     for (const d of Object.keys(kinds)) scores[d] = (scores[d] || 0) + SCORE.contentKind;
@@ -145,6 +146,8 @@ async function routeQuestion(question, lookups, opts = {}) {
         // The words the asker used ("zero trust"), which also match the node's full name.
         const c = await opts.coverage(topicHits.map(t => q.slice(t.start, t.end)));
         if (c == null) { coverageUnavailable = true; return new Set(); }   // never read a failed check as "no data"
+        // A domain the gateway searches but the check did not report (e.g. disabled there) is unknown, not empty.
+        if (KNOWN_DOMAINS.filter(enabled).some(d => !(d in c))) coverageUnavailable = true;
         const out = new Set(Object.entries(c || {}).filter(([d, hit]) => hit && enabled(d)).map(([d]) => d));
         out.forEach(d => bump(d, SCORE.coverage));
         return out;

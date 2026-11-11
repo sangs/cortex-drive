@@ -173,7 +173,10 @@ function buildRoutingLookups(catalog, viewer) {
     const allowed = viewer && !viewer.isOwner ? allowedIds : null;
     // The owner opens every tenant title except sources another user added (`owner_id`), which they
     // reach only through Permify like anyone else (2026-10-28, roles doc §4).
-    const ownerCanOpen = e => !e.owner_id || e.owner_id === viewer.userId || Boolean(allowedIds && allowedIds.has(e.node_id));
+    // SYSTEM/PUBLIC entries are open to everyone, the owner included (their owner_id is user_SYSTEM_ADMIN or the
+    // founder; found 2026-11-10: the owner's routing dropped every built-in topic).
+    const ownerCanOpen = e => GLOBAL_TIERS.has(e.tier) || !e.owner_id || e.owner_id === viewer.userId
+        || Boolean(allowedIds && allowedIds.has(e.node_id));
     const canOpen = e => (viewer && viewer.isOwner ? ownerCanOpen(e)
         : (!allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id))));
     const entity = new Map();   // lowerCaseName → domain
