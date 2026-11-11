@@ -34,7 +34,10 @@ gcloud builds submit \
 # This string is the full, authoritative plain-env-var set for cortex-bento —
 # gcloud run deploy --set-env-vars REPLACES the live set rather than merging with
 # it, so anything live but missing from this string is silently dropped on deploy.
-NEW_ENV_VARS="PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION}"
+# ENABLE_DOCUMENT_DOMAIN (2026-11-10): Bento serves the routing coverage check, the catalog and the panel layouts,
+# which must see the document domain exactly as the gateway and MCP do (found by the routing v2 production test).
+NEW_ENV_VARS="PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
+ENABLE_DOCUMENT_DOMAIN=${ENABLE_DOCUMENT_DOMAIN:?run: source scripts/cloud-env.sh}"
 
 # --- Env-var drift guard --------------------------------------------------
 # Same incident class as cortex-gateway's build-deploy-gateway.sh (2026-09-08):
