@@ -153,6 +153,14 @@ class LiveBridgesTest(unittest.TestCase):
                     for nxt in outgoing.get(c, ()):
                         self.assertFalse(nodes[nxt].get("is_bridge"), f"{src}: walked through a hub")
 
+    def test_portfolio_sections_never_connect(self):
+        for src in self.SOURCES:
+            out = self.bridges(src)
+            connectors = [n for n in out["nodes"] if n.get("is_bridge")]
+            self.assertFalse([n["name"] for n in connectors if n["type"] in reg.BRIDGE_NON_CONNECTOR_LABELS], src)
+        names = {n["name"] for n in self.bridges(self.SOURCES[3])["nodes"] if n.get("bridge_reason")}
+        self.assertNotIn("LangGraph", names, "Cortex-Drive no longer reaches LangGraph through its portfolio section")
+
     def test_at_most_one_similarity_link_per_path(self):
         for src in self.SOURCES:
             for n in self.bridges(src)["nodes"]:

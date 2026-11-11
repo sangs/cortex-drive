@@ -3024,8 +3024,10 @@ class ExpertTools:
         import time
         from domain_registry import (BRIDGE_DEEPENING_MAX_HOPS, BRIDGE_FRONTIER_MAX,
                                      BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_MAX_HOPS)
+        from domain_registry import BRIDGE_NON_CONNECTOR_LABELS
         from schema_guard import SEED_BUILTIN_VOCABULARY_LABELS
         vocab = set(SEED_BUILTIN_VOCABULARY_LABELS)
+        non_connector = set(BRIDGE_NON_CONNECTOR_LABELS)
         global_tiers = {"SYSTEM", "PUBLIC"}
 
         node_info = {source_eid: source_info}
@@ -3059,12 +3061,13 @@ class ExpertTools:
                 parent[nid] = (pid, rel, path_sim, hops)
                 is_hub = (r["sdeg"] or 0) > BRIDGE_HUB_DEGREE_THRESHOLD
                 is_vocab = r["tenant"] in global_tiers and bool(set(labels) & vocab)
+                is_grouper = bool(set(labels) & non_connector)
                 node_info[nid]["is_hub"] = is_hub
-                node_info[nid]["terminal"] = is_vocab
+                node_info[nid]["terminal"] = is_vocab or is_grouper
                 # Reached through a hub: an endpoint only. Vocabulary: an endpoint only (never scan
-                # every organization's links). Hub: may be the last connector (one more step, endpoints
-                # only), never walked through.
-                if last_of.get(pid) or is_vocab:
+                # every organization's links). Structural grouper (portfolio section): an endpoint only.
+                # Hub: may be the last connector (one more step, endpoints only), never walked through.
+                if last_of.get(pid) or is_vocab or is_grouper:
                     continue
                 next_frontier.append((r["sdeg"] or 0, {"id": nid, "sim_used": path_sim, "last": is_hub}))
             # Bound each hop: least-connected nodes first (the most specific connectors).

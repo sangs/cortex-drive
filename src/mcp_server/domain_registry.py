@@ -187,6 +187,10 @@ BRIDGE_MAX_SIMILARITY_LINKS_PER_PATH = 1
 # A path through a hub connector says little ("both link to the founder"): allowed as the last connector, ranked
 # well below paths through specific connectors (P4).
 BRIDGE_HUB_CONNECTOR_PENALTY = float(os.environ.get("BRIDGE_HUB_CONNECTOR_PENALTY", "0.25"))
+# Structural groupers (portfolio sections such as "Open Source & Independent Ventures"): two items in the same
+# section are not related by that fact, so a grouper may end a bridge but never connect one (user decision
+# 2026-11-10: Cortex-Drive → section → sibling project → LangGraph read as "Cortex-Drive uses LangGraph").
+BRIDGE_NON_CONNECTOR_LABELS = ["Category"]
 
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
