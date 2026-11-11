@@ -641,7 +641,17 @@ export default function DashboardPage() {
             setLastBridge(null);
             setUndoStack([]);
 
-            const result = await query(userMsg, history, forceRefresh, convId, clarifyChoice);
+            // Cross-domain answers stream per-domain progress (design §4.2), shown in the same status line as bridges.
+            const result = await query(userMsg, history, forceRefresh, convId, clarifyChoice, (e) =>
+                setBridgeProgress(prev => {
+                    const list = prev ? [...prev] : [];
+                    const item = { id: e.domain, name: bridgeDomainName(e.domain === 'career' ? 'professional' : e.domain, bridgeOptions),
+                                   status: (e.status === 'timeout' ? 'error' : e.status) as BridgeProgressItem['status'], count: e.count };
+                    const at = list.findIndex(p => p.id === e.domain);
+                    if (at >= 0) list[at] = item; else list.push(item);
+                    return list;
+                }));
+            setBridgeProgress(null);
 
             if (result.access_scope) setAccessScope(result.access_scope);
 
@@ -1506,7 +1516,7 @@ export default function DashboardPage() {
                             <div className="flex justify-start">
                                 <div className="flex items-center gap-3 text-primary text-sm font-bold animate-pulse" aria-live="polite">
                                     <BrainCircuit className="w-4 h-4" />
-                                    {bridgeProgress ? `Finding bridges — ${bridgeProgressText(bridgeProgress)}` : 'Synthesizing...'}
+                                    {bridgeProgress ? `${lastBridge || selectedNode ? 'Finding bridges' : 'Searching'} — ${bridgeProgressText(bridgeProgress)}` : 'Synthesizing...'}
                                 </div>
                             </div>
                         )}

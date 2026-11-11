@@ -1,4 +1,6 @@
 import type { ClarifyChoice } from '../utils/clarify';
+import { readQueryStream } from '../utils/queryStream';
+import type { QueryProgressEvent } from '../utils/queryStream';
 export class MCPClient {
     private serverUrl: string;
     private messageUrl: string | null = null;
@@ -64,17 +66,19 @@ export class MCPClient {
      * Sends a natural language query to the Gateway's orchestration endpoint.
      */
     async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal, conversationId?: string,
-                clarifyChoice?: ClarifyChoice) {
+                clarifyChoice?: ClarifyChoice, onProgress?: (event: QueryProgressEvent) => void) {
         const baseUrl = new URL(this.serverUrl);
         const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
         const gatewayUrl = `${gatewayBase}/query`;
 
         console.log(`Sending orchestration query to: ${gatewayUrl} (ForceRefresh: ${forceRefresh})`);
         const token = await this.getToken();
-        
+
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             "x-tenant-id": this.tenantId,
+            // Cross-domain answers stream per-domain progress (design 2026-11-09 §4.2); everything else stays JSON.
+            "Accept": "text/event-stream, application/json",
         };
         if (token) {
             headers["Authorization"] = `Bearer ${token}`;
@@ -92,6 +96,9 @@ export class MCPClient {
             throw new Error(`Orchestration query failed: ${response.statusText}`);
         }
 
+        if ((response.headers.get("Content-Type") || "").includes("text/event-stream") && response.body) {
+            return await readQueryStream(response.body, onProgress);
+        }
         return await response.json();
     }
 }

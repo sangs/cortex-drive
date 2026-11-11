@@ -1,5 +1,6 @@
 "use client";
 import type { ClarifyChoice } from '../utils/clarify';
+import type { QueryProgressEvent } from '../utils/queryStream';
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
@@ -59,7 +60,7 @@ export function useMCP() {
     }, []);
 
     const query = useCallback(async (question: string, history: any[] = [], forceRefresh: boolean = false, conversationId?: string,
-                                     clarifyChoice?: ClarifyChoice) => {
+                                     clarifyChoice?: ClarifyChoice, onProgress?: (event: QueryProgressEvent) => void) => {
         if (!clientRef.current) throw new Error("MCP Client not initialized");
 
         // Abort any existing query
@@ -69,7 +70,7 @@ export function useMCP() {
         abortControllerRef.current = controller;
 
         try {
-            return await clientRef.current.query(question, history, forceRefresh, controller.signal, conversationId, clarifyChoice);
+            return await clientRef.current.query(question, history, forceRefresh, controller.signal, conversationId, clarifyChoice, onProgress);
         } finally {
             if (abortControllerRef.current === controller) {
                 abortControllerRef.current = null;

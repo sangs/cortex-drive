@@ -687,6 +687,73 @@ const shareLinks = createShareLinks({
     },
 });
 
+// Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
+const { runCrossMode, crossEvidenceText, SEARCH_INTENT: CROSS_SEARCH_INTENT } = require('./utils/cross_mode');
+const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
+
+/**
+ * Runs cross mode for one /query turn and returns the response payload. `send(event)` streams progress when the
+ * browser asked for a stream (no-op otherwise). Same rules as the tool loop: compact evidence only to the LLM
+ * (Invariant 6), "No data found" without an LLM call when nothing was found (AP-25), URL audit (AP-15).
+ */
+async function answerCrossMode({ req, question, history, routing, tenantId, userId, accessScope, send }) {
+    const urls = new Set();
+    let hadToolFailure = false;
+    const callTool = async (tool, args) => {
+        const mcp = await callMcpTool(tenantId, tool, args, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+        const text = mcp?.result?.content?.[0]?.text;
+        const parsed = text ? JSON.parse(text) : { error: 'empty tool result' };
+        if (isToolErrorResult(parsed)) hadToolFailure = true;
+        else extractToolUrls(parsed).forEach(u => urls.add(u));
+        return parsed;
+    };
+    const filter = (domain, parsed) => {
+        const allowed = DOMAIN_ALLOWED_TYPES[domain];
+        return allowed && parsed.nodes ? { ...parsed, nodes: parsed.nodes.filter(n => allowed.has(n.type)) } : parsed;
+    };
+    const terms = routing.roles.topic.length ? routing.roles.topic : [question];
+    const result = await runCrossMode({
+        domains: routing.domains, terms, weights: routing.domain_scores || {}, callTool, filter,
+        onProgress: e => send({ type: 'progress', ...e }),
+    });
+    console.log(`[CROSS] ${JSON.stringify(result.status)} bridges=${result.bridges.length} nodes=${result.graph.nodes.length}`);
+    let answer;
+    if (!result.anyEvidence) {
+        answer = NO_DATA_FOUND_ANSWER(question);
+    } else {
+        const summarise = (domain, nodes) => buildLlmToolContent('search_enterprise_graph',
+            JSON.stringify({ nodes, links: [] }), { domain_intent: CROSS_SEARCH_INTENT[domain] || domain });
+        const evidence = crossEvidenceText(result, summarise);
+        const system = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req))
+            + '\n\n' + gatewayCrossDomainAnswerPrompt;
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: system },
+                ...(history || []),
+                { role: 'user', content: question },
+                { role: 'system', content: `EVIDENCE (the only source you may use):\n\n${evidence}` },
+            ],
+            temperature: ANSWER_TEMPERATURE,
+        });
+        answer = completion.choices[0].message.content || NO_DATA_FOUND_ANSWER(question);
+    }
+    const auditedAnswer = auditResponseUrls(answer, urls);
+    const hasGraph = result.graph.nodes.length > 0;
+    return {
+        payload: {
+            answer: auditedAnswer,
+            raw_data: hasGraph ? JSON.stringify(result.graph) : null,
+            domain_signal: 'cross_domain',
+            routing: routingSummary(routing),
+            cross: { status: result.status, bridges: result.bridges.length },
+            access_scope: accessScope,
+        },
+        cacheable: isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph }),
+        graph: hasGraph ? result.graph : null,
+    };
+}
+
 // Routing v2 (cross-domain design 2026-11-09 §4.1, §4.5): ROUTING_V2 = off (default) | owner (the platform owner's
 // account only — for testing in production without changing anyone else's answers) | true (everyone).
 const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? process.env.ROUTING_V2 : 'off';
@@ -3439,6 +3506,26 @@ app.post('/query', authMiddleware, async (req, res) => {
             if (routingV2.mode === 'single' || routingV2.mode === 'bridge') {
                 domainSignal = routingV2.domain;
                 domainConfident = true;
+            }
+            // Cross mode (design §4.2): each domain searched separately, merged, bridged; progress streamed when the
+            // browser asks for text/event-stream (one request, one auth, one audit entry; §4.2 decision).
+            if (routingV2.mode === 'cross') {
+                const stream = String(req.headers.accept || '').includes('text/event-stream');
+                if (stream) {
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.flushHeaders();
+                }
+                const send = event => { if (stream && !isAborted) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+                const cross = await answerCrossMode({ req, question, history, routing: routingV2, tenantId, userId, accessScope, send });
+                if (cross.cacheable) await setCachedQueryResponse(cacheKey, cross.payload);
+                persistConversationTurn({ tenantId, userId, conversationId, userContent: question,
+                                          assistantContent: cross.payload.answer, domainSignal: 'cross_domain',
+                                          graphSnapshot: cross.graph })
+                    .catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
+                if (stream) { send({ type: 'result', ...cross.payload }); return res.end(); }
+                return res.send(cross.payload);
             }
         }
 
