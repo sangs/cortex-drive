@@ -687,8 +687,10 @@ const shareLinks = createShareLinks({
     },
 });
 
-// Routing v2 (cross-domain design 2026-11-09 §4.1, §4.5): off unless ROUTING_V2=true.
-const ROUTING_V2_ENABLED = process.env.ROUTING_V2 === 'true';
+// Routing v2 (cross-domain design 2026-11-09 §4.1, §4.5): ROUTING_V2 = off (default) | owner (the platform owner's
+// account only — for testing in production without changing anyone else's answers) | true (everyone).
+const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? process.env.ROUTING_V2 : 'off';
+const routingV2For = userId => ROUTING_V2_MODE === 'true' || (ROUTING_V2_MODE === 'owner' && isOwner(userId));
 const { routeQuestion, routingSummary, routingV2EarlyResponse } = require('./utils/routing_v2');
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
 const domainCoverage = createDomainCoverage({
@@ -3420,7 +3422,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         // keep today's routing until cross mode (step 4) and the §4.5 overview exist. A failed coverage check never
         // becomes "no data" (it falls back to today's routing).
         let routingV2 = null;
-        if (ROUTING_V2_ENABLED) {
+        if (routingV2For(userId)) {
             routingV2 = await routeQuestion(question, routingLookups, {
                 coverage: terms => domainCoverage({ tenantId, userId, guestAnchor: req.headers['x-guest-share-anchor'] || '' }, terms),
                 resolvedPersons: resolveClarifyChoice(clarifyChoice, routingLookups),
