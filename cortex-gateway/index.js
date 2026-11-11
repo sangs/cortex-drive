@@ -693,6 +693,7 @@ const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? pro
 const routingV2For = userId => ROUTING_V2_MODE === 'true' || (ROUTING_V2_MODE === 'owner' && isOwner(userId));
 const { routeQuestion, routingSummary, routingV2EarlyResponse } = require('./utils/routing_v2');
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
+const { mustGround, toolChoiceFor } = require('./utils/grounding_guard');
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -3498,6 +3499,8 @@ app.post('/query', authMiddleware, async (req, res) => {
         // and how many returned evidence the LLM could ground an answer in. If calls > 0 and
         // evidence === 0, the LLM's answer can only have come from training data.
         let dataToolCalls = 0;
+        // Grounding guard (Invariant 11): a new, non-small-talk question must call a data tool first.
+        const groundThisTurn = mustGround(question, history);
         let groundingEvidence = 0;
         // Phase B M5 (M5-7): documents cited this turn → stored with the cached answer, so revision-based
         // cache eviction (Flow 1 steps 2b/13c, planned) can be built later without changing the tool.
@@ -3551,7 +3554,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                 model: "gpt-4o",
                 messages: messages,
                 tools: offeredTools,
-                tool_choice: "auto",
+                tool_choice: toolChoiceFor(loopCount, groundThisTurn),
                 temperature: ANSWER_TEMPERATURE,
             });
 
@@ -3953,6 +3956,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // called no tool at all (greetings, follow-ups answered from history) are untouched.
                 if (dataToolCalls > 0 && groundingEvidence === 0) {
                     console.warn(`[GROUNDING] ${dataToolCalls} data tool call(s), 0 with evidence — answer replaced with "No data found"`);
+                    finalAnswer = NO_DATA_FOUND_ANSWER(question);
+                }
+                // Grounding guard (Invariant 11, 2026-11-10): a new question answered with no data tool at all.
+                if (groundThisTurn && dataToolCalls === 0) {
+                    console.warn('[GROUNDING] new question answered with no data tool — answer replaced with "No data found"');
                     finalAnswer = NO_DATA_FOUND_ANSWER(question);
                 }
                 // Audit response for hallucinated URLs before sending.

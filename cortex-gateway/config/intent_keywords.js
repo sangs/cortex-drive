@@ -86,6 +86,9 @@ module.exports = {
     // A career title's head before these separators also names it ("Volarisation Engine @ IBM Dev Day 2026").
     routingTitleHeadSeparators: [' @ ', ' (', ': '],
     routingTitleHeadMinWords: 2,
+    // Whole-message small talk (greetings, thanks). Only these may be answered without a data tool on a new
+    // conversation (grounding guard, Invariant 11 / AP-25, 2026-11-10); §4.5 will answer them without the LLM.
+    smallTalkPatternSource: '^\\s*(?:hi|hello|hey|hiya|thanks|thank you|thx|cheers|good (?:morning|afternoon|evening)|bye|goodbye|ok|okay)(?:\\s+(?:there|again|so much|a lot))?[\\s!.?]*$',
     singleWordAllowlist: [
         'podcast',      // user_queries.md Q1; live Episode content references "Data Engineering Podcast"; 13 real historical queries
         'podcasts',     // S2-78 (daily log 2026-11-04 §4): "Find podcasts and Sangeetha's work on graph databases" — the plural is never matched by \bpodcast\b

@@ -17,9 +17,10 @@ const system = fs.readFileSync(path.join(root, 'prompts', 'gateway_system_assist
 const q2 = fs.readFileSync(path.join(root, 'prompts', 'gateway_q2_writer.md'), 'utf8');
 
 ok(/const ANSWER_TEMPERATURE = 0;/.test(src), 'answer temperature is 0');
-const loops = src.match(/tool_choice: "auto",\s*temperature: ANSWER_TEMPERATURE,/g) || [];
+// Any tool_choice (the /query loop uses the grounding guard's toolChoiceFor since 2026-11-10); the temperature is the point.
+const loops = src.match(/tool_choice: [^\n]+,\s*temperature: ANSWER_TEMPERATURE,/g) || [];
 ok(loops.length === 2, '/query and /sse tool loops both use ANSWER_TEMPERATURE');
-ok(!/tool_choice: "auto",\s*\}\)/.test(src), 'no tool loop left on the default temperature');
+ok(!/tool_choice: [^\n]+,\s*\}\)/.test(src), 'no tool loop left on the default temperature');
 ok(/max_tokens: 200,\s*temperature: ANSWER_TEMPERATURE/.test(src), 'Q2 writer uses ANSWER_TEMPERATURE');
 ok(/WORDING GROUNDING:/.test(system) && /Do NOT coin new terms/.test(system), 'system prompt forbids coined terms');
 ok(/never coin new terms/.test(q2), 'Q2 writer prompt forbids coined terms');
