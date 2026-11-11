@@ -690,6 +690,11 @@ const shareLinks = createShareLinks({
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
 const { runCrossMode, crossEvidenceText, SEARCH_INTENT: CROSS_SEARCH_INTENT } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
+// Bridge endpoints in cross mode: types that belong to one domain only (from the manifests), minus structural ones.
+const CROSS_NON_ANCHOR_TYPES = new Set(['Category', 'Year', 'Tool', 'PreparatoryNote', 'Chunk', 'Source', 'SourceSnapshot', 'ContentBlock']);
+const CROSS_CONTENT_TYPES = Object.fromEntries(Object.entries(DOMAIN_ALLOWED_TYPES).map(([d, types]) => [d, new Set(
+    [...types].filter(t => !CROSS_NON_ANCHOR_TYPES.has(t)
+        && !Object.entries(DOMAIN_ALLOWED_TYPES).some(([o, other]) => o !== d && other.has(t))))]));
 
 /**
  * Runs cross mode for one /query turn and returns the response payload. `send(event)` streams progress when the
@@ -714,6 +719,7 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
     const terms = routing.roles.topic.length ? routing.roles.topic : [question];
     const result = await runCrossMode({
         domains: routing.domains, terms, weights: routing.domain_scores || {}, callTool, filter,
+        isContent: (domain, n) => Boolean(CROSS_CONTENT_TYPES[domain] && CROSS_CONTENT_TYPES[domain].has(n.type)),
         onProgress: e => send({ type: 'progress', ...e }),
     });
     console.log(`[CROSS] ${JSON.stringify(result.status)} bridges=${result.bridges.length} nodes=${result.graph.nodes.length}`);

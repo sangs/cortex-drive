@@ -56,9 +56,10 @@ function rrfMerge(lists, weights) {
  * @param {(domain: string, parsed: object) => object} [p.filter]        per-domain type filter (the gateway guard)
  * @param {(e: {domain: string, status: string, count: number}) => void} [p.onProgress]
  * @param {number} [p.deadlineMs]
+ * @param {(domain: string, node: object) => boolean} [p.isContent]  bridge endpoints: the domain's own content types
  */
 async function runCrossMode({ domains, terms, weights = {}, callTool, filter = (d, x) => x, onProgress = () => {},
-                              deadlineMs = CROSS_DOMAIN_SEARCH_DEADLINE_MS }) {
+                              deadlineMs = CROSS_DOMAIN_SEARCH_DEADLINE_MS, isContent = () => true }) {
     const keyword = terms.join(' ');
     const searched = await Promise.all(domains.map(async domain => {
         onProgress({ domain, status: 'searching', count: 0 });
@@ -98,7 +99,9 @@ async function runCrossMode({ domains, terms, weights = {}, callTool, filter = (
     }
 
     // Bridges between the top results of different domains (pair search).
-    const anchors = domains.map(d => evidence[d].filter(n => n.node_id).slice(0, CROSS_DOMAIN_ANCHORS_PER_DOMAIN));
+    // Endpoints are each domain's own content (an episode, a project, a page, a document), never shared vocabulary
+    // that happened to appear in a domain's results (found in production: "Governance" as a podcast endpoint).
+    const anchors = domains.map(d => evidence[d].filter(n => n.node_id && isContent(d, n)).slice(0, CROSS_DOMAIN_ANCHORS_PER_DOMAIN));
     const pairs = [];
     for (let i = 0; i < anchors.length; i++) {
         for (let j = i + 1; j < anchors.length; j++) {

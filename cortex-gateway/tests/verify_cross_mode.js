@@ -46,6 +46,13 @@ const node = (domain, i, extra = {}) => ({ id: `${domain}-${i}`, element_id: `${
     ok(text.includes('No data found in Cortex-Drive for "graph databases" in website'), 'empty domain named');
     ok(text.includes('career item 0 ↔ podcast item 0 via Graph Databases'), 'connection stated');
 
+    // Bridge endpoints are each domain's own content only
+    const r4 = await runCrossMode({ domains: ['career', 'podcast'], terms: ['x'], callTool,
+                                    isContent: (d, n) => !n.name.endsWith('item 0') });
+    const pairs4 = calls.filter(c => c[0] === 'bridges_between').pop()[1].pairs;
+    eq(pairs4.some(([a, b]) => a.endsWith('-n0') || b.endsWith('-n0')), false, 'non-content results never become endpoints');
+    eq(r4.evidence.career.length, CROSS_DOMAIN_LLM_QUOTA, 'non-content results still count as evidence');
+
     // Deadline and failure: named, never silently dropped; a failed bridge never hides results
     const slow = async (tool, args) => {
         if (tool === 'bridges_between') throw new Error('boom');
