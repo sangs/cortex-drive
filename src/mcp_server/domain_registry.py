@@ -191,6 +191,15 @@ BRIDGE_HUB_CONNECTOR_PENALTY = float(os.environ.get("BRIDGE_HUB_CONNECTOR_PENALT
 # section are not related by that fact, so a grouper may end a bridge but never connect one (user decision
 # 2026-11-10: Cortex-Drive → section → sibling project → LangGraph read as "Cortex-Drive uses LangGraph").
 BRIDGE_NON_CONNECTOR_LABELS = ["Category"]
+# Pair search (design 2026-11-09 §4.2 step 3 / §4.3 "explain this specific pair"): a bounded path between two KNOWN
+# nodes. Shared vocabulary may sit in the middle here (both ends are known, so no node's links are scanned blindly);
+# hubs, portfolio sections and more than one similarity link may not.
+BRIDGE_PAIR_MAX_HOPS = int(os.environ.get("BRIDGE_PAIR_MAX_HOPS", "4"))
+BRIDGE_PAIR_MAX_PAIRS = int(os.environ.get("BRIDGE_PAIR_MAX_PAIRS", "9"))
+# Shortest candidate paths per pair; the first without a hub or section in the middle is kept.
+BRIDGE_PAIR_CANDIDATES = int(os.environ.get("BRIDGE_PAIR_CANDIDATES", "5"))
+# Rounds of "exclude the hubs found, search again" per pair search.
+BRIDGE_PAIR_ROUNDS = int(os.environ.get("BRIDGE_PAIR_ROUNDS", "3"))
 
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as

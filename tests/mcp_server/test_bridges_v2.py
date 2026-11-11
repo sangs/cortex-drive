@@ -232,6 +232,58 @@ class LiveBridgesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("NEO4J_URI"), "needs NEO4J_* in .env")
+class PairSearchTest(unittest.TestCase):
+    """bridges_between (design §4.2 step 3): read-only, founder graph."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tools = ExpertTools(tenant_id=os.environ.get("TENANT_ID", ""))
+        q = lambda c: cls.tools._exec_query(c + " RETURN n.node_id AS id LIMIT 1").records[0]["id"]
+        cls.infoq = q("MATCH (n:ThoughtLeadership) WHERE n.name STARTS WITH 'InfoQ'")
+        cls.cortex = q("MATCH (n:Project {name: 'Cortex-Drive'})")
+        cls.iceberg_site = q("MATCH (n:WebsiteSource {name: 'Apache Iceberg'})")
+        cls.iceberg_ep = q("MATCH (n:Episode) WHERE n.name CONTAINS 'Iceberg at Netflix'")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tools.close()
+
+    def test_q3_talk_meets_project_at_a_concept(self):
+        b = json.loads(self.tools.bridges_between([[self.infoq, self.cortex]]))["bridges"]
+        self.assertEqual(len(b), 1)
+        self.assertEqual(b[0]["rels"], ["DISCUSSES", "DISCUSSES"], "through a shared concept, not the author")
+
+    def test_no_hub_or_section_in_the_middle(self):
+        from schema_guard import SIMILARITY_RELATIONSHIPS
+        out = json.loads(self.tools.bridges_between([[self.infoq, self.cortex], [self.iceberg_site, self.iceberg_ep]]))
+        middle_names = {v for b in out["bridges"] for v in b["via"]}
+        rows = self.tools._exec_query(
+            "MATCH (n) WHERE coalesce(n.name, n.title) IN $names RETURN labels(n) AS l, "
+            "COUNT { (n)-[r]-() WHERE NOT type(r) IN $sim } AS d", names=sorted(middle_names), sim=SIMILARITY_RELATIONSHIPS).records
+        for r in rows:
+            self.assertNotIn("Category", r["l"])
+            self.assertLessEqual(r["d"], HUB)
+        for b in out["bridges"]:
+            self.assertLessEqual(sum(x in SIMILARITY_RELATIONSHIPS for x in b["rels"]), 1)
+
+    def test_member_sees_only_visible_paths(self):
+        member = ExpertTools(tenant_id=os.environ.get("TENANT_ID", ""), requesting_user_id="user_test_member_no_shares",
+                             allowed_ids=[])
+        try:
+            out = json.loads(member.bridges_between([[self.infoq, self.cortex], [self.iceberg_site, self.iceberg_ep]]))
+        finally:
+            member.close()
+        ids = [n["node_id"] for n in out["nodes"]]
+        tiers = {r["t"] for r in self.tools._exec_query("MATCH (n) WHERE n.node_id IN $ids RETURN n.tenant_id AS t",
+                                                         ids=ids).records}
+        self.assertTrue(tiers <= {"SYSTEM", "PUBLIC"}, tiers)
+        self.assertEqual(len(out["bridges"]), 1, "the org website/episode pair is invisible to this member")
+
+    def test_bad_input_is_ignored(self):
+        self.assertEqual(json.loads(self.tools.bridges_between([["x"], [], ["a", "a"], None]))["bridges"], [])
+
+
+@unittest.skipUnless(os.environ.get("NEO4J_URI"), "needs NEO4J_* in .env")
 class SyntheticHubTest(unittest.TestCase):
     """TEST TENANT only: source → hub (5,000 links) → target; source → a → b → c (chain)."""
     LEAVES = 5000

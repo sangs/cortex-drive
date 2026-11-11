@@ -3196,6 +3196,85 @@ class ExpertTools:
         order = {tid: i for i, (tid, _) in enumerate(items)}
         return sorted(chosen, key=lambda kv: order[kv[0]])
 
+    def bridges_between(self, pairs: list) -> str:
+        """Pair search (cross-domain design 2026-11-09 §4.2 step 3): for each [from_node_id, to_node_id], the shortest
+        visible path of at most BRIDGE_PAIR_MAX_HOPS between the two known nodes. Every node on the path passes the
+        caller's security clause (inline, on every hop); no bridge-label node; no portfolio section or hub in the
+        middle; at most one similarity link. Shared vocabulary may be in the middle ("episode X and project Y meet at
+        Technology Z") because both ends are known. Hubs (a degree count, which Neo4j cannot evaluate inside the
+        path search) are checked on up to BRIDGE_PAIR_CANDIDATES shortest candidates per pair; a hub or section found in the
+        middle is excluded inside the search for the next round (at most BRIDGE_PAIR_ROUNDS). Read-only
+        (Invariant 5): returns session-only VIRTUAL_BRIDGE links. At most BRIDGE_PAIR_MAX_PAIRS pairs."""
+        from domain_registry import (BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_NON_CONNECTOR_LABELS, BRIDGE_PAIR_CANDIDATES,
+                                     BRIDGE_PAIR_MAX_HOPS, BRIDGE_PAIR_MAX_PAIRS, BRIDGE_PAIR_ROUNDS,
+                                     get_bridge_label_string)
+        from schema_guard import SIMILARITY_RELATIONSHIPS
+        clean = [[str(p[0]), str(p[1])] for p in (pairs or [])
+                 if isinstance(p, (list, tuple)) and len(p) == 2 and p[0] and p[1] and p[0] != p[1]][:BRIDGE_PAIR_MAX_PAIRS]
+        empty = json.dumps({"bridges": [], "nodes": [], "virtual_links": []})
+        if not clean:
+            return empty
+        bridge_labels = get_bridge_label_string()
+        non_connector = "|".join(BRIDGE_NON_CONNECTOR_LABELS)
+        query = f"""
+        UNWIND $pairs AS pr
+        MATCH (a {{node_id: pr[0]}}), (b {{node_id: pr[1]}})
+        WHERE ({self._get_security_clause("a")}) AND ({self._get_security_clause("b")})
+        MATCH p = SHORTEST {int(BRIDGE_PAIR_CANDIDATES)} (a) (()-[r]-(n)
+                    WHERE ({self._get_security_clause("n")}) AND NOT n:{bridge_labels}
+                      AND (n = b OR NOT elementId(n) IN $blocked)
+                  ){{1,{int(BRIDGE_PAIR_MAX_HOPS)}}} (b)
+        RETURN pr AS pair,
+               [x IN nodes(p) | {{id: elementId(x), element_id: elementId(x), node_id: x.node_id,
+                                  name: coalesce(x.name, x.title), type: labels(x)[0], labels: labels(x)}}] AS path_nodes,
+               [x IN relationships(p) | type(x)] AS rels
+        """
+        groupers = set(BRIDGE_NON_CONNECTOR_LABELS)
+        degree: dict = {}
+        blocked: set = set()      # hubs / sections found in the middle of a candidate: excluded in the next round
+        chosen: dict = {}
+        todo = clean
+        for _ in range(BRIDGE_PAIR_ROUNDS):
+            result = self._exec_query(query, **self._security_params(), pairs=todo, blocked=sorted(blocked))
+            candidates = [(tuple(r["pair"]), r["path_nodes"], r["rels"]) for r in result.records]
+            unknown = sorted({n["id"] for _, path, _ in candidates for n in path[1:-1]} - degree.keys())
+            if unknown:
+                rows = self._exec_query(
+                    f"""UNWIND $ids AS id MATCH (n) WHERE elementId(n) = id
+                        CALL (n) {{ MATCH (n)-[r]-(x) WHERE NOT type(r) IN $sim AND NOT x:{bridge_labels}
+                                   WITH x LIMIT $cap RETURN count(x) AS d }}
+                        RETURN id, d""",
+                    ids=unknown, sim=SIMILARITY_RELATIONSHIPS, cap=BRIDGE_HUB_DEGREE_THRESHOLD + 1).records
+                degree.update({r["id"]: r["d"] for r in rows})
+            for pair, path, rels in candidates:   # each pair's candidates arrive shortest first
+                if pair in chosen:
+                    continue
+                bad = [n["id"] for n in path[1:-1]
+                       if degree.get(n["id"], 0) > BRIDGE_HUB_DEGREE_THRESHOLD or set(n["labels"]) & groupers]
+                if bad:
+                    blocked.update(bad)
+                    continue
+                if sum(r in SIMILARITY_RELATIONSHIPS for r in rels) > 1:
+                    continue
+                chosen[pair] = (path, rels)
+            todo = [p for p in clean if tuple(p) not in chosen]
+            if not todo:
+                break
+        bridges, nodes, links, seen = [], {}, [], set()
+        for path, rels in chosen.values():
+            for n in path:
+                entry = {k: v for k, v in n.items() if k != "labels"}
+                nodes.setdefault(n["id"], {**entry, "has_federated_bridge": True})
+            for k in range(len(path) - 1):
+                key = (path[k]["id"], path[k + 1]["id"])
+                if key not in seen:
+                    seen.add(key)
+                    links.append({"source": path[k]["id"], "target": path[k + 1]["id"], "type": "VIRTUAL_BRIDGE",
+                                  "discovery_reason": f"via {rels[k]}"})
+            bridges.append({"from": path[0]["name"], "to": path[-1]["name"], "via": [n["name"] for n in path[1:-1]],
+                            "rels": rels, "hops": len(rels)})
+        return json.dumps({"bridges": bridges, "nodes": list(nodes.values()), "virtual_links": links})
+
     def domain_coverage(self, terms: list, domains: Optional[list] = None) -> dict:
         """Routing v2 coverage check (cross-domain discovery design 2026-11-09 §4.1 rule 3): for each content
         domain, does the caller see anything on these terms? A domain covers a term when a visible node with a

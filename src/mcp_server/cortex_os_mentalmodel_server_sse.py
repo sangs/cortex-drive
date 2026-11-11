@@ -717,14 +717,46 @@ async def search_enterprise_graph(
     user_id = user_id_var.get() or "trial-user"
     guest_anchor = guest_share_anchor_var.get() or ""
     allowed_ids = await _get_current_allowed_ids()
-    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    # Off the event loop (asyncio.to_thread): cross mode searches several domains in parallel (design §4.2).
+    def _search() -> str:
+        expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor,
+                             allowed_ids=allowed_ids)
+        try:
+            return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map,
+                                                  domain_intent=domain_intent, scoped_expansion=scoped_expansion)
+        finally:
+            expert.close()
     try:
-        return expert.search_enterprise_graph(keyword, requesting_user_id=user_id, wants_visual_map=wants_visual_map, domain_intent=domain_intent, scoped_expansion=scoped_expansion)
+        return await asyncio.to_thread(_search)
     except Exception as e:
         print(f"Error in search_enterprise_graph: {e}")
         return json.dumps({"error": str(e)})
-    finally:
-        expert.close()
+
+@mcp.tool()
+async def bridges_between(
+    pairs: List[List[str]] = Field(description="Gateway-internal (cross mode): pairs [from_node_id, to_node_id] to explain.")
+) -> str:
+    """
+    Gateway-internal, not offered to the chat LLM (tool_policy CHAT_EXCLUDED_TOOLS). For each pair of known nodes, the
+    shortest visible path between them (cross-domain design 2026-11-09 §4.2 step 3). Read-only; session-only links.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+
+    def _pairs() -> str:
+        expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor,
+                             allowed_ids=allowed_ids)
+        try:
+            return expert.bridges_between(pairs)
+        finally:
+            expert.close()
+    try:
+        return await asyncio.to_thread(_pairs)
+    except Exception as e:
+        print(f"Error in bridges_between: {e}")
+        return json.dumps({"error": str(e)})
 
 @mcp.tool()
 async def explore_graph_schema() -> str:
