@@ -489,6 +489,12 @@ ROUTING_SOURCE_DOMAINS = ["website", "document"]
 ROUTING_TOPIC_LABELS = ["Technology", "Concept", "Topic"]
 TOPIC_ALIAS_GENERIC_SUFFIXES = ["architecture", "architectures", "mechanism", "framework", "frameworks"]
 TOPIC_ALIAS_MIN_CHARS = 3
+# Vocabulary consolidation (design 2026-11-09 §5.0): the SYSTEM vocabulary labels whose duplicates are merged, the label
+# preference for a survivor on a tie, and names that look plural but are their own product names (never singularized).
+VOCABULARY_CONSOLIDATION_LABELS = ["Technology", "Concept", "Tool", "Topic"]
+VOCABULARY_SURVIVOR_LABEL_ORDER = ["Technology", "Concept", "Tool", "Topic"]
+VOCABULARY_DO_NOT_SINGULARIZE = ["kafka streams", "aws", "analytics", "kubernetes", "redis", "postgres", "series",
+                                 "lens", "pandas", "jenkins", "express"]
 
 
 def get_exclusive_labels(domain: str) -> list:
