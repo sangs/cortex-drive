@@ -4259,6 +4259,43 @@ app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluste
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 app.post('/api/list_bridge_domains', authMiddleware, mcpToolEndpoint('list_bridge_domains'));
+// Bento panel bridges on one streamed request (design 2026-11-09 §4.2 decision, step 4c): the gateway searches each
+// domain in parallel and streams `progress`, a `partial` per domain, then `result` (utils/bridge_stream.js).
+const { runBridgeStream } = require('./utils/bridge_stream');
+app.post('/api/bridges/stream', authMiddleware, async (req, res) => {
+    const tenantId = req.headers['x-tenant-id'];
+    const userId = req.headers['x-user-id'] || 'trial-user';
+    const body = req.body || {};
+    if (!body.source_node_id && !body.source_node_name) return res.status(400).json({ error: 'source_node_id required' });
+    let closed = false;
+    res.on('close', () => { if (!res.writableEnded) closed = true; });   // AP-17
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    const send = event => { if (!closed) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+    const callTool = async (tool, args) => {
+        if (closed) throw new Error('client disconnected');
+        const mcp = await callMcpTool(tenantId, tool, args, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+        const text = mcp?.result?.content?.[0]?.text;
+        return text ? JSON.parse(text) : { error: 'empty tool result' };
+    };
+    try {
+        await runBridgeStream({
+            callTool, send,
+            request: {
+                sourceNodeId: body.source_node_id, sourceNodeName: body.source_node_name,
+                targetDomains: Array.isArray(body.target_domains) ? body.target_domains : undefined,
+                limit: Number.isFinite(body.limit) ? body.limit : undefined,
+                visibleNodeIds: Array.isArray(body.visible_node_ids) ? body.visible_node_ids.slice(0, 300) : [],
+            },
+        });
+    } catch (e) {
+        console.error('[/api/bridges/stream]', e.message);
+        send({ type: 'error', error: e.message });
+    }
+    res.end();
+});
 app.post('/api/infer_context_on_demand', authMiddleware, mcpToolEndpoint('infer_context_on_demand'));
 app.post('/api/view_source_live', authMiddleware, mcpToolEndpoint('view_source_live'));
 

@@ -2431,9 +2431,14 @@ class ExpertTools:
         target_domains: Optional[list] = None,
         domain_filter: Optional[list] = None,
         visible_node_ids: Optional[list] = None,
+        per_domain_limit: Optional[int] = None,
     ) -> str:
         """
         Discover virtual cross-domain knowledge bridges for a specific node.
+
+        per_domain_limit (2026-11-12, step 4c): with domain_filter, the limit for the filtered domain(s) instead of the
+        share of `limit` — used by the gateway's streamed bridge route to give unused slots to domains that have more
+        (capped at BRIDGE_MAX_LIMIT).
 
         domain_filter / visible_node_ids (2026-11-10, design 2026-11-09 §4.3, Bento panel progress): the
         panel resolves nothing itself — it sends the same target_domains in one call per offered domain,
@@ -2587,6 +2592,8 @@ class ExpertTools:
                         out["skipped"] = True
                         return json.dumps(out)
                     limit = share * len(domains)   # this call's share; the response still reports reported_limit
+                    if per_domain_limit:
+                        limit = min(int(per_domain_limit), BRIDGE_MAX_LIMIT) * len(domains)
 
             # Step 2 (bridges v2, design 2026-11-09 §4.3): bounded search out from the source inside
             # Neo4j — never the whole graph. Security on every hop; bridge-label nodes never enter

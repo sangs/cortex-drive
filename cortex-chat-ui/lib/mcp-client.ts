@@ -1,5 +1,5 @@
 import type { ClarifyChoice } from '../utils/clarify';
-import { readQueryStream } from '../utils/queryStream';
+import { readEventStream, readQueryStream } from '../utils/queryStream';
 import type { QueryProgressEvent } from '../utils/queryStream';
 export class MCPClient {
     private serverUrl: string;
@@ -60,6 +60,25 @@ export class MCPClient {
         }
 
         throw new Error(`Unsupported sendMessage method: ${method}`);
+    }
+
+    /**
+     * Bento panel bridges on one streamed request (design 2026-11-09 §4.2, step 4c): `progress`, a `partial` per
+     * domain, then `result`. Every event goes to `onEvent`; resolves with the final result.
+     */
+    async streamBridges(body: Record<string, unknown>, onEvent: (e: any) => void, signal?: AbortSignal) {
+        const baseUrl = new URL(this.serverUrl);
+        const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
+        const token = await this.getToken();
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "x-tenant-id": this.tenantId,
+            "Accept": "text/event-stream",
+        };
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const response = await fetch(`${gatewayBase}/api/bridges/stream`, { method: "POST", headers, signal, body: JSON.stringify(body) });
+        if (!response.ok || !response.body) throw new Error(`Bridge discovery failed: ${response.statusText}`);
+        return await readEventStream(response.body, onEvent);
     }
 
     /**

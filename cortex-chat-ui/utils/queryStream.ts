@@ -35,3 +35,24 @@ export async function readQueryStream(body: ReadableStream<Uint8Array>, onProgre
     if (!result) throw new Error('The answer stream ended without a result');
     return result;
 }
+
+/** Read any gateway event stream to the end, passing every event to `onEvent`; returns the final `result` event. */
+export async function readEventStream(body: ReadableStream<Uint8Array>, onEvent: (e: any) => void): Promise<any> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: any = null;
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: true });
+        const { events, rest } = parseSseChunk(done ? buffer + '\n\n' : buffer);
+        buffer = rest;
+        for (const e of events) {
+            if (e.type === 'result') result = e;
+            onEvent(e);
+        }
+        if (done) break;
+    }
+    if (!result) throw new Error('The stream ended without a result');
+    return result;
+}

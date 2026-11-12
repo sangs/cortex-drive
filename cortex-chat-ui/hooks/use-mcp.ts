@@ -78,5 +78,10 @@ export function useMCP() {
         }
     }, []);
 
-    return { isConnected, responses, callTool, query, abortQuery };
+    const streamBridges = useCallback(async (body: Record<string, unknown>, onEvent: (e: any) => void) => {
+        if (!clientRef.current) throw new Error("MCP Client not initialized");
+        return await clientRef.current.streamBridges(body, onEvent);
+    }, []);
+
+    return { isConnected, responses, callTool, query, abortQuery, streamBridges };
 }

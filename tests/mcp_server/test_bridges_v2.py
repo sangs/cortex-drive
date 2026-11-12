@@ -209,6 +209,17 @@ class LiveBridgesTest(unittest.TestCase):
                                                                      domain_filter=[d]))
             self.assertTrue(part.get("skipped"), d)
 
+    def test_per_domain_limit_overrides_the_share(self):
+        sid = self.node(self.SOURCES[0])
+        share = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"],
+                                                                  domain_filter=["professional"]))
+        more = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"],
+                                                                 domain_filter=["professional"], per_domain_limit=8))
+        count = lambda r: sum(1 for n in r["nodes"] if n.get("bridge_reason"))
+        self.assertGreater(count(more), count(share))
+        self.assertLessEqual(count(more), 8)
+        self.assertEqual(more["limit"], share["limit"], "the caller's limit is still reported")
+
     def test_nodes_on_screen_are_not_offered_again(self):
         sid = self.node(self.SOURCES[0])
         full = json.loads(self.tools.connect_knowledge_on_demand(source_node_id=sid, target_domains=["auto"]))

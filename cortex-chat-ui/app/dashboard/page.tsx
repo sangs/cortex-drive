@@ -37,7 +37,7 @@ import { useMCP } from "@/hooks/use-mcp";
 import type { BridgeOptions, BridgeProgressItem } from "@/utils/bridgeTypes";
 import { clarifyChoiceFor, readClarify } from "@/utils/clarify";
 import type { Clarify, ClarifyChoice, ClarifyOption } from "@/utils/clarify";
-import { bridgeCallDomains, bridgeDomainName, bridgeProgressText, combineBridgeSummaries } from "@/utils/bridgeTypes";
+import { bridgeDomainName, bridgeProgressText, combineBridgeSummaries } from "@/utils/bridgeTypes";
 import { useCapabilities } from "@/hooks/use-capabilities";
 
 // 1. Dynamic Imports for heavy/client-only UI components to prevent Hydration errors
@@ -109,7 +109,7 @@ export default function DashboardPage() {
     const { getToken } = useAuth();
     // Controls this user may use (S2-69); all false until the gateway answers.
     const caps = useCapabilities();
-    const { isConnected, query, callTool, abortQuery } = useMCP();
+    const { isConnected, query, callTool, abortQuery, streamBridges } = useMCP();
     const [messages, setMessages] = useState<any[]>([]);
     const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     // Bridge domain chips (loaded once per connection) and the last bridge run, for "Show more".
@@ -1155,85 +1155,65 @@ export default function DashboardPage() {
     // BRIDGE_DEFAULT_LIMIT applies; "Show more" passes a higher one (the server caps it).
     const handleDiscoverBridge = async (nodeId: string, node?: any, domains?: string[], limit?: number) => {
         const targetDomains = domains && domains.length ? domains : [bridgeOptions?.auto || BRIDGE_AUTO_DEFAULT];
-        // One call per domain in parallel (design 2026-11-09 §4.3): each domain's bridges appear as soon as
-        // that domain is done, with a live status line. The server resolves "auto" and skips the node's own
-        // domain; [] (domain list not loaded yet) → one call without a filter, as before.
-        const callDomains = bridgeCallDomains(targetDomains, bridgeOptions);
-        const calls: Array<string | null> = callDomains.length ? callDomains : [null];
-        // Nodes already on screen are not offered again as bridges (they may still connect a path).
+        // One streamed request (design 2026-11-09 §4.2 decision, step 4c): the gateway searches each domain in parallel,
+        // gives unused slots to domains that have more, and streams a `partial` per domain (merged at once, one Undo
+        // step for the run), `progress` for the status line, then `result`. The browser holds no domain lists.
         const onScreen = visibleNodeIds(graphDataRef.current.nodes);
         let undoPushed = false;
-        const setStatus = (id: string, status: BridgeProgressItem['status'], count = 0) =>
-            setBridgeProgress(prev => prev && prev.map(p => p.id === id ? { ...p, status, count } : p));
+        const name = (d: string) => bridgeDomainName(d, bridgeOptions);
+        const setStatus = (domain: string, status: BridgeProgressItem['status'], count = 0) =>
+            setBridgeProgress(prev => {
+                const list = prev ? [...prev] : [];
+                const item = { id: domain, name: name(domain), status, count };
+                const at = list.findIndex(p => p.id === domain);
+                if (at >= 0) list[at] = item; else list.push(item);
+                return list;
+            });
         try {
-            console.log("Identifying cross-domain bridges for:", node?.name || nodeId, targetDomains, callDomains);
+            console.log("Identifying cross-domain bridges for:", node?.name || nodeId, targetDomains);
             setIsProcessing(true);
-            setBridgeProgress(callDomains.length
-                ? callDomains.map(id => ({ id, name: bridgeDomainName(id, bridgeOptions), status: 'searching' as const, count: 0 }))
-                : null);
-
-            const results = await Promise.all(calls.map(async domain => {
-                try {
-                    const toolResponse = await callTool("connect_knowledge_on_demand", {
-                        source_node_id: nodeId,
-                        source_node_name: node?.name || "",   // name-based fallback for robustness
-                        target_domains: targetDomains,
-                        ...(domain ? { domain_filter: [domain] } : {}),
-                        ...(onScreen.length ? { visible_node_ids: onScreen } : {}),
-                        ...(limit ? { limit } : {}),
-                        // No query_context: a manual click has no question, so ranking is by graph structure.
-                    });
-                    const result = JSON.parse(toolResponse?.content?.[0]?.text || "{}");
-                    const found = (result.virtual_links || []).length > 0;
-                    if (found) {
-                        // Merge as soon as this domain is done; one Undo step covers the whole run.
-                        if (!undoPushed) {
-                            undoPushed = true;
-                            pushUndo();
-                            setGraphData(prev => parseDataToGraph(result, prev));
-                        } else {
-                            setGraphData(prev => parseDataToGraph(result, prev));
-                        }
+            setBridgeProgress([]);
+            const final = await streamBridges({
+                source_node_id: nodeId,
+                source_node_name: node?.name || "",   // name-based fallback for robustness
+                target_domains: targetDomains,
+                ...(onScreen.length ? { visible_node_ids: onScreen } : {}),
+                ...(limit ? { limit } : {}),
+            }, (e: any) => {
+                if (e.type === 'progress' && Array.isArray(e.domains)) e.domains.forEach((d: any) => setStatus(d.domain, d.status, d.count));
+                else if (e.type === 'progress') setStatus(e.domain, e.status, e.count);
+                else if (e.type === 'partial' && (e.result?.virtual_links || []).length) {
+                    // Merge as soon as a domain is done; one Undo step covers the whole run.
+                    if (!undoPushed) {
+                        undoPushed = true;
+                        pushUndo();
+                        setGraphData(prev => parseDataToGraph(e.result, prev));
+                    } else {
+                        setGraphData(prev => parseDataToGraph(e.result, prev));
                     }
-                    const count = (result.nodes || []).filter((n: any) => n.bridge_reason).length;
-                    if (domain) setStatus(domain, result.skipped ? 'skipped' : (found ? 'found' : 'none'), count);
-                    return { domain, result, found };
-                } catch (e) {
-                    console.error("Bridge discovery failed for", domain, e);
-                    if (domain) setStatus(domain, 'error');
-                    return { domain, result: { error: String(e) }, found: false };
                 }
-            }));
+            });
 
-            const answered = results.filter(r => !r.result.error && !r.result.skipped);
-            const anyFound = results.some(r => r.found);
-            const first = answered[0]?.result;
-            setLastBridge(!first ? null : {
+            setLastBridge(final.limit == null ? null : {
                 nodeId,
                 node,
                 domains: targetDomains,
-                limit: first.limit,
-                maxLimit: first.max_limit,
-                step: first.show_more_step,
-                hasMore: answered.some(r => r.result.has_more) && first.limit < first.max_limit,
+                limit: final.limit,
+                maxLimit: final.max_limit,
+                step: final.show_more_step,
+                hasMore: !!final.has_more && final.limit < final.max_limit,
             });
-
-            // Surface the bridge summary in chat so the user understands what was found
-            const summary = callDomains.length
-                ? combineBridgeSummaries(answered.map(r => ({ name: bridgeDomainName(r.domain || '', bridgeOptions), summary: r.result.bridge_summary, found: r.found })))
-                : (first?.bridge_summary || "");
-            const partial = answered.some(r => r.result.search?.partial);
-            if (anyFound && summary) {
+            const summary = combineBridgeSummaries((final.summaries || []).map((x: any) => ({ name: name(x.domain), summary: x.summary, found: true })));
+            if (final.found && summary) {
                 setMessages(prev => [...prev, {
                     role: "assistant",
                     content: `**Knowledge Bridge Discovery**\n\n${summary}\n\nGold dashed connections on the graph show the inferred links. Nothing was written to the graph — these are session-only virtual bridges. **Undo** in the graph toolbar returns to the view before this run.`
                 }]);
             } else {
                 // No bridge: say why when the server knows (e.g. only through the node's own author).
-                const reason = answered.map(r => r.result.bridge_summary).find((t: string | undefined) => t && /own author|time limit/.test(t));
                 setMessages(prev => [...prev, {
                     role: "assistant",
-                    content: `**Knowledge Bridge Discovery**\n\n${reason || `No cross-domain path found from **${node?.name || nodeId}** within the graph you can see. Expanding the node (double-click) may add the connections a bridge needs; then try again.`}${partial && !reason ? ' (Partial result: the search stopped at its time limit.)' : ''}`
+                    content: `**Knowledge Bridge Discovery**\n\n${final.reason || `No cross-domain path found from **${node?.name || nodeId}** within the graph you can see. Expanding the node (double-click) may add the connections a bridge needs; then try again.`}${final.partial && !final.reason ? ' (Partial result: the search stopped at its time limit.)' : ''}`
                 }]);
             }
             // Close Bento to reveal the updated graph with gold dashed lines

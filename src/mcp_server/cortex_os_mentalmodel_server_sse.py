@@ -861,7 +861,8 @@ async def connect_knowledge_on_demand(
     query_context: Optional[str] = Field(None, description="The user's original question, verbatim. Improves ranking by favoring bridges through nodes whose names match words in the question — useful when no specific target is known."),
     target_domains: Optional[List[str]] = Field(None, description="Domains to bridge INTO, overriding target_domain: domain ids from list_bridge_domains and/or 'auto' (every domain the source does not belong to). The limit is split evenly across several domains."),
     domain_filter: Optional[List[str]] = Field(None, description="Bento panel only: after target_domains is resolved, search only these domains, each with its share of the limit (the panel runs one call per domain in parallel to show progress). Leave empty in chat."),
-    visible_node_ids: Optional[List[str]] = Field(None, description="Bento panel only: node_ids already on screen; they are not returned as bridge targets (they may still connect a path). Leave empty in chat.")
+    visible_node_ids: Optional[List[str]] = Field(None, description="Bento panel only: node_ids already on screen; they are not returned as bridge targets (they may still connect a path). Leave empty in chat."),
+    per_domain_limit: Optional[int] = Field(None, description="Gateway bridge stream only: with domain_filter, the limit for that domain instead of its share. Leave empty in chat.")
 ) -> str:
     """
     Discover virtual cross-domain knowledge bridges for a specific node without writing to Neo4j.
@@ -903,6 +904,7 @@ async def connect_knowledge_on_demand(
                 target_domains=target_domains,
                 domain_filter=domain_filter,
                 visible_node_ids=visible_node_ids,
+                per_domain_limit=per_domain_limit,
             )
         finally:
             expert.close()
