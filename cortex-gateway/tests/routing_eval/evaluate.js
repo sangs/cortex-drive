@@ -15,7 +15,8 @@ const { classifyDomain } = require('../../utils/intent_classifier.js');
 const { cases } = require('./routing_eval_set.json');
 
 const DOMAINS = ['career', 'podcast', 'website', 'document'];
-const MODES = ['single', 'cross', 'bridge', 'clarify', 'discovery'];
+const MODES = ['single', 'cross', 'bridge', 'clarify', 'discovery', 'small_talk', 'out_of_scope', 'overview'];
+const NO_DOMAIN_MODES = new Set(['discovery', 'small_talk', 'out_of_scope', 'overview']);
 const GATE = { exact: 0.85, recall: 0.9, precision: 0.85 };
 
 /** Today's classifier (one label): cross_domain = the bridge path searching everything; unconfident = Flow 4. */
@@ -38,7 +39,7 @@ async function evaluate(predict) {
         try { p = await predict(c.q); } finally { console.log = quiet; }
         const got = new Set(p.domains), want = new Set(c.domains);
         // Discovery searches everything by design; domain scoring applies only when a domain set is expected.
-        if (c.mode !== 'discovery') {
+        if (!NO_DOMAIN_MODES.has(c.mode)) {
             for (const d of DOMAINS) {
                 if (got.has(d) && want.has(d)) stats[d].tp++;
                 else if (got.has(d)) stats[d].fp++;
@@ -46,7 +47,7 @@ async function evaluate(predict) {
             }
         }
         confusion[c.mode][p.mode] = (confusion[c.mode][p.mode] || 0) + 1;
-        const same = c.mode === p.mode && (c.mode === 'discovery' || [...want].sort().join() === [...got].sort().join());
+        const same = c.mode === p.mode && (NO_DOMAIN_MODES.has(c.mode) || [...want].sort().join() === [...got].sort().join());
         if (same) exact++; else fails.push({ ...c, got: p });
     }
     const per = Object.fromEntries(DOMAINS.map(d => {

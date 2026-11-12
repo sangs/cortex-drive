@@ -89,6 +89,20 @@ module.exports = {
     // Whole-message small talk (greetings, thanks). Only these may be answered without a data tool on a new
     // conversation (grounding guard, Invariant 11 / AP-25, 2026-11-10); §4.5 will answer them without the LLM.
     smallTalkPatternSource: '^\\s*(?:hi|hello|hey|hiya|thanks|thank you|thx|cheers|good (?:morning|afternoon|evening)|bye|goodbye|ok|okay)(?:\\s+(?:there|again|so much|a lot))?[\\s!.?]*$',
+    // §4.5 (design 2026-11-09): questions Cortex-Drive cannot answer from an organization's knowledge, recognised only
+    // when nothing from the graph is named. `label` completes "it can't …".
+    outOfScope: [
+        { patternSource: '\\b(?:weather|forecast|temperature outside)\\b', label: 'check the weather' },
+        { patternSource: '\\b(?:stock|share) price\\b|\\bmarket (?:today|now)\\b', label: 'look up live market prices' },
+        { patternSource: '\\b(?:news today|latest news|headlines)\\b', label: 'read today\'s news' },
+        { patternSource: '\\b(?:what time is it|current time|today\'s date)\\b', label: 'tell the time or date' },
+        { patternSource: '\\btell me a joke\\b', label: 'tell jokes' },
+        { patternSource: '\\b(?:score of|who won) the (?:game|match)\\b', label: 'look up sports results' },
+    ],
+    // §4.5 open discovery: answered with an overview of what this user can see, not a broad search.
+    openDiscoveryPatternSource: '\\b(?:tell me something interesting|surprise me|what\'s new|what is new|what do you know|what can (?:you do|i ask)|where do i start|what is in (?:here|my graph))\\b',
+    // §4.5 pronoun with nothing to point to: person pronouns only ("it" is too common to mean a missing antecedent).
+    personPronounPatternSource: '\\b(?:she|her|hers|he|him|his|they|them|their)\\b',
     singleWordAllowlist: [
         'podcast',      // user_queries.md Q1; live Episode content references "Data Engineering Podcast"; 13 real historical queries
         'podcasts',     // S2-78 (daily log 2026-11-04 §4): "Find podcasts and Sangeetha's work on graph databases" — the plural is never matched by \bpodcast\b

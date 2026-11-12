@@ -22,7 +22,8 @@ which mode. Run: `node tests/routing_eval/evaluate.js [--fails] [--gate]` from `
 | G5 | a topic only, broad wording | every domain with content on it (snapshot): none → discovery, one → single, several → cross |
 | G6 | influence / trace / relation wording | bridge (today's Q3 path), domains named |
 | G7 | nothing recognised | discovery (Flow 4) |
-| G8 | a person name matching two people | clarify |
+| G8 | a person name matching two people, or a person pronoun with nothing to point to | clarify |
+| G9 | small talk / out of scope / open discovery ("what's new") | small_talk / out_of_scope / overview (§4.5, no search) |
 
 A name that is both a source title and a topic ("Apache Iceberg", "Graph database") is a topic unless a container
 phrase is used (design §4.1 rule 1).

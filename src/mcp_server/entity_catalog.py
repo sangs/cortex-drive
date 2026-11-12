@@ -104,6 +104,9 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                 continue
             seen.add(key)
             entry = {"name": name, "domain": domain, "node_id": r["node_id"], "tier": tier}
+            node_type = next((l for l in ROUTING_NAME_LABELS.get(domain, []) if l in r["labels"]), None)
+            if node_type:
+                entry["type"] = node_type   # e.g. Project vs Degree: picks the suggested-question template (§4.5)
             if r["owner_id"]:
                 entry["owner_id"] = r["owner_id"]   # who added it: the owner's routing skips others' (2026-10-28)
             if domain in ROUTING_SOURCE_DOMAINS:

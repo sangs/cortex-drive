@@ -185,6 +185,28 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(result).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path == "/overview":
+            # §4.5 open discovery: what the asker can see (same identity handling and requester rule as /domain_coverage).
+            try:
+                tenant_id = self.headers.get("x-tenant-id") or ""
+                user_id = self.headers.get("x-user-id") or ""
+                guest_share_anchor = self.headers.get("x-guest-share-anchor") or ""
+                if not tenant_id or not user_id:
+                    self.send_error(400, "x-tenant-id and x-user-id required")
+                    return
+                allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
+                expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
+                                     guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
+                try:
+                    result = expert.overview()
+                finally:
+                    expert.close()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result, default=str).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/domain_coverage":
             # Routing v2 coverage check (cross-domain design 2026-11-09 §4.1 rule 3): per content domain, does the
             # asker see anything on these terms? Same identity handling as /get_node_details; a requester is

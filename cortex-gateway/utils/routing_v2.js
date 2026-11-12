@@ -38,6 +38,12 @@ const BRIDGE_RE = [
     ...(CFG.routingBridgePatternSource ? [new RegExp(CFG.routingBridgePatternSource, 'i')] : []),
 ];
 const DOCUMENT_STRUCTURE_RE = INTENT_PATTERNS.filter(p => p.domain_signal === DOCUMENT).map(p => p.pattern);
+const { isSmallTalk } = require('./grounding_guard');
+const OUT_OF_SCOPE = (CFG.outOfScope || []).map(o => ({ re: new RegExp(o.patternSource, 'i'), label: o.label }));
+const OPEN_DISCOVERY_RE = CFG.openDiscoveryPatternSource ? new RegExp(CFG.openDiscoveryPatternSource, 'i') : null;
+const PERSON_PRONOUN_RE = CFG.personPronounPatternSource ? new RegExp(CFG.personPronounPatternSource, 'i') : null;
+// §4.5 modes that answer without search or LLM; the domain stays the safe default (AP-21).
+const NO_SEARCH_MODES = ['small_talk', 'out_of_scope', 'overview'];
 
 function enabled(domain) { return domain !== DOCUMENT || documentDomainEnabled(); }
 
@@ -94,7 +100,8 @@ function result(mode, domains, extra = {}) {
     const list = [...domains].filter(enabled).sort();
     const domain = mode === 'single' ? list[0]
         : (mode === 'cross' || mode === 'bridge') ? CROSS_DOMAIN : SAFE_DEFAULT;
-    return { domain, confident: mode !== 'discovery' && mode !== 'clarify', mode, domains: list, ...extra };
+    const confident = !['discovery', 'clarify', ...NO_SEARCH_MODES].includes(mode);
+    return { domain, confident, mode, domains: list, ...extra };
 }
 
 /**
@@ -106,6 +113,8 @@ function result(mode, domains, extra = {}) {
  */
 async function routeQuestion(question, lookups, opts = {}) {
     const q = String(question || '');
+    // 0. Small talk (§4.5): the whole message is a greeting or thanks.
+    if (isSmallTalk(q)) return result('small_talk', [], { roles: { subject: [], topic: [], container: [] }, domain_scores: {}, content_kind: null });
     const titles = findAll(q, titleNames(lookups));
     // A shorter topic inside a longer title ("Software" in "Software Engineering Daily") is part of that title.
     const covers = (a, b) => a.start <= b.start && a.end >= b.end;
@@ -167,6 +176,18 @@ async function routeQuestion(question, lookups, opts = {}) {
         bump(DOCUMENT, SCORE.scope);
         return result('single', [DOCUMENT], extra());
     }
+    // 3a. Ambiguous source (§4.5): one short name ("the BERT paper") matching two or more visible titles.
+    const shortHits = (lookups.short || []).filter(x => x.pattern.test(q));
+    const byShort = {};
+    shortHits.forEach(x => { (byShort[x.matched] = byShort[x.matched] || new Map()).set(x.title || x.matched, x.domain); });
+    const ambiguousShort = Object.values(byShort).find(m => m.size > 1);
+    if (ambiguousShort && !titles.length) {
+        return result('clarify', new Set(ambiguousShort.values()), {
+            ...extra(),
+            clarify: { question: 'Which one do you mean?', kind: 'source',
+                       options: [...ambiguousShort.keys()].sort().map(t => ({ label: t, entity: { kind: 'source', name: t } })) },
+        });
+    }
     // 3. Ambiguous person → one clarifying question, options only from what the asker can see.
     if (shared) {
         const domains = new Set(shared.names.flatMap(work));
@@ -198,6 +219,19 @@ async function routeQuestion(question, lookups, opts = {}) {
         domains.forEach(d => bump(d, SCORE.title));
         return result(domains.size > 1 ? 'cross' : 'single', domains, extra());
     }
+    // 6b. Nothing from the graph named (§4.5): a person pronoun, an out-of-scope request, or an open "what's new".
+    if (!topicHits.length) {
+        if (PERSON_PRONOUN_RE && PERSON_PRONOUN_RE.test(q)) {
+            const fromHistory = personFromHistory(opts.history, lookups);
+            if (fromHistory) {
+                return routeQuestion(question, lookups, { ...opts, resolvedPersons: [fromHistory], history: [] });
+            }
+            return result('clarify', [], { ...extra(), clarify: { question: 'Who do you mean? Name the person or source.', kind: 'pronoun', options: [] } });
+        }
+        const oos = OUT_OF_SCOPE.find(o => o.re.test(q));
+        if (oos) return result('out_of_scope', [], { ...extra(), out_of_scope: oos.label });
+        if (OPEN_DISCOVERY_RE && OPEN_DISCOVERY_RE.test(q)) return result('overview', [], extra());
+    }
     // 7. Topics → coverage.
     if (topicHits.length) {
         const domains = await covered();
@@ -214,7 +248,33 @@ function routingSummary(r) {
     return { version: 'v2', mode: r.mode, domains: r.domains, roles: r.roles, ...(r.no_data ? { no_data: true } : {}) };
 }
 /** Clarify and "no data" answers (§4.5): no search, no LLM, never cached (no graph). */
-function routingV2EarlyResponse(r, fallbackSignal) {
+const DISPLAY_DOMAIN = { professional: 'Career', podcast: 'Podcasts', website: 'Websites', document: 'Documents' };
+const bullets = items => items.map(x => `- ${x}`).join('\n');
+
+/** §4.5 overview answer, written by code from the permission-filtered overview (no LLM). */
+function overviewAnswer(o, suggestions) {
+    const parts = ["Here is what's in Cortex-Drive for you:"];
+    if ((o.domains || []).length) {
+        parts.push(bullets(o.domains.map(d => `**${DISPLAY_DOMAIN[d.domain] || d.domain}**: ${d.items} item${d.items === 1 ? '' : 's'}`
+            + (d.top_topics.length ? ` — top topics: ${d.top_topics.join(', ')}` : ''))));
+    }
+    if ((o.recent_sources || []).length) parts.push('**Recently added or refreshed sources**\n' + bullets(o.recent_sources.map(x => `${x.title} (${String(x.date).slice(0, 10)})`)));
+    if ((o.recent_episodes || []).length) parts.push('**Newest episodes**\n' + bullets(o.recent_episodes.map(x => `${x.title} (${String(x.date).slice(0, 10)})`)));
+    if (suggestions.length) parts.push('**You could ask**\n' + bullets(suggestions));
+    if (parts.length === 1) parts.push('Nothing is visible to you yet. Add a source, or ask someone to share one with you.');
+    return parts.join('\n\n');
+}
+
+function routingV2EarlyResponse(r, fallbackSignal, { suggestions = [] } = {}) {
+    const ask = suggestions.length ? `\n\nYou could ask:\n${bullets(suggestions)}` : '';
+    if (r.mode === 'small_talk') {
+        return { answer: `Hello! I answer from your organization's knowledge in Cortex-Drive.${ask}`, raw_data: null,
+                 domain_signal: fallbackSignal, routing: routingSummary(r), suggestions };
+    }
+    if (r.mode === 'out_of_scope') {
+        return { answer: `Cortex-Drive answers from your organization's knowledge; it can't ${r.out_of_scope}.${ask}`, raw_data: null,
+                 domain_signal: fallbackSignal, routing: routingSummary(r), suggestions };
+    }
     if (r.mode === 'clarify' && r.clarify) {
         return { answer: r.clarify.question, clarify: r.clarify, raw_data: null, domain_signal: r.domain || fallbackSignal,
                  routing: routingSummary(r) };
@@ -227,4 +287,15 @@ function routingV2EarlyResponse(r, fallbackSignal) {
     return null;
 }
 
-module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse };
+/** The most recent person named in the conversation (full names from the asker's visible catalog only). */
+function personFromHistory(history, lookups) {
+    const names = [...((lookups.person && lookups.person.values()) || [])].sort((a, b) => b.length - a.length);
+    for (const m of [...(history || [])].reverse()) {
+        const text = typeof m.content === 'string' ? m.content : '';
+        const hit = names.find(n => wordRe(n).test(text));
+        if (hit) return hit;
+    }
+    return null;
+}
+
+module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer };

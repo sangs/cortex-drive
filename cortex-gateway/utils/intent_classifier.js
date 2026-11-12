@@ -184,6 +184,7 @@ function buildRoutingLookups(catalog, viewer) {
     const personWork = new Map();   // original-case name → work domains (catalog `work_domains`; absent = unknown)
     const partOwners = new Map();   // lowerCaseNamePart → Set of original-case names
     const topics = new Map();       // lowerCaseName or alias → canonical topic name
+    const titles = [];              // [{ name, domain }] visible source titles, original case (§4.5 suggestions)
     const short = [];           // [{ pattern, domain, matched }]
     let withheld = 0;
     for (const e of _catalogEntries(catalog || {})) {
@@ -207,8 +208,9 @@ function buildRoutingLookups(catalog, viewer) {
             continue;
         }
         entity.set(e.name.toLowerCase(), e.domain);
+        titles.push({ name: e.name, domain: e.domain, type: e.type || null });
         const pattern = e.short_name ? _shortNamePattern(e.short_name) : null;
-        if (pattern) short.push({ pattern, domain: e.domain, matched: e.short_name.toLowerCase() });
+        if (pattern) short.push({ pattern, domain: e.domain, matched: e.short_name.toLowerCase(), title: e.name });
     }
     const bridge = new Map();   // lowerCaseName → candidate domains (concept names, no per-node tier)
     for (const [name, domains] of Object.entries((catalog || {}).bridge_entities || {})) {
@@ -227,7 +229,7 @@ function buildRoutingLookups(catalog, viewer) {
     for (const [part, names] of partOwners) {
         if (names.size > 1) personPartShared.push({ pattern: new RegExp(`(?<!\\p{L})${_escapeRegex(part)}(?!\\p{L})`, 'iu'), names: [...names].sort() });
     }
-    return { entity, person, personWork, personPart, personPartShared, topics, short, bridge, withheld };
+    return { entity, person, personWork, personPart, personPartShared, topics, titles, short, bridge, withheld };
 }
 
 const STATIC_LOOKUPS = buildRoutingLookups(_loadStaticCatalog());

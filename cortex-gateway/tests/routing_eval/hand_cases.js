@@ -6,7 +6,8 @@
  * Modes: single | cross | bridge (today's Q3 "how did X influence Y" path) | clarify | discovery (Flow 4).
  * Labelling rules (README.md): G1 explicit scope word; G2 container phrase; G3 a source title; G4 named person +
  * own work; G5 topic only, broad → every domain with content on it (coverage snapshot); G6 influence/trace →
- * bridge; G7 nothing recognised → discovery; G8 ambiguous person → clarify.
+ * bridge; G7 nothing recognised → discovery; G8 ambiguous person / pronoun → clarify; G9 small talk, out of scope,
+ * open discovery → their §4.5 modes (no search).
  */
 module.exports = [
     // Canonical and regression questions (documents/user_queries.md; e2e baseline 2026-10-06)
@@ -112,13 +113,13 @@ module.exports = [
     ["How did podcast learning influence Sangeetha's projects?", ['career', 'podcast'], 'bridge', 'G6'],
 
     // Nothing recognised (Flow 4) and out of scope
-    ['Tell me something interesting', [], 'discovery', 'G7'],
-    ["What's new?", [], 'discovery', 'G7'],
-    ['Hello', [], 'discovery', 'G7'],
+    ['Tell me something interesting', [], 'overview', 'G9', '§4.5 open discovery'],
+    ["What's new?", [], 'overview', 'G9', '§4.5 open discovery'],
+    ['Hello', [], 'small_talk', 'G9', '§4.5 small talk'],
     ['What is quantum computing?', [], 'discovery', 'G7', 'not in the graph'],
     ['Explain blockchain', [], 'discovery', 'G7', 'not in the graph'],
-    ["What's the weather today?", [], 'discovery', 'G7'],
-    ['Can you show me her resume', [], 'discovery', 'G7', 'existing case: confident=false'],
+    ["What's the weather today?", [], 'out_of_scope', 'G9', '§4.5 out of scope'],
+    ['Can you show me her resume', [], 'clarify', 'G8', '§4.5 pronoun with nothing to point to'],
     ['Tell me what was said about the speaker background in that segment', [], 'discovery', 'G7', 'existing case: confident=false'],
 
     // Ambiguous person

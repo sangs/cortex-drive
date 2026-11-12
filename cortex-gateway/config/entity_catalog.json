@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-12T19:32:04.051143+00:00",
+  "generated_at": "2026-11-12T19:53:32.032030+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 49,
   "domains": {
@@ -118,6 +118,7 @@
       "domain": "career",
       "node_id": "38d97ae1-9369-4ce9-ac6f-9a90cc0e4436",
       "tier": "PUBLIC",
+      "type": "ThoughtLeadership",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -125,6 +126,7 @@
       "domain": "career",
       "node_id": "56f93d7e-d370-43da-b3f3-946ef6b1870e",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -132,6 +134,7 @@
       "domain": "career",
       "node_id": "d4cd750f-83d7-4176-a6e7-0e5d12a0bb6b",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -139,6 +142,7 @@
       "domain": "career",
       "node_id": "ffc91b37-15aa-4ccb-a135-33a01314d100",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -146,6 +150,7 @@
       "domain": "career",
       "node_id": "0892113f-9e16-49f3-9adb-48b1e0110f61",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -153,6 +158,7 @@
       "domain": "career",
       "node_id": "38c3d01a-e69c-4e43-a727-89bfcb70d6be",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -160,6 +166,7 @@
       "domain": "career",
       "node_id": "e596be7f-1936-431c-ada6-fd53527fd418",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -167,6 +174,7 @@
       "domain": "career",
       "node_id": "1eb1d92a-c531-4d5b-8a81-a437745531d7",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -174,6 +182,7 @@
       "domain": "career",
       "node_id": "27d91550-d87c-4eeb-aabb-c616f8c6558e",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -181,6 +190,7 @@
       "domain": "career",
       "node_id": "0b200346-c697-4664-a390-930f69eb0dcd",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -188,6 +198,7 @@
       "domain": "career",
       "node_id": "6f5774e5-6749-43d8-b2e2-05347bd16659",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -195,6 +206,7 @@
       "domain": "career",
       "node_id": "9497d7e3-7243-401b-9b9f-63fa92dd4337",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -202,6 +214,7 @@
       "domain": "career",
       "node_id": "af4be31e-283b-46bc-8909-f8db3884a590",
       "tier": "PUBLIC",
+      "type": "ThoughtLeadership",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -209,6 +222,7 @@
       "domain": "career",
       "node_id": "59292307-c0f2-4bb9-a8ee-c6cc3d395817",
       "tier": "PUBLIC",
+      "type": "ThoughtLeadership",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -216,6 +230,7 @@
       "domain": "career",
       "node_id": "f860af26-5651-4a60-b60d-11720042510c",
       "tier": "SYSTEM",
+      "type": "Institution",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -223,6 +238,7 @@
       "domain": "career",
       "node_id": "90deb9e3-cc64-40c0-ba2a-68c8d4206724",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -230,6 +246,7 @@
       "domain": "career",
       "node_id": "31e8d7d6-033f-4a80-91b6-f1b42333c0be",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -237,6 +254,7 @@
       "domain": "career",
       "node_id": "71d3da73-0999-4d6e-a56b-967fd4f4fc51",
       "tier": "PUBLIC",
+      "type": "ThoughtLeadership",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -244,6 +262,7 @@
       "domain": "career",
       "node_id": "3558073e-399d-4823-b4cd-79ca6194632f",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -251,6 +270,7 @@
       "domain": "career",
       "node_id": "e5114522-12ad-4478-8f09-c14648a43982",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -258,6 +278,7 @@
       "domain": "career",
       "node_id": "86d7493f-7687-42cf-9d24-3babc5b8b1d7",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -265,6 +286,7 @@
       "domain": "career",
       "node_id": "89d4eeeb-14ae-413d-8f68-6199e87af781",
       "tier": "org",
+      "type": "OpenSource",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -272,6 +294,7 @@
       "domain": "career",
       "node_id": "cf382942-bb3d-45f5-949e-134428a41c2f",
       "tier": "SYSTEM",
+      "type": "Institution",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -279,6 +302,7 @@
       "domain": "career",
       "node_id": "bb24f0a1-fda3-4310-adc9-01266c638195",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -286,6 +310,7 @@
       "domain": "career",
       "node_id": "bec2c109-865e-4d8f-83c2-5948fc5c6e76",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -293,6 +318,7 @@
       "domain": "career",
       "node_id": "82b682cb-9a92-44eb-bf40-96e258ea4fff",
       "tier": "PUBLIC",
+      "type": "Company",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -300,6 +326,7 @@
       "domain": "career",
       "node_id": "47008e74-0db8-419e-8056-fc41a47e8fff",
       "tier": "SYSTEM",
+      "type": "Institution",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -307,6 +334,7 @@
       "domain": "career",
       "node_id": "d05b6adf-8034-4546-9d2b-7258fbf5c005",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -314,6 +342,7 @@
       "domain": "career",
       "node_id": "d8406ea9-4d88-4a60-b6d7-b9d885814989",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -321,6 +350,7 @@
       "domain": "career",
       "node_id": "f6d4acf4-1d4c-4199-85bb-6f95473d8544",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -328,6 +358,7 @@
       "domain": "career",
       "node_id": "7ed8895d-e6fc-4795-a892-aa7df3853008",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -335,6 +366,7 @@
       "domain": "career",
       "node_id": "60e080d9-d54f-4803-bc9f-3f4c5568d228",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -342,6 +374,7 @@
       "domain": "career",
       "node_id": "fb202c0f-ed79-4420-a4ee-bbfe8377c094",
       "tier": "PUBLIC",
+      "type": "Project",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -349,6 +382,7 @@
       "domain": "career",
       "node_id": "1b276b5e-7e80-4b36-8351-c9788cd39b0f",
       "tier": "PUBLIC",
+      "type": "Degree",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -356,6 +390,7 @@
       "domain": "career",
       "node_id": "775c2fe1-2d9c-4846-8415-2da0ee73e1ba",
       "tier": "PUBLIC",
+      "type": "Degree",
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
@@ -363,6 +398,7 @@
       "domain": "career",
       "node_id": "7aaec524-d9fb-48e3-a06d-3e243bf91f79",
       "tier": "PUBLIC",
+      "type": "Certification",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -370,6 +406,7 @@
       "domain": "document",
       "node_id": "43abaf56-c75f-454a-aa1f-782dbe131c92",
       "tier": "org",
+      "type": "DocumentSource",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
       "short_name": "BERT"
     },
@@ -562,6 +599,7 @@
       "domain": "podcast",
       "node_id": "906c42ed-a7d0-4aea-8847-cc6c50518491",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -569,6 +607,7 @@
       "domain": "podcast",
       "node_id": "0835ad9c-0fd9-43f4-9cb1-ec52cc6461ca",
       "tier": "org",
+      "type": "Podcast",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -576,6 +615,7 @@
       "domain": "podcast",
       "node_id": "dad0ca75-0a93-44da-9c6f-3fd1b9a5908b",
       "tier": "org",
+      "type": "Podcast",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -583,6 +623,7 @@
       "domain": "podcast",
       "node_id": "34c370c7-d68f-494f-9ccc-cd2ed4606eaa",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -590,6 +631,7 @@
       "domain": "podcast",
       "node_id": "0ac5e5b7-04ca-4ee1-ba6b-51d6b96765fc",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -597,6 +639,7 @@
       "domain": "podcast",
       "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -604,6 +647,7 @@
       "domain": "podcast",
       "node_id": "1c8a09c4-00b8-4810-81af-4845a592bf6f",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -611,6 +655,7 @@
       "domain": "podcast",
       "node_id": "9fd383fd-cb46-4f7a-9e90-a8465272aa0f",
       "tier": "org",
+      "type": "Episode",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -618,6 +663,7 @@
       "domain": "podcast",
       "node_id": "2446f4eb-bc98-4753-908c-51a169664113",
       "tier": "org",
+      "type": "Podcast",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -625,6 +671,7 @@
       "domain": "podcast",
       "node_id": "0e80a8f7-a8f2-4df1-8ab7-5fb1ce886d72",
       "tier": "org",
+      "type": "Podcast",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -2380,6 +2427,7 @@
       "domain": "website",
       "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
       "tier": "org",
+      "type": "WebsiteSource",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     },
     {
@@ -2387,6 +2435,7 @@
       "domain": "website",
       "node_id": "3d6a6c28-8f25-4d1b-9e10-edbceb7ea751",
       "tier": "org",
+      "type": "WebsiteSource",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
     }
   ]

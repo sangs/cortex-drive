@@ -58,6 +58,13 @@ class DomainCoverageTest(unittest.TestCase):
         self.assertEqual(self.covered(self.owner, "quantum computing"), set())
         self.assertEqual(self.covered(self.owner, ""), set())
 
+    def test_overview_shows_only_what_the_caller_may_see(self):
+        owner, member = self.owner.overview(), self.member.overview()
+        self.assertTrue(owner["recent_sources"] and owner["recent_episodes"], "owner sees sources and episodes")
+        self.assertEqual(member["recent_sources"] + member["recent_episodes"], [], "org sources hidden from the member")
+        self.assertEqual([d["domain"] for d in member["domains"]], ["professional"], "only the PUBLIC career graph")
+        self.assertLess(member["domains"][0]["items"], next(d["items"] for d in owner["domains"] if d["domain"] == "professional"))
+
     def test_member_without_shares_sees_only_public_coverage(self):
         # The founder's career graph is PUBLIC (Cortex-Drive → Graph Databases); the org podcast and website are not.
         self.assertEqual(self.covered(self.member, "graph databases"), {"professional"})

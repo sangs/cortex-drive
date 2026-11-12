@@ -464,6 +464,12 @@ CONTENT_DOMAINS = ["professional", "podcast", "website", "document"]
 COVERAGE_TOPIC_LABELS = ["Technology", "Concept", "Topic"]
 # Terms checked per routing coverage request (a question rarely names more than a few topics).
 DOMAIN_COVERAGE_MAX_TERMS = 5
+# §4.5 open-discovery overview (design 2026-11-09): what the asker can see — recently added sources, newest episodes,
+# items and top topics per domain. Structural labels are not "items".
+OVERVIEW_RECENT_MAX = 5
+OVERVIEW_TOPICS_PER_DOMAIN = 5
+OVERVIEW_NON_ITEM_LABELS = ["Chunk", "Source", "SourceSnapshot", "ContentBlock", "Section", "PreparatoryNote", "Category",
+                            "Year", "Tool"]
 # Never evidence of a domain: built-in vocabulary and the section headers (SYSTEM/PUBLIC landmarks).
 _NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
 

@@ -3320,6 +3320,42 @@ class ExpertTools:
                             "rels": rels, "hops": len(rels)})
         return json.dumps({"bridges": bridges, "nodes": list(nodes.values()), "virtual_links": links})
 
+    def overview(self) -> dict:
+        """§4.5 open discovery (design 2026-11-09): an overview of what the caller can see — recently added or refreshed
+        sources, the newest episodes, how many items each domain holds and its top topics. Every node passes the
+        caller's security clause; counts are of visible nodes only (never reveals what the caller cannot open)."""
+        import re
+        from domain_registry import (COVERAGE_TOPIC_LABELS, OVERVIEW_NON_ITEM_LABELS, OVERVIEW_RECENT_MAX,
+                                     OVERVIEW_TOPICS_PER_DOMAIN, get_bridge_target_domains, get_exclusive_labels)
+        sec = self._get_security_clause("n")
+        recent = [dict(r) for r in self._exec_query(
+            f"""MATCH (n:WebsiteSource|DocumentSource) WHERE ({sec}) AND n.last_synced_at IS NOT NULL
+                RETURN coalesce(n.name, n.title) AS title, labels(n)[0] AS type, toString(n.last_synced_at) AS date
+                ORDER BY n.last_synced_at DESC LIMIT $k""", **self._security_params(), k=OVERVIEW_RECENT_MAX).records]
+        episodes = [dict(r) for r in self._exec_query(
+            f"""MATCH (n:Episode) WHERE ({sec}) AND coalesce(n.published_date, n.aired_date) IS NOT NULL
+                RETURN coalesce(n.name, n.title) AS title, toString(coalesce(n.published_date, n.aired_date)) AS date
+                ORDER BY coalesce(n.published_date, n.aired_date) DESC LIMIT $k""",
+            **self._security_params(), k=OVERVIEW_RECENT_MAX).records]
+        topic_labels = "|".join(COVERAGE_TOPIC_LABELS)
+        domains = []
+        for d in get_bridge_target_domains():
+            labels = [l for l in get_exclusive_labels(d)
+                      if l not in OVERVIEW_NON_ITEM_LABELS and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", l)]
+            if not labels:
+                continue
+            label_str = "|".join(labels)
+            count = self._exec_query(f"MATCH (n:{label_str}) WHERE ({sec}) RETURN count(n) AS c",
+                                     **self._security_params()).records[0]["c"]
+            if not count:
+                continue
+            topics = [r["name"] for r in self._exec_query(
+                f"""MATCH (n:{label_str})--(t:{topic_labels}) WHERE ({sec}) AND ({self._get_security_clause("t")})
+                    RETURN t.name AS name, count(DISTINCT n) AS c ORDER BY c DESC, name LIMIT $k""",
+                **self._security_params(), k=OVERVIEW_TOPICS_PER_DOMAIN).records]
+            domains.append({"domain": d, "items": count, "top_topics": topics})
+        return {"recent_sources": recent, "recent_episodes": episodes, "domains": domains}
+
     def domain_coverage(self, terms: list, domains: Optional[list] = None) -> dict:
         """Routing v2 coverage check (cross-domain discovery design 2026-11-09 §4.1 rule 3): for each content
         domain, does the caller see anything on these terms? A domain covers a term when a visible node with a

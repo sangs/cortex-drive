@@ -766,7 +766,22 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
 // account only — for testing in production without changing anyone else's answers) | true (everyone).
 const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? process.env.ROUTING_V2 : 'off';
 const routingV2For = userId => ROUTING_V2_MODE === 'true' || (ROUTING_V2_MODE === 'owner' && isOwner(userId));
-const { routeQuestion, routingSummary, routingV2EarlyResponse } = require('./utils/routing_v2');
+const { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer } = require('./utils/routing_v2');
+const { suggestedQuestions } = require('./utils/suggestions');
+const { createContentGaps, gapKindFor } = require('./utils/content_gaps');
+/** §4.5 overview from Bento, as the asking user (direct fetch + Cloud Run token, AP-18). */
+async function bentoOverview({ tenantId, userId, guestAnchor }) {
+    const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
+    const token = await getCloudRunToken(bentoBase);
+    const res = await fetch(`${bentoBase}/overview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId, 'x-user-id': userId,
+                   ...(guestAnchor ? { 'x-guest-share-anchor': guestAnchor } : {}), ...(token ? { Authorization: token } : {}) },
+        body: '{}',
+    });
+    if (!res.ok) throw new Error(`Bento /overview → ${res.status}`);
+    return res.json();
+}
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
 const { mustGround, toolChoiceFor } = require('./utils/grounding_guard');
 const domainCoverage = createDomainCoverage({
@@ -3502,10 +3517,24 @@ app.post('/query', authMiddleware, async (req, res) => {
             routingV2 = await routeQuestion(question, routingLookups, {
                 coverage: terms => domainCoverage({ tenantId, userId, guestAnchor: req.headers['x-guest-share-anchor'] || '' }, terms),
                 resolvedPersons: resolveClarifyChoice(clarifyChoice, routingLookups),
+                history,   // a person pronoun is resolved from the conversation (§4.5)
             });
             console.log(`[ROUTING_V2] mode=${routingV2.mode} domains=${routingV2.domains.join(',')} subject=${routingV2.roles.subject.length} topics=${routingV2.roles.topic.length}${routingV2.no_data ? ' no_data' : ''}${routingV2.coverage_unavailable ? ' coverage_unavailable' : ''}`);
-            const early = routingV2EarlyResponse(routingV2, domainSignal);
+            const suggestions = ['small_talk', 'out_of_scope', 'overview'].includes(routingV2.mode) ? suggestedQuestions(routingLookups) : [];
+            let early = routingV2EarlyResponse(routingV2, domainSignal, { suggestions });
+            if (!early && routingV2.mode === 'overview') {
+                // §4.5 open discovery: an overview of what this user can see, written by code (no search, no LLM).
+                let overview = { domains: [], recent_sources: [], recent_episodes: [] };
+                try {
+                    overview = await bentoOverview({ tenantId, userId, guestAnchor: req.headers['x-guest-share-anchor'] || '' });
+                } catch (e) { console.warn('[ROUTING_V2] overview unavailable:', e.message); }
+                early = { answer: overviewAnswer(overview, suggestions), raw_data: null, domain_signal: domainSignal,
+                          routing: routingSummary(routingV2), suggestions };
+            }
             if (early) {
+                const gapKind = gapKindFor(routingV2);
+                if (gapKind) contentGaps().record({ orgId: tenantId, userType: req.headers['x-user-type'], kind: gapKind,
+                                                    question, topics: routingV2.roles.topic });
                 persistConversationTurn({ tenantId, userId, conversationId, userContent: question, assistantContent: early.answer,
                                           domainSignal: early.domain_signal, graphSnapshot: null })
                     .catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
@@ -3527,6 +3556,10 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 const send = event => { if (stream && !isAborted) res.write(`data: ${JSON.stringify(event)}\n\n`); };
                 const cross = await answerCrossMode({ req, question, history, routing: routingV2, tenantId, userId, accessScope, send });
+                if (cross.payload.answer === NO_DATA_FOUND_ANSWER(question)) {
+                    contentGaps().record({ orgId: tenantId, userType: req.headers['x-user-type'], kind: 'no_data', question,
+                                           topics: routingV2.roles.topic });
+                }
                 if (cross.cacheable) await setCachedQueryResponse(cacheKey, cross.payload);
                 persistConversationTurn({ tenantId, userId, conversationId, userContent: question,
                                           assistantContent: cross.payload.answer, domainSignal: 'cross_domain',
@@ -4058,6 +4091,10 @@ app.post('/query', authMiddleware, async (req, res) => {
                     console.warn('[GROUNDING] new question answered with no data tool — answer replaced with "No data found"');
                     finalAnswer = NO_DATA_FOUND_ANSWER(question);
                 }
+                if (finalAnswer === NO_DATA_FOUND_ANSWER(question)) {
+                    contentGaps().record({ orgId: tenantId, userType: req.headers['x-user-type'], kind: 'no_data', question,
+                                           topics: routingV2 ? routingV2.roles.topic : [] });
+                }
                 // Audit response for hallucinated URLs before sending.
                 let auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
                 // Structured-citation groundedness backstop (Phase 2) — scoped to the /query
@@ -4259,6 +4296,23 @@ app.post('/api/get_cluster_context', authMiddleware, mcpToolEndpoint('get_cluste
 app.post('/api/expand_node_topology', authMiddleware, mcpToolEndpoint('expand_node_topology'));
 app.post('/api/connect_knowledge_on_demand', authMiddleware, mcpToolEndpoint('connect_knowledge_on_demand'));
 app.post('/api/list_bridge_domains', authMiddleware, mcpToolEndpoint('list_bridge_domains'));
+// Content-gaps report (§4.5): org admins see their organization's top gaps; the platform owner may also ask for counts
+// per organization (?scope=platform), never question text of other organizations.
+let _contentGaps = null;
+function contentGaps() { return (_contentGaps = _contentGaps || createContentGaps({ db })); }
+app.get('/api/admin/content-gaps', authMiddleware, requireCapability('admin', 'Only organization admins can see content gaps.'), async (req, res) => {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 180);
+    try {
+        if (req.query.scope === 'platform') {
+            if (!isOwner(req.headers['x-user-id'])) return res.status(403).json({ error: 'Platform view is for the platform owner only.' });
+            return res.json({ days, organizations: await contentGaps().platformCounts(days) });
+        }
+        res.json({ days, org_id: req.headers['x-tenant-id'], gaps: await contentGaps().orgReport(req.headers['x-tenant-id'], days) });
+    } catch (e) {
+        console.error('[/api/admin/content-gaps]', e.message);
+        res.status(500).json({ error: 'Content gaps unavailable' });
+    }
+});
 // Bento panel bridges on one streamed request (design 2026-11-09 §4.2 decision, step 4c): the gateway searches each
 // domain in parallel and streams `progress`, a `partial` per domain, then `result` (utils/bridge_stream.js).
 const { runBridgeStream } = require('./utils/bridge_stream');
