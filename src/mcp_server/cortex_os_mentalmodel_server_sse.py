@@ -20,7 +20,7 @@ from typing import List, Optional
 
 # Local dependency
 from expert_tools import ExpertTools
-from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT
+from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT, MCP_TOOL_THREADS
 from entity_catalog import version_key as entity_catalog_version_key
 
 # Contextvar to hold the tenant_id extracted from the request headers
@@ -121,7 +121,7 @@ async def search_episodes_gds_by_question_tool(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.search_episodes_gds_by_question(question, k=k, limit=limit)
+        return await asyncio.to_thread(expert.search_episodes_gds_by_question, question, k=k, limit=limit)
     except Exception as e:
         print(f"Error in search_episodes_gds_by_question_tool: {e}")
         return json.dumps({"error": str(e)})
@@ -143,7 +143,7 @@ async def search_episodes_by_question_tool(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.search_episodes_by_question(question, k=k)
+        return await asyncio.to_thread(expert.search_episodes_by_question, question, k=k)
     except Exception as e:
         print(f"Error in search_episodes_by_question_tool: {e}")
         return json.dumps({"error": str(e)})
@@ -171,7 +171,7 @@ async def search_document_blocks(
     print(f"[AUTHZ/MCP] search_document_blocks: mode={'permify' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return json.dumps(expert.search_document_blocks(question, top_k=top_k), default=str)
+        return json.dumps(await asyncio.to_thread(expert.search_document_blocks, question, top_k=top_k), default=str)
     except Exception as e:
         print(f"Error in search_document_blocks: {e}")
         return json.dumps({"error": str(e)})
@@ -198,7 +198,7 @@ async def query_relevant_chunks_hybrid_tool(
     print(f"[AUTHZ/MCP] query_relevant_chunks_hybrid_tool: mode={'permify' if allowed_ids is not None else 'legacy'} ids={len(allowed_ids) if allowed_ids is not None else 'N/A'}")
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return json.dumps(expert.query_relevant_chunks_hybrid(question, top_k=top_k))
+        return json.dumps(await asyncio.to_thread(expert.query_relevant_chunks_hybrid, question, top_k=top_k))
     except Exception as e:
         print(f"Error in query_relevant_chunks_hybrid_tool: {e}")
         return json.dumps({"error": str(e)})
@@ -214,7 +214,7 @@ async def get_context() -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.get_tool_context()
+        return await asyncio.to_thread(expert.get_tool_context)
     except Exception as e:
         print(f"Error in get_context: {e}")
         return json.dumps({"error": str(e)})
@@ -233,7 +233,7 @@ async def get_tool_statistics() -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.get_episode_statistics()
+        return await asyncio.to_thread(expert.get_episode_statistics)
     except Exception as e:
         print(f"Error in get_tool_statistics: {e}")
         return json.dumps({"error": str(e)})
@@ -253,7 +253,7 @@ async def find_episodes_by_people(question: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_people(question)
+        return await asyncio.to_thread(expert.find_episodes_by_people, question)
     except Exception as e:
         print(f"Error in find_episodes_by_people: {e}")
         return json.dumps({"error": str(e)})
@@ -271,7 +271,7 @@ async def get_episodes_with_cast() -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.get_episodes_with_cast()
+        return await asyncio.to_thread(expert.get_episodes_with_cast)
     except Exception as e:
         print(f"Error in get_episodes_with_cast: {e}")
         return json.dumps({"error": str(e)})
@@ -290,7 +290,7 @@ async def find_episodes_by_concept(question: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_concept(question)
+        return await asyncio.to_thread(expert.find_episodes_by_concept, question)
     except Exception as e:
         print(f"Error in find_episodes_by_concept: {e}")
         return json.dumps({"error": str(e)})
@@ -309,7 +309,7 @@ async def find_episodes_by_topic(question: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_topic(question)
+        return await asyncio.to_thread(expert.find_episodes_by_topic, question)
     except Exception as e:
         print(f"Error in find_episodes_by_topic: {e}")
         return json.dumps({"error": str(e)})
@@ -328,7 +328,7 @@ async def find_episodes_by_technology(question: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_technology(question)
+        return await asyncio.to_thread(expert.find_episodes_by_technology, question)
     except Exception as e:
         print(f"Error in find_episodes_by_technology: {e}")
         return json.dumps({"error": str(e)})
@@ -348,7 +348,7 @@ async def find_episodes_by_reference(reference_string: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_reference(reference_string)
+        return await asyncio.to_thread(expert.find_episodes_by_reference, reference_string)
     except Exception as e:
         print(f"Error in find_episodes_by_reference: {e}")
         return json.dumps({"error": str(e)})
@@ -367,7 +367,7 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.find_episodes_by_mentions(search_terms)
+        return await asyncio.to_thread(expert.find_episodes_by_mentions, search_terms)
     except Exception as e:
         print(f"Error in find_episodes_by_mentions: {e}")
         return json.dumps({"error": str(e)})
@@ -387,7 +387,7 @@ async def get_people_by_episode_tool(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.get_people_by_episode(episode_name)
+        return await asyncio.to_thread(expert.get_people_by_episode, episode_name)
     except Exception as e:
         print(f"Error in get_people_by_episode: {e}")
         return json.dumps({"error": str(e)})
@@ -410,7 +410,7 @@ async def run_cypher_query(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.run_cypher_query(query, requesting_user_id=user_id, schema_readable=schema_readable)
+        return await asyncio.to_thread(expert.run_cypher_query, query, requesting_user_id=user_id, schema_readable=schema_readable)
     finally:
         expert.close()
 
@@ -428,7 +428,7 @@ async def get_node_details(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.get_node_details(node_id=node_id, node_name=node_name)
+        return await asyncio.to_thread(expert.get_node_details, node_id=node_id, node_name=node_name)
     except Exception as e:
         print(f"Error in get_node_details: {e}")
         return json.dumps({"error": str(e)})
@@ -451,7 +451,7 @@ async def view_source_live(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.view_source_live(url=url)
+        return await asyncio.to_thread(expert.view_source_live, url=url)
     except Exception as e:
         print(f"Error in view_source_live: {e}")
         return json.dumps({"error": str(e)})
@@ -770,7 +770,7 @@ async def explore_graph_schema() -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.explore_graph_schema(schema_readable=schema_readable)
+        return await asyncio.to_thread(expert.explore_graph_schema, schema_readable=schema_readable)
     except Exception as e:
         print(f"Error in explore_graph_schema: {e}")
         return json.dumps({"error": str(e)})
@@ -794,7 +794,7 @@ async def hybrid_discovery_tool(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, allowed_ids=allowed_ids)
     try:
-        return expert.hybrid_discovery(question, k=k)
+        return await asyncio.to_thread(expert.hybrid_discovery, question, k=k)
     except Exception as e:
         print(f"Error in hybrid_discovery_tool: {e}")
         return json.dumps({"error": str(e)})
@@ -819,7 +819,7 @@ async def get_cluster_context(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.get_cluster_context(node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
+        return await asyncio.to_thread(expert.get_cluster_context, node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
     except Exception as e:
         print(f"Error in get_cluster_context: {e}")
         return json.dumps({"error": str(e)})
@@ -843,7 +843,7 @@ async def enumerate_bridge_sources(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.enumerate_bridge_sources(domain=domain)
+        return await asyncio.to_thread(expert.enumerate_bridge_sources, domain=domain)
     except Exception as e:
         print(f"Error in enumerate_bridge_sources: {e}")
         return json.dumps({"error": str(e)})
@@ -926,7 +926,7 @@ async def list_bridge_domains() -> str:
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.list_bridge_domains()
+        return await asyncio.to_thread(expert.list_bridge_domains)
     except Exception as e:
         print(f"Error in list_bridge_domains: {e}")
         return json.dumps({"error": str(e)})
@@ -959,7 +959,8 @@ async def infer_context_on_demand(
     allowed_ids = await _get_current_allowed_ids()
     expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
     try:
-        return expert.infer_context_on_demand(
+        return await asyncio.to_thread(
+            expert.infer_context_on_demand,
             node_id=node_id,
             node_name=node_name,
             query_context=query_context
@@ -972,6 +973,7 @@ async def infer_context_on_demand(
 
 # FastMCP exposes a starlette app for SSE via .sse_app()
 app = mcp.sse_app()
+
 
 # Neo4j health-check connect timeout — kept short so a hung/unreachable Aura instance
 # fails the status check quickly instead of hanging the request.
@@ -1087,9 +1089,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def _serve(port: int):
+    """Every tool runs its Neo4j work off the event loop (asyncio.to_thread), so a slow query never blocks new
+    connections: validation 2026-11-12 saw two MCP handshakes hang 60 s while overlapping bridge runs held the loop.
+    The work waits on Neo4j/Permify, not CPU, so the pool is larger than Python's default (cpu + 4 = 5 threads on a
+    1-CPU instance)."""
+    from concurrent.futures import ThreadPoolExecutor
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=MCP_TOOL_THREADS, thread_name_prefix="mcp-tool"))
+    await uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port)).serve()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     # Warm the shared Neo4j pool before the port opens, so Cloud Run sends traffic only to a warm instance.
     from expert_tools import warm_neo4j
     print(f"[WARMUP] Neo4j pool {'ready' if warm_neo4j() else 'NOT ready'}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    asyncio.run(_serve(port))

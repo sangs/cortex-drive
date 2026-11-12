@@ -48,7 +48,7 @@ class SharedDriverTest(unittest.TestCase):
         gw = open(os.path.join(ROOT, "cortex-gateway", "index.js")).read()
         self.assertIn("ThreadingHTTPServer(server_address", bento)
         self.assertLess(bento.index("warm_neo4j()"), bento.index("serve_forever()"))
-        self.assertLess(mcp.index("warm_neo4j()"), mcp.index("uvicorn.run(app"))
+        self.assertLess(mcp.rindex("warm_neo4j()"), mcp.index("asyncio.run(_serve(port))"))
         self.assertIn("warmUp().finally(() => app.listen(port", gw)
         for svc in ("gateway", "bento", "mcp"):
             script = open(os.path.join(ROOT, "scripts", f"build-deploy-{svc}.sh")).read()
@@ -65,3 +65,19 @@ class SharedDriverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolsOffEventLoopTest(unittest.TestCase):
+    """Every MCP tool runs its Neo4j work off the event loop (2026-11-12): a synchronous `return expert.x(...)` in an
+    async tool body blocks every other connection while it runs."""
+
+    def test_no_tool_calls_expert_on_the_event_loop(self):
+        import re
+        src = open(os.path.join(ROOT, "src", "mcp_server", "cortex_os_mentalmodel_server_sse.py")).read()
+        blocking = re.findall(r"^        return (?:json\.dumps\()?expert\.\w+\(", src, re.M)
+        self.assertEqual(blocking, [], "tool bodies must use asyncio.to_thread(expert.method, ...)")
+
+    def test_thread_pool_sized_before_serving(self):
+        src = open(os.path.join(ROOT, "src", "mcp_server", "cortex_os_mentalmodel_server_sse.py")).read()
+        self.assertIn("set_default_executor(", src)
+        self.assertIn("asyncio.run(_serve(port))", src)

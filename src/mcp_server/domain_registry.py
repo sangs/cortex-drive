@@ -498,6 +498,9 @@ TOPIC_ALIAS_MIN_CHARS = 3
 # Neo4j connections (cold-start fix, 2026-11-12): one driver per process, shared by every request (a new driver per tool
 # call paid a TLS handshake each time). Pooled connections idle longer than this are checked before reuse (Aura closes
 # idle connections). Services warm the driver before they start serving, for at most NEO4J_WARMUP_MAX_S.
+# MCP tool thread pool (2026-11-12): tools wait on Neo4j/Permify, so more threads than CPUs; stays below the Neo4j
+# driver's connection pool (100 by default).
+MCP_TOOL_THREADS = int(os.environ.get("MCP_TOOL_THREADS", "32"))
 NEO4J_LIVENESS_CHECK_S = float(os.environ.get("NEO4J_LIVENESS_CHECK_S", "30"))
 NEO4J_WARMUP_MAX_S = float(os.environ.get("NEO4J_WARMUP_MAX_S", "30"))
 
