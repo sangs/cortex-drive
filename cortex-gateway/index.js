@@ -896,7 +896,7 @@ const BRIDGE_MAX_LIMIT = parseInt(process.env.BRIDGE_MAX_LIMIT || '25', 10);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Fire-and-forget — gateway accepts requests immediately; embedding centroid init runs in background.
 // Queries that arrive before init completes skip Phase S and use safe default.
-initClassifier(openai).catch(e => console.warn('[CLASSIFY] initClassifier failed:', e.message));
+const classifierReady = initClassifier(openai).catch(e => console.warn('[CLASSIFY] initClassifier failed:', e.message));
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 const crypto = require('crypto');
 
@@ -4308,9 +4308,28 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
 app.all(REMOVED_NODE_LINK_ROUTES, (req, res) => res.status(404).json({ error: 'Not found' }));
 app.use('/api', authMiddleware, mcpProxy);
 
-app.listen(port, () => {
+// Warm-up before listening (cold-start fix, 2026-11-12): Cloud Run sends traffic once the port opens, so the classifier
+// is built and Bento and MCP are woken first (each pings its own /health, which also warms their Neo4j pool). Capped at
+// GATEWAY_WARMUP_MAX_MS so a slow dependency never blocks startup; failures are logged, not fatal.
+const GATEWAY_WARMUP_MAX_MS = Number(process.env.GATEWAY_WARMUP_MAX_MS || 20000);
+async function warmUp() {
+    const ping = async (base) => {
+        const token = await getCloudRunToken(base);
+        const res = await fetch(`${base}/health`, { headers: token ? { Authorization: token } : {} });
+        return `${base} ${res.status}`;
+    };
+    const started = Date.now();
+    const results = await Promise.race([
+        Promise.allSettled([classifierReady, ping(bentoServerUrl), ping(mcpServerUrl)]),
+        new Promise(r => setTimeout(() => r('timeout'), GATEWAY_WARMUP_MAX_MS)),
+    ]);
+    const summary = results === 'timeout' ? 'timed out' : results.map(x => x.status === 'fulfilled' ? (x.value || 'ok') : `failed: ${x.reason && x.reason.message}`).join(' | ');
+    console.log(`[WARMUP] ${Date.now() - started} ms — ${summary}`);
+}
+
+warmUp().finally(() => app.listen(port, () => {
     console.log(`Cortex Gateway listening at http://localhost:${port}`);
     console.log(`Smart Routing Active:`);
     console.log(`  -> /api/get_node_details -> ${bentoServerUrl}`);
     console.log(`  -> /api/* -> ${mcpServerUrl}`);
-});
+}));

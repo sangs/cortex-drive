@@ -1087,4 +1087,7 @@ app.add_middleware(
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
+    # Warm the shared Neo4j pool before the port opens, so Cloud Run sends traffic only to a warm instance.
+    from expert_tools import warm_neo4j
+    print(f"[WARMUP] Neo4j pool {'ready' if warm_neo4j() else 'NOT ready'}")
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -187,7 +187,9 @@ gcloud run deploy cortex-gateway ${CANDIDATE_FLAGS} \
     --port 8080 \
     --memory 512Mi \
     --timeout 600 \
-    --min-instances 0 \
+    # One warm instance (cold-start fix, 2026-11-12, user approved): a first question no longer waits for
+    # scale-from-zero of every service on its path. Billed at the idle rate while unused.
+    --min-instances 1 \
     --max-instances 5 \
     --add-cloudsql-instances "${CLOUD_SQL_CONN}" \
     --set-env-vars "${NEW_ENV_VARS}" \

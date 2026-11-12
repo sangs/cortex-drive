@@ -84,7 +84,9 @@ gcloud run deploy cortex-mcp \
     --port 8080 \
     --memory 1Gi \
     --timeout 600 \
-    --min-instances 0 \
+    # One warm instance (cold-start fix, 2026-11-12, user approved): a first question no longer waits for
+    # scale-from-zero of every service on its path. Billed at the idle rate while unused.
+    --min-instances 1 \
     --max-instances 3 \
     --set-env-vars "${NEW_ENV_VARS}" \
     --set-secrets "NEO4J_URI=NEO4J_URI:latest,NEO4J_USERNAME=NEO4J_USERNAME:latest,\

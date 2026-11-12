@@ -7,7 +7,7 @@ import json
 import os
 import asyncio
 import redis as redis_lib
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from expert_tools import ExpertTools
 from domain_registry import DOMAIN_COVERAGE_MAX_TERMS
@@ -287,7 +287,12 @@ def main():
     # Default port, can be overridden by PORT environment variable
     port = int(os.environ.get("PORT", "8000"))
     server_address = ("", port)
-    httpd = HTTPServer(server_address, ToolHandler)
+    # Warm the shared Neo4j pool before the port opens (cold-start fix, 2026-11-12), and serve requests concurrently:
+    # a single-threaded HTTPServer made a coverage check, a catalog fetch and node details from different users queue.
+    from expert_tools import warm_neo4j
+    print(f"[WARMUP] Neo4j pool {'ready' if warm_neo4j() else 'NOT ready'}")
+    ThreadingHTTPServer.daemon_threads = True
+    httpd = ThreadingHTTPServer(server_address, ToolHandler)
     
     print(f"Starting cortex-os-mentalmodel HTTP server on port {port}...")
     print(f"Endpoint: http://localhost:{port}/search_episodes_gds_by_question_tool")
