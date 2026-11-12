@@ -61,7 +61,8 @@ def plan(tier: str) -> dict:
                RETURN elementId(n) AS eid, n.node_id AS node_id, n.name AS name, labels(n) AS labels,
                       COUNT { (n)-[r]-() WHERE NOT type(r) IN $sim } AS degree,
                       COUNT { (n)-[]-() } AS all_links""",
-            tier=tier, labels=VOCABULARY_CONSOLIDATION_LABELS, sim=SIMILARITY_RELATIONSHIPS).data()
+            tier=tier, labels=VOCABULARY_CONSOLIDATION_LABELS, sim=SIMILARITY_RELATIONSHIPS).records
+        rows = [dict(r) for r in rows]
     keys = group_keys([r["name"] for r in rows])
     groups = {}
     for r in rows:
