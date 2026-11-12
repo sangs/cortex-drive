@@ -51,7 +51,16 @@ class SharedDriverTest(unittest.TestCase):
         self.assertLess(mcp.index("warm_neo4j()"), mcp.index("uvicorn.run(app"))
         self.assertIn("warmUp().finally(() => app.listen(port", gw)
         for svc in ("gateway", "bento", "mcp"):
-            self.assertIn("--min-instances 1", open(os.path.join(ROOT, "scripts", f"build-deploy-{svc}.sh")).read())
+            script = open(os.path.join(ROOT, "scripts", f"build-deploy-{svc}.sh")).read()
+            self.assertIn("--min-instances 1", script)
+            # Found 2026-11-12: a comment inside the continued `gcloud run deploy` command ended it and silently dropped
+            # --min-instances and every flag after it. No comment line may sit inside the command.
+            start = script.index(f"gcloud run deploy cortex-{svc}")
+            end = script.index("\n\n", start)
+            command = script[start:end]
+            self.assertFalse([l for l in command.splitlines() if l.strip().startswith("#")], f"comment inside {svc} deploy")
+            self.assertTrue(all(l.rstrip().endswith("\\") for l in command.splitlines()[:-1] if l.strip()),
+                            f"{svc}: every line but the last continues the command")
 
 
 if __name__ == "__main__":

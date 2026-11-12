@@ -75,6 +75,9 @@ else
     echo "✓ No env var drift — every live plain env var is accounted for."
 fi
 
+# --min-instances 1 (cold-start fix, 2026-11-12, user approved): a first question no longer waits for
+# scale-from-zero of every service on its path; billed at the idle rate while unused. (Never put comments inside
+# the continued command below: a comment line ends it and silently drops every flag after it.)
 gcloud run deploy cortex-mcp \
     --image "${REGISTRY}/cortex-mcp:latest" \
     --region "${REGION}" \
@@ -84,8 +87,6 @@ gcloud run deploy cortex-mcp \
     --port 8080 \
     --memory 1Gi \
     --timeout 600 \
-    # One warm instance (cold-start fix, 2026-11-12, user approved): a first question no longer waits for
-    # scale-from-zero of every service on its path. Billed at the idle rate while unused.
     --min-instances 1 \
     --max-instances 3 \
     --set-env-vars "${NEW_ENV_VARS}" \
