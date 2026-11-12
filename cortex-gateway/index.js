@@ -768,6 +768,7 @@ const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? pro
 const routingV2For = userId => ROUTING_V2_MODE === 'true' || (ROUTING_V2_MODE === 'owner' && isOwner(userId));
 const { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer } = require('./utils/routing_v2');
 const { suggestedQuestions } = require('./utils/suggestions');
+const { toolsForRoute, discoveryEvidence } = require('./utils/turn_grounding');
 const { createContentGaps, gapKindFor } = require('./utils/content_gaps');
 /** §4.5 overview from Bento, as the asking user (direct fetch + Cloud Run token, AP-18). */
 async function bentoOverview({ tenantId, userId, guestAnchor }) {
@@ -3607,7 +3608,8 @@ app.post('/query', authMiddleware, async (req, res) => {
         let loopCount = 0;
         const MAX_LOOPS = 5;
         // Tools this turn may use (S2-20): guests get the read-only allowlist; raw query tools never.
-        const offeredTools = toolsOfferedFor({ isGuest: req.guestAuth === true }, mcpToolsDefinitions);
+        // Routing v2 single mode: only the routed domain's tools (utils/turn_grounding.js, validation 2026-11-12).
+        const offeredTools = toolsForRoute(toolsOfferedFor({ isGuest: req.guestAuth === true }, mcpToolsDefinitions), routingV2);
         const offeredNames = offeredToolNames(offeredTools);
 
         // Set when any tool call in this turn fails/times out (see the catch around
@@ -3848,7 +3850,8 @@ app.post('/query', authMiddleware, async (req, res) => {
 
                         // toolContent here is post-domain-guard — exactly what the LLM receives.
                         dataToolCalls++;
-                        if (countsAsEvidenceOnTurn(domainSignal, toolName) && toolResultHasEvidence(toolName, toolContent)) groundingEvidence++;
+                        if (countsAsEvidenceOnTurn(domainSignal, toolName) && toolResultHasEvidence(toolName, toolContent)
+                            && discoveryEvidence({ routing: routingV2, toolArgs, question, toolContent })) groundingEvidence++;
 
                         messages.push({
                             role: "tool",

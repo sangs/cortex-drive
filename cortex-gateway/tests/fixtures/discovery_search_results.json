@@ -1,0 +1,829 @@
+{
+ "quantum computing": {
+  "nodes": [
+   {
+    "name": "Mezocliq LLC",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Sangeetha Ramadurai",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Professional Experience",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Enterprise Access Control, Search, and Distributed Infrastructure",
+    "type": "Project",
+    "description": "Access & Search Infrastructure: Architected Cassandra-based fine-grained privilege model and Elasticsearch full-text search across analytics platforms, with Hazelcast distributed caching for sub-second performance."
+   },
+   {
+    "name": "Cloud-Native Platform Orchestration & Workflow System",
+    "type": "Project",
+    "description": "Platform Orchestration: Designed Quarkus-based microservices architecture for UI orchestration and multi-stage approval workflows, with Docker/Kubernetes containerization and full CI/CD pipelines at Mezocliq."
+   },
+   {
+    "name": "Kafka Streams",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Cassandra",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Protocol Buffer",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "GWT",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Thrift API",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "React",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Java",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "AWS",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Kubernetes",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Docker",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Jenkins",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Quarkus",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Microservices",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Cloud Computing",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Elasticsearch",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Open-Source AI Agents Contribution @ JPMC",
+    "type": "ThoughtLeadership",
+    "description": "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns."
+   },
+   {
+    "name": "Metadata Agent Architecture",
+    "type": "Project",
+    "description": "Metadata Discovery & RAG Agent: Architected AWS-based AI solution using Lambda, Bedrock, and PG Vector to reduce data discovery time from hours to seconds."
+   },
+   {
+    "name": "Instrument Data on DataMesh",
+    "type": "Project",
+    "description": "DataMesh Publishing: Standardized enterprise reference data for AWM by building automated publishing pipelines across the JPMC DataMesh using AWS Glue/Step Functions."
+   },
+   {
+    "name": "Global Hackathons @ JPMorgan Chase",
+    "type": "Project",
+    "description": "Innovation Leadership: Led Global Hackathon projects delivering MCP-based AI solutions, including MongoDB and Neo4j MCP clients."
+   },
+   {
+    "name": "Ignite Community Leadership",
+    "type": "SocialLearning",
+    "description": "Core team member of Ignite community in New York Metro, working with 9 active communities and 18 community leads."
+   },
+   {
+    "name": "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
+    "type": "Project",
+    "description": "Innovation Leadership: Automated, context-aware AI code review process using Sourcegraph's Cody, tailored for enterprise guardrails."
+   },
+   {
+    "name": "Volarisation Engine @ IBM Dev Day 2026",
+    "type": "Project",
+    "description": "Innovation Leadership: Explainable, agentic AI decision-support system built with IBM Watsonx Orchestrate to accelerate life-sciences patent research."
+   },
+   {
+    "name": "Ignite Social Learning Community @ JPMC",
+    "type": "ThoughtLeadership",
+    "description": "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impact of social learning in enterprise tech."
+   },
+   {
+    "name": "Cortex-Drive",
+    "type": "Startup",
+    "description": "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows."
+   },
+   {
+    "name": "[2026] InfoQ Certified Architect",
+    "type": "Certification",
+    "description": "Co-authored expert article in InfoQ e-magazine, Architectural Shifts for Platform Engineers in the Age of AI, defining mandatory architectural shifts for AI platform engineering."
+   },
+   {
+    "name": "[2024] MIT: Applied Data Science",
+    "type": "ProfessionalEducation",
+    "description": "Applied Data Science Program covering AI & ML / MIT Professional Education."
+   },
+   {
+    "name": "Infrastructure for Instrument Data on DataMesh",
+    "type": "Project",
+    "description": "DataMesh Infrastructure: Resolved critical architecture blockers by collaborating on enterprise-approved Terraform modules for Lake Formation and S3 Access Points."
+   },
+   {
+    "name": "Gain/Loss Cloud Native Microservice",
+    "type": "Project",
+    "description": "Cost Modernization: Designed and implemented a greenfield, cloud-native Gain/Loss microservice on AWS EKS, delivering $338k in annual cost savings and removing vendor dependency."
+   },
+   {
+    "name": "Start of Day Open Short Orders Microservice",
+    "type": "Project",
+    "description": "Cloud Transformation: Modernized start-of-day business processing by migrating legacy vendor products to a scalable, cloud-native microservice architecture."
+   },
+   {
+    "name": "Corporate Action Report Automation",
+    "type": "Project",
+    "description": "Corporate Action Automation: Eliminated manual report delays by implementing an automation microservice integrated with upstream data sources, improving stakeholder delivery consistency."
+   },
+   {
+    "name": "Settlement Setup Instruction Verification System",
+    "type": "Project",
+    "description": "Settlement Verification: Led brownfield migration off Sybase dependency, maintaining settlement instruction verification integrity without disruption to order-raising workflows."
+   },
+   {
+    "name": "Executive Workflow Management Platform (Ten Thousand Women)",
+    "type": "Project",
+    "description": "Executive Workflow Platform: Led J2EE/Struts/Hibernate development of a multi-stage approval workflow system for Goldman Sachs' global Ten Thousand Women initiative, improving operational efficiency for administrators worldwide."
+   },
+   {
+    "name": "Capital Attribution & Market Risk Data Platform",
+    "type": "Project",
+    "description": "Market Risk Platform: Implemented capital attribution logic and redesigned market risk data workflows in DB2, improving accuracy and enabling better alignment with evolving risk reporting structures at Goldman Sachs."
+   },
+   {
+    "name": "Radiology Imaging Platform Integration",
+    "type": "Project",
+    "description": "PACS Integration: Implemented a universal medical application interface enabling radiologists to access 3D clinical applications directly from PACS systems, demonstrated at RSNA conferences and adopted across GE Healthcare deployments."
+   },
+   {
+    "name": "Image Management & Distributed Event Processing System",
+    "type": "Project",
+    "description": "Distributed Imaging Workflows: Designed patient data processing workflows and prototyped distributed event communication using CORBA/ACE, improving reliability and scalability of large-scale medical image management at GE Healthcare."
+   }
+  ]
+ },
+ "blockchain": {
+  "nodes": [
+   {
+    "name": "LangChain",
+    "labels": [
+     "Technology",
+     "Embeddable"
+    ]
+   }
+  ]
+ },
+ "DuckLake": {
+  "nodes": [
+   {
+    "name": "Data Archives - Software Engineering Daily",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "JPMorgan Chase",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Mezocliq LLC",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+    "type": "ThoughtLeadership",
+    "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering."
+   },
+   {
+    "name": "Macmet India Pvt. Ltd.",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Embeddable Graph Databases with KuzuDB",
+    "type": "Topic",
+    "description": ""
+   },
+   {
+    "name": "Apache Spark Streaming",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Lee Atchison",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Ryan Blue",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "The Data Exchange with Ben Lorica",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "Lance tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Materialized Views",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Ignite takes New York City by storm",
+    "type": "ThoughtLeadership",
+    "description": ""
+   },
+   {
+    "name": "Dynamic Tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Professional Experience",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Open Source & Independent Ventures",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Education & Continuous Learning",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Hackathons",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Thought Leadership & Community",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Arrow ecosystem",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Incremental View Maintenance Engines",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Batch Systems",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Streaming Programming Models",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Dataflow",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Graph Databases",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "MonetDB",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Tobias Macey",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Postgres",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Materialise",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Prashanth Rao",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Sangeetha Ramadurai",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Streaming Technology",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Lakehouse Architectures",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Dan Sotolongo",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Software Engineering Daily",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "Delayed View Semantics In Incremental Data Processing",
+    "type": "Episode",
+    "description": "In this episode of the Data Engineering Podcast Dan Sotolongo from Snowflake talks about the complexities of incremental data processing in warehouse environments. Dan discusses the challenges of handling continuously evolving datasets and the importance of incremental data processing for optimized resource use and reduced latency. He explains how delayed view semantics can address these challenges by maintaining up-to-date results with minimal work, leveraging Snowflake's dynamic tables feature"
+   },
+   {
+    "name": "TopDB",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Duck Lake: The SQL-Backed Open Standard for Simplified Lakehouse Metadata",
+    "type": "Topic",
+    "description": ""
+   },
+   {
+    "name": "Database",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "DuckLake",
+    "type": "Technology",
+    "description": ""
+   }
+  ]
+ },
+ "Apache Iceberg": {
+  "nodes": [
+   {
+    "name": "Data Archives - Software Engineering Daily",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "JPMorgan Chase",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Mezocliq LLC",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "GOLDMAN SACHS & CO.",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "[2026] InfoQ Certified Architect",
+    "type": "Certification",
+    "description": "Co-authored expert article in InfoQ e-magazine, Architectural Shifts for Platform Engineers in the Age of AI, defining mandatory architectural shifts for AI platform engineering."
+   },
+   {
+    "name": "Simplifying Lakehouse Ecosystem With DuckLake",
+    "type": "Episode",
+    "description": "In this episode of the Data Engineering Podcast Hannes M\u00fchleisen and Mark Raasveldt, the creators of DuckDB, share their work on Duck Lake, a new entrant in the open lakehouse ecosystem. They discuss how Duck Lake, is focused on simplicity, flexibility, and offers a unified catalog and table format compared to other lakehouse formats like Iceberg and Delta. Hannes and Mark share insights into how Duck Lake revolutionizes data architecture by enabling local-first data processing, simplifying depl"
+   },
+   {
+    "name": "Polars data fraome",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Apache Kafka",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Spark",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Hive",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "High Performance And Low Overhead Graphs With KuzuDB",
+    "type": "Episode",
+    "description": "In this episode of the Data Engineering Podcast Prashanth Rao, an AI engineer at KuzuDB, talks about their embeddable graph database. Prashanth explains how KuzuDB addresses performance shortcomings in existing solutions through columnar storage and novel join algorithms. He discusses the usability and scalability of KuzuDB, emphasizing its open-source nature and potential for various graph applications. The conversation explores the growing interest in graph databases due to their AI and data e"
+   },
+   {
+    "name": "Apache Beam",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "S3",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Data Engineering Podcast",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "parquet files",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Apache Spark Streaming",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "parquet format",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Lance tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Hadoop ecosystem",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Materialized Views",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Pig",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "GE Healthcare",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Data warehouse",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "Data lake",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "ACID transactions",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "Snapshot isolation",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "Manifest files",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "Trino",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Embeddable Graph Databases with KuzuDB",
+    "type": "Topic",
+    "description": ""
+   },
+   {
+    "name": "Dynamic Tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Macmet India Pvt. Ltd.",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Incremental View Maintenance Engines",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Batch Systems",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+    "type": "ThoughtLeadership",
+    "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering."
+   },
+   {
+    "name": "Federated Knowledge Silos",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Arrow ecosystem",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Streaming Programming Models",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Time travel",
+    "type": "Concept",
+    "description": ""
+   },
+   {
+    "name": "Lee Atchison",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Ryan Blue",
+    "type": "Person",
+    "description": ""
+   }
+  ]
+ },
+ "graph databases": {
+  "nodes": [
+   {
+    "name": "Data Archives - Software Engineering Daily",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "JPMorgan Chase",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "Mezocliq LLC",
+    "type": "Company",
+    "description": ""
+   },
+   {
+    "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+    "type": "ThoughtLeadership",
+    "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering."
+   },
+   {
+    "name": "Embeddable Graph Databases with KuzuDB",
+    "type": "Topic",
+    "description": ""
+   },
+   {
+    "name": "Apache Beam",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Crew",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "LangGraph",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Apache Spark Streaming",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Language models (LLMs)",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Lance tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "JSON",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "API",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Materialized Views",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Donew",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "VS Code",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Dynamic Tables",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Cursor",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Multimodal graph RAG",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Incremental View Maintenance Engines",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Text-only RAG",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Arrow ecosystem",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Batch Systems",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Ben Lorica",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "The Data Exchange with Ben Lorica",
+    "type": "Podcast",
+    "description": ""
+   },
+   {
+    "name": "David Hughes",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Streaming Programming Models",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Graph Databases",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Delayed View Semantics In Incremental Data Processing",
+    "type": "Episode",
+    "description": "In this episode of the Data Engineering Podcast Dan Sotolongo from Snowflake talks about the complexities of incremental data processing in warehouse environments. Dan discusses the challenges of handling continuously evolving datasets and the importance of incremental data processing for optimized resource use and reduced latency. He explains how delayed view semantics can address these challenges by maintaining up-to-date results with minimal work, leveraging Snowflake's dynamic tables feature"
+   },
+   {
+    "name": "Tobias Macey",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Ignite takes New York City by storm",
+    "type": "ThoughtLeadership",
+    "description": ""
+   },
+   {
+    "name": "Dataflow",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Professional Experience",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "MonetDB",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Prashanth Rao",
+    "type": "Person",
+    "description": ""
+   },
+   {
+    "name": "Postgres",
+    "type": "Technology",
+    "description": ""
+   },
+   {
+    "name": "Open Source & Independent Ventures",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Education & Continuous Learning",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Hackathons",
+    "type": "Category",
+    "description": ""
+   },
+   {
+    "name": "Materialise",
+    "type": "Technology",
+    "description": ""
+   }
+  ]
+ }
+}

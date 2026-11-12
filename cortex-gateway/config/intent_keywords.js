@@ -43,6 +43,13 @@
  * inline in intent_classifier.js.
  */
 module.exports = {
+    // Grounding in discovery mode (AP-25, 2026-11-12): question words that never name a topic. A tool result counts as
+    // evidence only if it contains every remaining word of what was searched for (utils/turn_grounding.js).
+    groundingStopWords: ['what', 'whats', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how', 'is', 'are', 'was',
+        'were', 'the', 'and', 'for', 'with', 'about', 'tell', 'explain', 'describe', 'define', 'show', 'find', 'give', 'list',
+        'does', 'did', 'can', 'could', 'would', 'should', 'you', 'your', 'me', 'my', 'our', 'this', 'that', 'these', 'those',
+        'any', 'some', 'all', 'everything', 'anything', 'know', 'known', 'say', 'said', 'says', 'discussion', 'discussed',
+        'discuss', 'discusses', 'mean', 'means', 'meaning', 'please', 'into', 'from', 'there', 'have', 'has', 'had'],
     // Evidence-backed single words allowed in `keywords` despite being one word. Each entry's
     // evidence was verified live during the 2026-09-21 audit — against documents/user_queries.md,
     // the live Neo4j graph, and 116 real historical gateway queries (30-day window). Do not add a
