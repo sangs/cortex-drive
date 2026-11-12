@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-11T03:41:58.972593+00:00",
+  "generated_at": "2026-11-12T19:25:43.149985+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 49,
   "domains": {
@@ -1304,13 +1304,6 @@
       "owner_id": "user_SYSTEM_ADMIN"
     },
     {
-      "name": "Graph Database",
-      "domain": "topic",
-      "node_id": "0eaf8ed1-24b7-4956-af5f-18956a29ae99",
-      "tier": "SYSTEM",
-      "owner_id": "user_SYSTEM_ADMIN"
-    },
-    {
       "name": "Graph Databases",
       "domain": "topic",
       "node_id": "4ce8b9f5-16f6-4404-8216-908199f3b644",
@@ -1321,13 +1314,6 @@
       "name": "Graph UX",
       "domain": "topic",
       "node_id": "9e784ed3-d0da-44f6-a8cc-66c0dbf08572",
-      "tier": "SYSTEM",
-      "owner_id": "user_SYSTEM_ADMIN"
-    },
-    {
-      "name": "Graph database",
-      "domain": "topic",
-      "node_id": "0097a720-1324-41ae-b7cc-c9d83ea270f1",
       "tier": "SYSTEM",
       "owner_id": "user_SYSTEM_ADMIN"
     },
