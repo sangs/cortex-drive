@@ -688,7 +688,7 @@ const shareLinks = createShareLinks({
 });
 
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
-const { runCrossMode, crossEvidenceText, SEARCH_INTENT: CROSS_SEARCH_INTENT } = require('./utils/cross_mode');
+const { runCrossMode, crossEvidenceText, withConnectionsSection, SEARCH_INTENT: CROSS_SEARCH_INTENT } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
 // Bridge endpoints in cross mode: types that belong to one domain only (from the manifests), minus structural ones.
 const CROSS_NON_ANCHOR_TYPES = new Set(['Category', 'Year', 'Tool', 'PreparatoryNote', 'Chunk', 'Source', 'SourceSnapshot', 'ContentBlock']);
@@ -743,6 +743,8 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
             temperature: ANSWER_TEMPERATURE,
         });
         answer = completion.choices[0].message.content || NO_DATA_FOUND_ANSWER(question);
+        // Connections are stated by code from the bridge data, exactly as found (grounding, Invariant 11).
+        answer = withConnectionsSection(answer, result.bridges);
     }
     const auditedAnswer = auditResponseUrls(answer, urls);
     const hasGraph = result.graph.nodes.length > 0;

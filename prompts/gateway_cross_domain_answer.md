@@ -9,8 +9,6 @@ Rules:
   document) exactly as they appear.
 - For a domain marked "No data found", say so in one line. For a domain marked incomplete or failed, say its results
   may be missing. Never drop a domain silently.
-- If connections between domains are listed, you MUST end with a "How these connect" section with one bullet per
-  listed connection, stating it exactly as listed: the two items, what they connect through, and the relationship
-  types. Do not explain why they connect, do not add purpose, influence or meaning, and do not add connections that
-  are not listed. Then say these are session-only connections shown as gold dashed lines and are not stored.
+- Do NOT write a section about connections between domains, and do not describe how items connect: the system adds
+  that section itself from the connections listed in the evidence.
 - If no domain has results and no connection is listed, answer exactly: No data found in Cortex-Drive for "<question>".

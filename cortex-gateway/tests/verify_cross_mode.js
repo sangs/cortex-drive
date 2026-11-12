@@ -5,7 +5,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { runCrossMode, crossEvidenceText, rrfMerge, CROSS_DOMAIN_LLM_QUOTA } = require('../utils/cross_mode.js');
+const { runCrossMode, crossEvidenceText, rrfMerge, withConnectionsSection, CROSS_DOMAIN_LLM_QUOTA } = require('../utils/cross_mode.js');
 
 let passed = 0;
 const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m); passed++; };
@@ -74,12 +74,20 @@ const node = (domain, i, extra = {}) => ({ id: `${domain}-${i}`, element_id: `${
     const merged = rrfMerge({ a: [{ id: 1 }], b: [{ id: 2 }] }, { a: 0.6, b: 1.0 });
     eq(merged[0].domain, 'b', 'higher domain score ranks first at equal rank');
 
-    // Gateway wiring (static)
+    // Connections are written by code, exactly as found; any LLM-written section is replaced
+    const b = [{ from: 'A', to: 'B', via: ['Graph Databases'], rels: ['USES_TOOL', 'IS_SIMILAR'] }];
+    const out = withConnectionsSection('Answer.\n\n## How these connect\n- A and B share a deep purpose.', b);
+    ok(!out.includes('deep purpose'), 'model-written connections removed');
+    ok(out.includes('- **A** ↔ **B** via Graph Databases (USES_TOOL → IS_SIMILAR)'), 'stated as found');
+    eq(withConnectionsSection('Answer.', []), 'Answer.', 'no bridges → no section');
+
+        // Gateway wiring (static)
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     ok(/routingV2\.mode === 'cross'/.test(src) && /text\/event-stream/.test(src), 'cross mode streams when asked');
     ok(/if \(!result\.anyEvidence\) \{\s*answer = NO_DATA_FOUND_ANSWER\(question\);/.test(src), 'no evidence → No data found, no LLM call');
     ok(/temperature: ANSWER_TEMPERATURE,\s*\}\);\s*answer = completion/.test(src), 'answer call at temperature 0, no tools');
     ok(/auditResponseUrls\(answer, urls\)/.test(src), 'URL audit on the cross answer');
+    ok(/answer = withConnectionsSection\(answer, result\.bridges\)/.test(src), 'connections section written by code');
 
     console.log(`verify_cross_mode: ${passed} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -144,5 +144,17 @@ function crossEvidenceText({ status, evidence, bridges, keyword }, summarise) {
     return parts.join('\n\n');
 }
 
-module.exports = { runCrossMode, crossEvidenceText, rrfMerge, rankForTopics, SEARCH_INTENT, DISPLAY,
+/**
+ * The "How these connect" section, written by code from the bridge data (never by the LLM — at temperature 0 it still
+ * added reasons such as "indicating a relationship through…"). Any section the model wrote is removed first.
+ */
+const CONNECTIONS_HEADING = '## How these connect';
+function withConnectionsSection(answer, bridges) {
+    const body = String(answer || '').split(/\n#+\s*How these connect[\s\S]*$/i)[0].trimEnd();
+    if (!bridges.length) return body;
+    const lines = bridges.map(b => `- **${b.from}** ↔ **${b.to}**${b.via.length ? ` via ${b.via.join(' → ')}` : ''} (${b.rels.join(' → ')})`);
+    return `${body}\n\n${CONNECTIONS_HEADING}\n${lines.join('\n')}\n\nThese are session-only connections, shown as gold dashed lines on the graph; nothing was written to the graph.`;
+}
+
+module.exports = { runCrossMode, crossEvidenceText, withConnectionsSection, CONNECTIONS_HEADING, rrfMerge, rankForTopics, SEARCH_INTENT, DISPLAY,
                    CROSS_DOMAIN_LLM_QUOTA, CROSS_DOMAIN_ANCHORS_PER_DOMAIN, RRF_K };
