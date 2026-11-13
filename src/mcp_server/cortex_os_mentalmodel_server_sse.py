@@ -20,7 +20,7 @@ from typing import List, Optional
 
 # Local dependency
 from expert_tools import ExpertTools
-from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT, MCP_TOOL_THREADS
+from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT, MCP_HTTP_PATH, MCP_TOOL_THREADS
 from entity_catalog import version_key as entity_catalog_version_key
 
 # Contextvar to hold the tenant_id extracted from the request headers
@@ -106,6 +106,10 @@ async def _get_current_allowed_ids() -> list | None:
 mcp = FastMCP(
     "cortex-os-mentalmodel",
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    # Stateless HTTP: no session lives in an instance's memory, so any instance can answer any call.
+    streamable_http_path=MCP_HTTP_PATH,
+    stateless_http=True,
+    json_response=True,
 )
 
 @mcp.tool()
@@ -971,8 +975,11 @@ async def infer_context_on_demand(
     finally:
         expert.close()
 
-# FastMCP exposes a starlette app for SSE via .sse_app()
-app = mcp.sse_app()
+# Primary transport: stateless HTTP at MCP_HTTP_PATH (one POST per tool call; the gateway uses it). Its lifespan runs
+# the session manager. The SSE routes (/sse, /messages/) stay for SSE clients and as the gateway's fallback
+# (MCP_TRANSPORT=sse); identity still comes from each request's headers via TenantASGIMiddleware below.
+app = mcp.streamable_http_app()
+app.router.routes.extend(mcp.sse_app().routes)
 
 
 # Neo4j health-check connect timeout — kept short so a hung/unreachable Aura instance

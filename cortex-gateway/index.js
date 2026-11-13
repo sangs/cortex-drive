@@ -784,7 +784,8 @@ async function bentoOverview({ tenantId, userId, guestAnchor }) {
     return res.json();
 }
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
-const { mustGround, toolChoiceFor } = require('./utils/grounding_guard');
+const { mustGround, toolChoiceFor, clearGraph } = require('./utils/grounding_guard');
+const { pickTargetedAnswerNode } = require('./utils/targeted_career');
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -2551,8 +2552,56 @@ app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, shareAuthz.requ
 
 // --- LLM Orchestration Section ---
 
+// MCP transport (2026-11-12). 'http' (default): one stateless POST per tool call to MCP_HTTP_PATH, so Cloud Run can send it
+// to any MCP instance. 'sse' (fallback, MCP_TRANSPORT=sse): the old GET /sse + POST /messages handshake, which hangs
+// 60 s whenever the POST lands on a different instance than the stream (404 "Could not find session").
+// MCP_HTTP_PATH mirrors src/mcp_server/domain_registry.py MCP_HTTP_PATH.
+const MCP_HTTP_PATH = '/mcp';
+const MCP_TRANSPORT = (process.env.MCP_TRANSPORT || 'http').toLowerCase();
+const MCP_CALL_TIMEOUT_MS = 60000;
+const MCP_INVALID_JSON_PREVIEW_CHARS = 100;
+
+// A tool result that is not JSON is wrapped as an in-band error so the caller never crashes on a SyntaxError.
+function mcpInvalidJsonResult(toolCallId, raw) {
+    return {
+        jsonrpc: "2.0",
+        id: toolCallId,
+        result: {
+            content: [{ type: "text", text: JSON.stringify({ error: `Backend returned invalid JSON: ${raw.substring(0, MCP_INVALID_JSON_PREVIEW_CHARS)}...` }) }]
+        }
+    };
+}
+
+async function callMcpToolHttp(mcpHeaders, toolName, toolArgs, toolCallId) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MCP_CALL_TIMEOUT_MS);
+    try {
+        const res = await fetch(`${mcpServerUrl}${MCP_HTTP_PATH}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', ...mcpHeaders },
+            body: JSON.stringify({ jsonrpc: "2.0", id: toolCallId, method: "tools/call", params: { name: toolName, arguments: toolArgs } }),
+            signal: controller.signal,
+        });
+        const raw = await res.text();
+        if (!res.ok) throw new Error(`MCP ${toolName} returned HTTP ${res.status}: ${raw.substring(0, MCP_INVALID_JSON_PREVIEW_CHARS)}`);
+        try {
+            const msg = JSON.parse(raw);
+            console.log(`[GATEWAY] SUCCESS: Received tool result for ${toolName}`);
+            return msg;
+        } catch (e) {
+            console.error("[GATEWAY] Error parsing tool result JSON:", e.message);
+            return mcpInvalidJsonResult(toolCallId, raw);
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') throw new Error(`Orchestration timeout calling ${toolName} after ${MCP_CALL_TIMEOUT_MS / 1000}s`);
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
-    console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId}`);
+    console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId} (${MCP_TRANSPORT})`);
 
     const toolCallId = Math.floor(Math.random() * 1000000);
     const initId = Math.floor(Math.random() * 1000000);
@@ -2568,7 +2617,11 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
         ...(oidcToken ? { "Authorization": oidcToken } : {}),
     };
 
-    const sseResponse = await fetch(`${mcpServerUrl}/sse`, { headers: mcpHeaders });
+    if (MCP_TRANSPORT !== 'sse') return callMcpToolHttp(mcpHeaders, toolName, toolArgs, toolCallId);
+
+    // SSE fallback. The stream is aborted on every exit (result, timeout, error) so no MCP session is left open.
+    const sseAbort = new AbortController();
+    const sseResponse = await fetch(`${mcpServerUrl}/sse`, { headers: mcpHeaders, signal: sseAbort.signal });
 
     if (!sseResponse.ok) {
         throw new Error(`Failed to connect to SSE: ${sseResponse.statusText}`);
@@ -2582,8 +2635,9 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
 
         // 60 second timeout for the entire orchestration step
         const timeout = setTimeout(() => {
-            reject(new Error(`Orchestration timeout calling ${toolName} after 60s`));
-        }, 60000);
+            sseAbort.abort();
+            reject(new Error(`Orchestration timeout calling ${toolName} after ${MCP_CALL_TIMEOUT_MS / 1000}s`));
+        }, MCP_CALL_TIMEOUT_MS);
 
         const postJson = async (url, body) => {
             const res = await fetch(url, {
@@ -2662,13 +2716,7 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
                             // If we fail to parse, it might be a raw string error. 
                             // Wrap it so the UI doesn't crash on SyntaxError.
                             clearTimeout(timeout);
-                            resolve({
-                                jsonrpc: "2.0",
-                                id: toolCallId,
-                                result: {
-                                    content: [{ type: "text", text: JSON.stringify({ error: `Backend returned invalid JSON: ${jsonStr.substring(0, 100)}...` }) }]
-                                }
-                            });
+                            resolve(mcpInvalidJsonResult(toolCallId, jsonStr));
                             return;
                         }
                     }
@@ -2676,7 +2724,7 @@ async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaRead
             }
         } catch (err) {
             clearTimeout(timeout);
-            console.error(`[GATEWAY] Orchestration Error for ${toolName}:`, err.message);
+            if (!sseAbort.signal.aborted) console.error(`[GATEWAY] Orchestration Error for ${toolName}:`, err.message);
             reject(err);
         }
     });
@@ -3644,6 +3692,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         const querySeenUrls = new Set(); // accumulate tool-result URLs for grounding audit (AP-15)
         let q2RankedNodes = null; // ranked node list captured from search_enterprise_graph for Q2 override
         let isTargetedCareer = false; // true when domainSignal=career but keyword ≠ "Sangeetha" (targeted lookup, not broad map)
+        const targetedCareerKeywords = []; // the keywords those targeted searches used (centre of the curated graph)
         const bridgeDomainsSearched = new Set(); // domain_intent values actually searched via search_enterprise_graph, for the bridge auto-inject below
 
         const mergeGraphData = (parsed, sourceDomain) => {
@@ -3837,6 +3886,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                                 (toolArgs.keyword || '').toLowerCase().includes('sangeetha');
                             if (isQ2Tool && !isBroadCareerKeyword && domainSignal === 'career') {
                                 isTargetedCareer = true;
+                                if (toolArgs.keyword) targetedCareerKeywords.push(toolArgs.keyword);
                             }
                             if (isQ2Tool && isBroadCareerKeyword && domainSignal === 'career' && parsed.nodes) {
                                 const seenK = new Map();
@@ -3931,12 +3981,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // The frontend renders this curated set (~5-10 nodes) without explosion.
                 // The answer node carries highlighted:true so it renders with a visual cue.
                 if (isTargetedCareer) {
-                    const ANSWER_TYPE_PRIORITY = ['ThoughtLeadership', 'Publication', 'Project', 'Startup', 'Company', 'Hackathon', 'Certification'];
-                    let answerNode = null;
-                    for (const t of ANSWER_TYPE_PRIORITY) {
-                        answerNode = accumulatedGraph.nodes.find(n => n.type === t);
-                        if (answerNode) break;
-                    }
+                    // The node the question searched for first, then type order (utils/targeted_career.js).
+                    const answerNode = pickTargetedAnswerNode(accumulatedGraph.nodes, targetedCareerKeywords);
                     if (answerNode) {
                         const answerId = answerNode.element_id || answerNode.id || answerNode.name;
                         // Collect IDs of nodes directly connected to the answer node (1 hop only)
@@ -4095,6 +4141,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                     finalAnswer = NO_DATA_FOUND_ANSWER(question);
                 }
                 if (finalAnswer === NO_DATA_FOUND_ANSWER(question)) {
+                    // The graph must not show what the answer says does not exist.
+                    clearGraph(accumulatedGraph);
                     contentGaps().record({ orgId: tenantId, userType: req.headers['x-user-type'], kind: 'no_data', question,
                                            topics: routingV2 ? routingV2.roles.topic : [] });
                 }

@@ -53,6 +53,16 @@ const node = (domain, i, extra = {}) => ({ id: `${domain}-${i}`, element_id: `${
     eq(pairs4.some(([a, b]) => a.endsWith('-n0') || b.endsWith('-n0')), false, 'non-content results never become endpoints');
     eq(r4.evidence.career.length, CROSS_DOMAIN_LLM_QUOTA, 'non-content results still count as evidence');
 
+    // Vocabulary only (no content of the domain) → the domain is empty (validation 2.4, 2026-11-12)
+    const r5 = await runCrossMode({ domains: ['career', 'podcast'], terms: ['governance'], callTool,
+                                    isContent: (d, n) => d === 'career' });
+    eq(r5.status, { career: 'found', podcast: 'none' }, 'vocabulary-only domain is "none"');
+    eq(r5.evidence.podcast.length, 0, 'no podcast evidence');
+    eq(r5.graph.nodes.some(n => n.__crossDomain === 'podcast'), false, 'no podcast nodes drawn');
+    ok(crossEvidenceText(r5, (d, ns) => ns.map(n => n.name).join(', ')).includes('No data found in Cortex-Drive for "governance" in podcast'), 'named as empty');
+    const r6 = await runCrossMode({ domains: ['career', 'podcast'], terms: ['x'], callTool, isContent: () => false });
+    eq([r6.anyEvidence, r6.graph.nodes.length], [false, 0], 'vocabulary everywhere → no evidence ("No data found")');
+
     // Deadline and failure: named, never silently dropped; a failed bridge never hides results
     const slow = async (tool, args) => {
         if (tool === 'bridges_between') throw new Error('boom');

@@ -501,6 +501,10 @@ TOPIC_ALIAS_MIN_CHARS = 3
 # MCP tool thread pool (2026-11-12): tools wait on Neo4j/Permify, so more threads than CPUs; stays below the Neo4j
 # driver's connection pool (100 by default).
 MCP_TOOL_THREADS = int(os.environ.get("MCP_TOOL_THREADS", "32"))
+# MCP stateless HTTP endpoint (2026-11-12): each tool call is one self-contained POST, so Cloud Run may route it to any
+# instance. The SSE transport kept a session in one instance's memory and its POST /messages could land on another
+# (404 "Could not find session", 60 s gateway hang). Mirrored in cortex-gateway/index.js (MCP_HTTP_PATH).
+MCP_HTTP_PATH = "/mcp"
 NEO4J_LIVENESS_CHECK_S = float(os.environ.get("NEO4J_LIVENESS_CHECK_S", "30"))
 NEO4J_WARMUP_MAX_S = float(os.environ.get("NEO4J_WARMUP_MAX_S", "30"))
 

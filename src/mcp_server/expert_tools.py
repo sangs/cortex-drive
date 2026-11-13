@@ -3022,10 +3022,12 @@ class ExpertTools:
         nodes that the caller may see (security on every hop), not yet reached, at most
         BRIDGE_NEIGHBOURS_PER_NODE_MAX per node; a path that already used a similarity link may not use
         another. Returns each neighbour with its structural visible degree, counted only up to
-        BRIDGE_HUB_DEGREE_THRESHOLD + 1 (a node with 5,000 links costs the same as one with 26)."""
+        BRIDGE_HUB_DEGREE_THRESHOLD + 1 (a node with 5,000 links costs the same as one with 26).
+        Consumption links (listening, subscribing, learning from) are never walked: "X listened to an episode" explains
+        no connection (validation 2026-11-12, 6.1/6.3: Apache Iceberg → … → the owner via LISTENS_TO_EPISODE)."""
         from domain_registry import (BRIDGE_HUB_DEGREE_THRESHOLD, BRIDGE_NEIGHBOURS_PER_NODE_MAX,
                                      get_bridge_label_string)
-        from schema_guard import SIMILARITY_RELATIONSHIPS
+        from schema_guard import CONSUMPTION_RELATIONSHIPS, SIMILARITY_RELATIONSHIPS
         bridge_labels = get_bridge_label_string()
         query = f"""
         UNWIND $frontier AS f
@@ -3034,6 +3036,7 @@ class ExpertTools:
             MATCH (a)-[r]-(b)
             WHERE NOT b:{bridge_labels} AND ({self._get_security_clause("b")})
               AND NOT elementId(b) IN $seen
+              AND NOT type(r) IN $consumption_types
               AND (NOT f.sim_used OR NOT type(r) IN $similarity_types)
             RETURN r, b LIMIT $per_node
         }}
@@ -3050,8 +3053,8 @@ class ExpertTools:
         """
         result = self._exec_query(
             query, **self._security_params(), frontier=frontier, seen=seen,
-            similarity_types=SIMILARITY_RELATIONSHIPS, per_node=BRIDGE_NEIGHBOURS_PER_NODE_MAX,
-            degree_cap=BRIDGE_HUB_DEGREE_THRESHOLD + 1,
+            similarity_types=SIMILARITY_RELATIONSHIPS, consumption_types=CONSUMPTION_RELATIONSHIPS,
+            per_node=BRIDGE_NEIGHBOURS_PER_NODE_MAX, degree_cap=BRIDGE_HUB_DEGREE_THRESHOLD + 1,
         )
         return [dict(r) for r in result.records]
 

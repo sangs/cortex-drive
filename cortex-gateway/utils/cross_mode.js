@@ -9,6 +9,7 @@
  *   3. Bridge between results: pair search (bridges_between) between the top results of different domains.
  *   4. Evidence for the answer: a compact per-domain summary (Invariant 6 / AP-4); an empty domain is named
  *      ("No data found … in <domain>"), a domain that missed its deadline is named as incomplete — never dropped.
+ *      A domain whose results hold none of its own content (only shared vocabulary) is empty.
  *
  * Every dependency is passed in (tool calls, filters, summaries), so the module is tested without a network.
  */
@@ -71,7 +72,11 @@ async function runCrossMode({ domains, terms, weights = {}, callTool, filter = (
                 return { domain, status: 'error', parsed: { nodes: [], links: [] } };
             }
             const kept = filter(domain, parsed) || parsed;
-            const nodes = rankForTopics((kept.nodes || []).filter(n => n && (n.name || n.title)), terms);
+            let nodes = rankForTopics((kept.nodes || []).filter(n => n && (n.name || n.title)), terms);
+            // A domain counts only when its own content matched (an episode, a project, a page, a document). Shared
+            // vocabulary alone is not a result for that domain (validation 2.4, 2026-11-12: no podcast episode is
+            // about governance, yet the "Governance" concept was presented as the podcast section).
+            if (!nodes.some(n => isContent(domain, n))) nodes = [];
             onProgress({ domain, status: nodes.length ? 'found' : 'none', count: nodes.length });
             return { domain, status: nodes.length ? 'found' : 'none', parsed: { ...kept, nodes } };
         } catch (e) {

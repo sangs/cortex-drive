@@ -23,4 +23,15 @@ function toolChoiceFor(n, grounded) {
     return n === 1 && grounded ? 'required' : 'auto';
 }
 
-module.exports = { isSmallTalk, mustGround, toolChoiceFor };
+/**
+ * Empties the turn's graph when the answer was replaced with "No data found" (validation 2026-11-12, 5.7: the answer said
+ * no data while the canvas showed the search's 7 unrelated fallback nodes). Nothing on screen may contradict the answer.
+ */
+function clearGraph(graph) {
+    graph.nodes = [];
+    graph.links = [];
+    graph.virtual_links = [];
+    return graph;
+}
+
+module.exports = { isSmallTalk, mustGround, toolChoiceFor, clearGraph };
