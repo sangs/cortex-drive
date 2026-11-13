@@ -786,7 +786,7 @@ async function bentoOverview({ tenantId, userId, guestAnchor }) {
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
 const { mustGround, toolChoiceFor, clearGraph } = require('./utils/grounding_guard');
 const { pickTargetedAnswerNode } = require('./utils/targeted_career');
-const { bridgesFromConnectResult } = require('./utils/bridge_section');
+const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer } = require('./utils/bridge_section');
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -3681,6 +3681,11 @@ app.post('/query', authMiddleware, async (req, res) => {
         // Bridge chains found by connect_knowledge_on_demand this turn; the gateway writes "How these connect" from them
         // (utils/bridge_section.js, validation 1.3 2026-11-12), never the LLM.
         const turnBridges = [];
+        // Bridge mode answers are written entirely by code (2026-11-13): notes from each bridge search, how many
+        // searches returned a result, and whether one failed.
+        const turnBridgeNotes = [];
+        let bridgeSearches = 0;
+        let bridgeSearchFailed = false;
         // Grounding guard (Invariant 11): a new, non-small-talk question must call a data tool first.
         const groundThisTurn = mustGround(question, history);
         let groundingEvidence = 0;
@@ -3816,8 +3821,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                             if (isToolErrorResult(parsed)) {
                                 console.error(`[GATEWAY] Tool returned error — ${toolName}: ${parsed.error}`);
                                 hadToolFailure = true;
+                                if (toolName === 'connect_knowledge_on_demand') bridgeSearchFailed = true;
                             } else if (toolName === 'connect_knowledge_on_demand') {
+                                bridgeSearches++;
                                 turnBridges.push(...bridgesFromConnectResult(parsed));
+                                turnBridgeNotes.push(...notesFromConnectResult(parsed));
                             }
 
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
@@ -4146,9 +4154,17 @@ app.post('/query', authMiddleware, async (req, res) => {
                     console.warn('[GROUNDING] new question answered with no data tool — answer replaced with "No data found"');
                     finalAnswer = NO_DATA_FOUND_ANSWER(question);
                 }
-                // Bridge mode: "How these connect" is written by code from the chains the tool found, with the session-only note
-                // (same section as cross mode). Any connection section the model wrote is replaced.
-                if (turnBridges.length && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
+                // Bridge mode (thought-leadership bridge flow: cross_domain, no entity-bridge context): when a bridge
+                // search ran, the whole answer is written by code from its results — items, chains, session-only note,
+                // the tool's own notes. The model's prose is dropped: it kept claiming influence the graph does not
+                // record, whatever the prompt said (validation 1.3, 2026-11-12/13). Invariant 11.
+                const bridgeSearchRan = bridgeSearches > 0 || bridgeSearchFailed;
+                // "No data found" (AP-25) keeps precedence.
+                if (domainSignal === 'cross_domain' && !bridgeContext && bridgeSearchRan && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
+                    finalAnswer = bridgeModeAnswer({ bridges: turnBridges, notes: turnBridgeNotes, failed: bridgeSearchFailed });
+                } else if (turnBridges.length && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
+                    // Any other turn that happened to run a bridge search: "How these connect" is written by code from the
+                    // chains the tool found, with the session-only note. Any connection section the model wrote is replaced.
                     const seenBridge = new Set();
                     const unique = turnBridges.filter(b => { const k = `${b.from}|${b.to}`; if (seenBridge.has(k)) return false; seenBridge.add(k); return true; });
                     finalAnswer = withConnectionsSection(finalAnswer, unique);

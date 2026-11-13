@@ -2522,7 +2522,8 @@ class ExpertTools:
 
         def _empty(summary: str, domains=None, search=None) -> str:
             return json.dumps({
-                "nodes": [], "virtual_links": [], "bridge_summary": summary, "confidence_tier": "none",
+                "nodes": [], "virtual_links": [], "bridge_summary": summary, "bridge_notes": [summary],
+                "confidence_tier": "none",
                 "target_domains": domains, "limit": reported_limit, "max_limit": BRIDGE_MAX_LIMIT,
                 "show_more_step": BRIDGE_SHOW_MORE_STEP, "has_more": False, "search": search,
             })
@@ -2983,24 +2984,29 @@ class ExpertTools:
                 _clause(target_eid, rels, " (explicitly requested)")
                 for target_eid, (weight, path, rels) in extra_targets
             ]
-            bridge_summary = f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."
+            # Notes about the search itself, as data (2026-11-13): the gateway writes bridge answers by code and shows
+            # these verbatim; bridge_summary keeps carrying them for its other readers.
+            bridge_notes = []
             if same_author:
-                bridge_summary += (f" Paths through its own author or owner ({', '.join(same_author)}) are not "
-                                   f"counted as bridges.")
+                bridge_notes.append(f"Paths through its own author or owner ({', '.join(same_author)}) are not "
+                                    f"counted as bridges.")
             if search_meta["partial"]:
-                bridge_summary += " Partial result: the search stopped at its time limit."
+                bridge_notes.append("Partial result: the search stopped at its time limit.")
             if target_hint_unresolved:
-                bridge_summary += f" Note: requested target '{target_node_name}' was not found in domain '{target_domain}'."
+                bridge_notes.append(f"Note: requested target '{target_node_name}' was not found in domain '{target_domain}'.")
             if dropped_structural_count > 0:
-                bridge_summary += (
-                    f" {dropped_structural_count} additional structurally-close candidate(s) were "
+                bridge_notes.append(
+                    f"{dropped_structural_count} additional structurally-close candidate(s) were "
                     f"found but excluded as topically unconfirmed against the query."
                 )
+            bridge_summary = " ".join([f"Found {len(ranked)} cross-domain bridge(s). " + "; ".join(bridge_clauses) + "."]
+                                      + bridge_notes)
 
             return json.dumps({
                 "nodes": list(nodes_by_id.values()),
                 "virtual_links": virtual_links,
                 "bridge_summary": bridge_summary,
+                "bridge_notes": bridge_notes,
                 "confidence_tier": confidence_tier,
                 "target_domains": domains,
                 "limit": reported_limit,

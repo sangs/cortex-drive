@@ -175,6 +175,9 @@ class LiveBridgesTest(unittest.TestCase):
         author = out["search"]["same_author"][0]
         self.assertNotIn(author, {n["name"] for n in out["nodes"] if n.get("bridge_reason") or n.get("is_bridge")})
         self.assertIn(author, out["bridge_summary"])
+        # The same note as data (2026-11-13): the gateway writes bridge answers by code and shows notes verbatim.
+        self.assertTrue(any(author in n for n in out["bridge_notes"]), out["bridge_notes"])
+        self.assertTrue(all(n in out["bridge_summary"] for n in out["bridge_notes"]))
 
     def test_within_budget_and_bounded(self):
         for src in self.SOURCES:
@@ -190,6 +193,7 @@ class LiveBridgesTest(unittest.TestCase):
         self.assertTrue(out["search"]["partial"])
         self.assertEqual(out["search"]["hops"], 1, "the first hop always runs")
         self.assertIn("Partial result", out["bridge_summary"])
+        self.assertTrue(any(n.startswith("Partial result") for n in out["bridge_notes"]), out["bridge_notes"])
 
     def test_per_domain_calls_share_the_limit_and_skip_own_domain(self):
         sid = self.node(self.SOURCES[0])
