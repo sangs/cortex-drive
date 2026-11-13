@@ -1,23 +1,20 @@
 import type { ClarifyChoice } from '../utils/clarify';
 import { readEventStream, readQueryStream } from '../utils/queryStream';
 import type { QueryProgressEvent } from '../utils/queryStream';
+import { GATEWAY_URL } from './gateway';
 export class MCPClient {
-    private serverUrl: string;
-    private messageUrl: string | null = null;
     private tenantId: string;
     private getToken: () => Promise<string | null>;
     private onMessageCallback: (msg: any) => void;
 
-    constructor(serverUrl: string, tenantId: string, getToken: () => Promise<string | null>, onMessage: (msg: any) => void) {
-        this.serverUrl = serverUrl;
+    constructor(tenantId: string, getToken: () => Promise<string | null>, onMessage: (msg: any) => void) {
         this.tenantId = tenantId;
         this.getToken = getToken;
         this.onMessageCallback = onMessage;
     }
 
     async connect() {
-        const baseUrl = new URL(this.serverUrl);
-        const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.host}`;
+        const gatewayBase = GATEWAY_URL;
         const healthUrl = `${gatewayBase}/health`;
         console.log("Verifying gateway connection via:", healthUrl);
 
@@ -36,8 +33,7 @@ export class MCPClient {
     }
 
     async sendMessage(method: string, params: any = {}): Promise<any> {
-        const baseUrl = new URL(this.serverUrl);
-        const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
+        const gatewayBase = GATEWAY_URL;
 
         const token = await this.getToken();
         const headers: Record<string, string> = {
@@ -67,8 +63,7 @@ export class MCPClient {
      * domain, then `result`. Every event goes to `onEvent`; resolves with the final result.
      */
     async streamBridges(body: Record<string, unknown>, onEvent: (e: any) => void, signal?: AbortSignal) {
-        const baseUrl = new URL(this.serverUrl);
-        const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
+        const gatewayBase = GATEWAY_URL;
         const token = await this.getToken();
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
@@ -86,8 +81,7 @@ export class MCPClient {
      */
     async query(question: string, history: any[] = [], forceRefresh: boolean = false, signal?: AbortSignal, conversationId?: string,
                 clarifyChoice?: ClarifyChoice, onProgress?: (event: QueryProgressEvent) => void) {
-        const baseUrl = new URL(this.serverUrl);
-        const gatewayBase = process.env.NEXT_PUBLIC_GATEWAY_URL || `${baseUrl.protocol}//${baseUrl.hostname}:4000`;
+        const gatewayBase = GATEWAY_URL;
         const gatewayUrl = `${gatewayBase}/query`;
 
         console.log(`Sending orchestration query to: ${gatewayUrl} (ForceRefresh: ${forceRefresh})`);

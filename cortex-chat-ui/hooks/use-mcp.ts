@@ -18,9 +18,7 @@ export function useMCP() {
         const tenantId = orgId || userId; // Prefer Organization ID, fallback to User ID
         console.log("Initializing MCP Client for tenant:", tenantId);
 
-        const serverUrl = process.env.NEXT_PUBLIC_MCP_SERVER_URL || "http://localhost:4000/sse";
-
-        const mcpClient = new MCPClient(serverUrl, tenantId, getToken, (msg: any) => {
+        const mcpClient = new MCPClient(tenantId, getToken, (msg: any) => {
             console.log("MCP Message received:", msg);
             setResponses((prev) => [...prev, msg]);
         });

@@ -3141,201 +3141,10 @@ app.delete('/api/conversations/:id', authMiddleware, async (req, res) => {
     }
 });
 
-/**
- * SSE Endpoint for the Frontend
- * This is the "Brain" of the system.
- */
-app.get('/sse', authMiddleware, async (req, res) => {
-    const { query, conversationId } = req.query;
-    const tenantId = req.headers['x-tenant-id'];
-    const userId = req.headers['x-user-id'] || 'trial-user';
-
-    if (!query) return res.status(400).send({ error: "Missing 'query' parameter" });
-
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const sendEvent = (type, data) => {
-        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
-    };
-
-    let isAborted = false;
-    res.on('close', () => {
-        // Only abort if the response hasn't been written yet — req.on('close') fires
-        // prematurely when the HTTP client half-closes (sends FIN after request body)
-        // while still waiting for the response. This guard prevents false aborts.
-        if (!res.writableEnded) {
-            console.log(`[SSE] Client disconnected before response. Aborting orchestration...`);
-            isAborted = true;
-        }
-    });
-
-    try {
-        console.log(`[SSE] Starting orchestration for: ${query}`);
-
-        // Seed Redis permission cache for this user before the orchestration loop starts.
-        // MCP server reads from Redis on each tool call — no allowed_ids in headers.
-        const { allowedIds, permVersion: _ssePV } = await resolveAndCachePermissions(userId, tenantId);
-        const accessScope = allowedIds !== null && allowedIds.length === 0 ? 'restricted' : 'normal';
-        console.log(`[AUTHZ/SSE] access_scope=${accessScope} allowed_ids_count=${allowedIds !== null ? allowedIds.length : 'legacy'}`);
-
-        let baseSystemPrompt = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req));
-        if (accessScope === 'restricted') {
-            baseSystemPrompt = 'NOTE: This query is executing with restricted node access. ' +
-                'If you cannot find data, explicitly state that access is unavailable. ' +
-                'Do not synthesize from prior knowledge.\n\n' + baseSystemPrompt;
-        }
-        const systemPrompt = baseSystemPrompt;
-        let messages = [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: query }
-        ];
-
-        let loopCount = 0;
-        const MAX_LOOPS = 5;
-        // Tools this turn may use (S2-20): guests get the read-only allowlist; raw query tools never.
-        const offeredTools = toolsOfferedFor({ isGuest: req.guestAuth === true }, mcpToolsDefinitions);
-        const offeredNames = offeredToolNames(offeredTools);
-        let graphNodes = [];
-        let graphLinks = [];
-        const sseSeenUrls = new Set(); // accumulate tool-result URLs for grounding audit
-        let lastAuditedContent = ''; // last non-empty assistant text, for conversation-history persistence
-
-        while (loopCount < MAX_LOOPS && !isAborted) {
-            loopCount++;
-
-            const response = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: messages,
-                tools: offeredTools,
-                tool_choice: "auto",
-                temperature: ANSWER_TEMPERATURE,
-            });
-
-            const assistantMessage = response.choices[0].message;
-            messages.push(assistantMessage);
-
-            if (assistantMessage.content) {
-                const audited = auditResponseUrls(assistantMessage.content, sseSeenUrls);
-                lastAuditedContent = audited;
-                sendEvent('chat_response', { content: audited });
-            }
-
-            if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-                for (const toolCall of assistantMessage.tool_calls) {
-                    const toolName = toolCall.function.name;
-                    if (!offeredNames.has(toolName)) {
-                        console.warn(`[SECURITY] Refused tool not offered this turn: ${toolName} (guest=${req.guestAuth === true})`);
-                        messages.push(refusedToolMessage(toolCall));
-                        continue;
-                    }
-                    const toolArgs = JSON.parse(toolCall.function.arguments);
-                    
-                    console.log(`[SSE LOOP ${loopCount}] Executing ${toolName}`);
-                    
-                    try {
-                        const mcpData = await callMcpTool(tenantId, toolName, toolArgs, userId, req.headers['x-schema-readable'] === 'true', req.headers);
-
-                        // Extract text for LLM
-                        let toolContent = JSON.stringify(mcpData);
-                        if (mcpData.result && mcpData.result.content && mcpData.result.content[0]) {
-                            toolContent = mcpData.result.content[0].text;
-                        }
-
-                        // GRAPH UPDATE LOGIC: If the tool returned nodes, update the UI
-                        try {
-                            const parsed = JSON.parse(toolContent);
-                            // Accumulate tool-result URLs for grounding audit (AP-15).
-                            extractToolUrls(parsed).forEach(u => sseSeenUrls.add(u));
-                            let newNodesRaw = [];
-                            let newLinksRaw = [];
-
-                            if (parsed.nodes) {
-                                newNodesRaw = parsed.nodes;
-                                newLinksRaw = parsed.links || [];
-                            } else if (Array.isArray(parsed)) {
-                                // Handle flat array or array of {details: ...}
-                                newNodesRaw = parsed.map(item => item.details || item);
-                            }
-
-                            if (newNodesRaw.length > 0) {
-                                // Transform to UI format
-                                const uiNodes = newNodesRaw.map(n => ({
-                                    id: n.element_id || n.id || n.name,
-                                    node_id: n.node_id,
-                                    name: n.display_name || n.name,
-                                    type: n.labels ? n.labels[0] : (n.type || 'Unknown'),
-                                    isBackbone: n.is_backbone || false,
-                                    isBentoEligible: n.is_bento_eligible || true
-                                }));
-                                
-                                graphNodes = [...graphNodes, ...uiNodes];
-                                // Dedup nodes by id
-                                graphNodes = Array.from(new Map(graphNodes.map(n => [n.id, n])).values());
-
-                                if (newLinksRaw.length > 0) {
-                                    const uiLinks = newLinksRaw.map(l => ({
-                                        source: l.source,
-                                        target: l.target,
-                                        type: l.type
-                                    }));
-                                    graphLinks = [...graphLinks, ...uiLinks];
-                                    // Dedup links
-                                    graphLinks = Array.from(new Map(graphLinks.map(l => [`${l.source}-${l.target}-${l.type}`, l])).values());
-                                }
-
-                                sendEvent('graph_update', { graph: { nodes: graphNodes, links: graphLinks } });
-                            }
-                        } catch (e) {
-                            // Result wasn't a graph, just ignore
-                        }
-
-                        messages.push({
-                            role: "tool",
-                            tool_call_id: toolCall.id,
-                            name: toolName,
-                            content: buildLlmToolContent(toolName, toolContent, toolArgs)
-                        });
-
-                    } catch (err) {
-                        console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
-                        messages.push({
-                            role: "tool",
-                            tool_call_id: toolCall.id,
-                            name: toolName,
-                            content: `Error: ${err.message}`
-                        });
-                    }
-                }
-                continue;
-            } else {
-                break;
-            }
-        }
-
-        console.log(`[SSE] Finished orchestration.`);
-        // Best-effort conversation history persistence — never blocks the response.
-        // domainSignal is not classified on this endpoint (only /query calls classifyDomain());
-        // persisted as null here rather than guessed.
-        persistConversationTurn({
-            tenantId, userId, conversationId,
-            userContent: query,
-            assistantContent: lastAuditedContent,
-            domainSignal: null,
-            graphSnapshot: graphNodes.length > 0 ? { nodes: graphNodes, links: graphLinks } : null
-        }).catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
-        res.end();
-
-    } catch (err) {
-        console.error("[SSE] Error:", err);
-        sendEvent('error', { message: err.message });
-        res.end();
-    }
-});
-
+// One question-answering route (2026-11-13): the old GET /sse chat endpoint was removed. It was a second copy of the
+// tool loop without domain classification (Invariant 8), "No data found" enforcement (AP-25) or the code-written
+// answers, and the UI never sent questions to it. Streaming is done by /query itself (text/event-stream for cross
+// mode) and /api/bridges/stream. tests/verify_wording_grounding.js fails if a second tool loop appears.
 
 // --- Cross-domain bridge-context helpers for the /query orchestration loop ---
 // Extracted 2026-08-29, named per the 2026-08-26 code-quality audit finding — the
@@ -4162,9 +3971,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // the tool's own notes. The model's prose is dropped: it kept claiming influence the graph does not
                 // record, whatever the prompt said (validation 1.3, 2026-11-12/13). Invariant 11.
                 const bridgeSearchRan = bridgeSearches > 0 || bridgeSearchFailed;
+                let answerWrittenByCode = false;
                 // "No data found" (AP-25) keeps precedence.
                 if (domainSignal === 'cross_domain' && !bridgeContext && bridgeSearchRan && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
                     finalAnswer = bridgeModeAnswer({ bridges: turnBridges, notes: turnBridgeNotes, failed: bridgeSearchFailed });
+                    answerWrittenByCode = true;
                     // The graph shows the same connections the answer lists (grouping sections are in neither).
                     dropGroupingBridges(accumulatedGraph, turnGroupingIds);
                 } else if (turnBridges.length && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
@@ -4182,9 +3993,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                 }
                 // Audit response for hallucinated URLs before sending.
                 let auditedAnswer = auditResponseUrls(finalAnswer, querySeenUrls);
-                // Structured-citation groundedness backstop (Phase 2) — scoped to the /query
-                // endpoint only, where accumulatedGraph.nodes exists; the separate /sse streaming
-                // endpoint has no equivalent node-tracking and is out of scope for this pass.
+                // Structured-citation groundedness backstop (Phase 2).
                 // Generation: buildCitationWriterCall(), a dedicated isolated call (see its doc
                 // comment for why the main-loop-instruction approach was replaced). Scoped to
                 // cross_domain + flag on, same risk scope as connect_knowledge_on_demand's
@@ -4192,8 +4001,11 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // Validation: auditResponseCitations() always runs on the result — the writer
                 // call is a generator, not a trusted source, so it gets policed the same as any
                 // other citation.
+                // Not for an answer written by code (bridge mode, 2026-11-13): every line of it already is a claim
+                // built from the tool result's own nodes, so the writer call only restated those lines (one model call
+                // per bridge turn, and the last model-written text in the answer).
                 const queryNodeNames = new Set(accumulatedGraph.nodes.map(n => n.name).filter(Boolean));
-                if (domainSignal === 'cross_domain' && SEMANTIC_CANDIDATE_SEARCH_ENABLED) {
+                if (domainSignal === 'cross_domain' && SEMANTIC_CANDIDATE_SEARCH_ENABLED && !answerWrittenByCode) {
                     const citationsBlock = await buildCitationWriterCall(auditedAnswer, queryNodeNames, openai);
                     if (citationsBlock) auditedAnswer = `${auditedAnswer}\n\n${citationsBlock}`;
                 }

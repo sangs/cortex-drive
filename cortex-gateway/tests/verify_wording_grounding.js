@@ -19,7 +19,13 @@ const q2 = fs.readFileSync(path.join(root, 'prompts', 'gateway_q2_writer.md'), '
 ok(/const ANSWER_TEMPERATURE = 0;/.test(src), 'answer temperature is 0');
 // Any tool_choice (the /query loop uses the grounding guard's toolChoiceFor since 2026-11-10); the temperature is the point.
 const loops = src.match(/tool_choice: [^\n]+,\s*temperature: ANSWER_TEMPERATURE,/g) || [];
-ok(loops.length === 2, '/query and /sse tool loops both use ANSWER_TEMPERATURE');
+ok(loops.length === 1, 'the /query tool loop uses ANSWER_TEMPERATURE');
+// One question-answering route (2026-11-13): GET /sse was a second tool loop without classification, "No data found"
+// enforcement or code-written answers. A second loop, or the route coming back, fails here.
+ok((src.match(/\btool_choice:/g) || []).length === 1, 'exactly one model tool loop in the gateway');
+ok(!/app\.(get|post|all|use)\(\s*['"`]\/sse['"`]/.test(src), 'no /sse question route');
+const queryStart = src.indexOf("app.post('/query'");
+ok(queryStart > 0 && src.indexOf('tool_choice:') > queryStart, 'the tool loop lives in /query');
 ok(!/tool_choice: [^\n]+,\s*\}\)/.test(src), 'no tool loop left on the default temperature');
 ok(/max_tokens: 200,\s*temperature: ANSWER_TEMPERATURE/.test(src), 'Q2 writer uses ANSWER_TEMPERATURE');
 ok(/WORDING GROUNDING:/.test(system) && /Do NOT coin new terms/.test(system), 'system prompt forbids coined terms');
