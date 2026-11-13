@@ -2507,7 +2507,7 @@ class ExpertTools:
             return json.dumps({"error": "source_node_id or source_node_name is required"})
 
         from domain_registry import (
-            BRIDGE_ALL_DOMAINS_TARGET_LABELS, BRIDGE_MAX_LIMIT, BRIDGE_SHOW_MORE_STEP,
+            BRIDGE_ALL_DOMAINS_TARGET_LABELS, BRIDGE_MAX_LIMIT, BRIDGE_NON_CONNECTOR_LABELS, BRIDGE_SHOW_MORE_STEP,
             get_bridge_label_string, get_bridge_limit,
         )
         limit = get_bridge_limit(limit)
@@ -2939,6 +2939,13 @@ class ExpertTools:
                             # is independently re-evaluated from the resolved path either way.
                             "candidacy_source": "semantic_widening" if target_eid in semantic_candidate_ids else "label_match",
                         })
+                        # Flags for whoever writes the answer or draws the graph (2026-11-13), so neither keeps its own
+                        # type list: a grouping section may end a bridge but explains nothing ("filed under …"); the
+                        # target the caller asked for is shown even when its path runs through the author.
+                        if set(info.get("labels", [])) & set(BRIDGE_NON_CONNECTOR_LABELS):
+                            entry["is_grouping"] = True
+                        if target_eid == must_include_id:
+                            entry["requested_target"] = True
                     else:
                         entry.update({
                             "is_bridge": True,

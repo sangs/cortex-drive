@@ -16,13 +16,14 @@
       "name": "Thought Leadership & Community",
       "type": "Category",
       "has_federated_bridge": true,
-      "relevance_tier": "structural",
+      "relevance_tier": "confirmed",
       "bridge_domain": "professional",
       "bridge_domain_name": "Career",
       "description": "",
       "is_bento_eligible": true,
       "bridge_reason": "Connected via: CONTAINS",
-      "candidacy_source": "label_match"
+      "candidacy_source": "label_match",
+      "is_grouping": true
     },
     {
       "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:613",
@@ -78,7 +79,8 @@
       "description": "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
       "is_bento_eligible": true,
       "bridge_reason": "Connected via: LED \u2192 HELD_ROLE",
-      "candidacy_source": "label_match"
+      "candidacy_source": "label_match",
+      "requested_target": true
     }
   ],
   "virtual_links": [
@@ -87,7 +89,7 @@
       "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:680",
       "type": "VIRTUAL_BRIDGE",
       "discovery_reason": "via CONTAINS",
-      "relevance_tier": "structural"
+      "relevance_tier": "confirmed"
     },
     {
       "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
@@ -119,6 +121,9 @@
     }
   ],
   "bridge_summary": "Found 4 cross-domain bridge(s). Ignite Social Learning Community @ JPMC \u2192 Thought Leadership & Community via CONTAINS; Ignite Social Learning Community @ JPMC \u2192 AWS via USES_TOOL; Ignite Social Learning Community @ JPMC \u2192 ML via USES_TOOL; Ignite Social Learning Community @ JPMC \u2192 Cortex-Drive via LED \u2192 HELD_ROLE (explicitly requested). Paths through its own author or owner (Sangeetha Ramadurai) are not counted as bridges.",
+  "bridge_notes": [
+    "Paths through its own author or owner (Sangeetha Ramadurai) are not counted as bridges."
+  ],
   "confidence_tier": "explicit",
   "target_domains": [
     "professional"
@@ -134,6 +139,6 @@
     "same_author": [
       "Sangeetha Ramadurai"
     ],
-    "ms": 411
+    "ms": 425
   }
 }

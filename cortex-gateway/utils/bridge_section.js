@@ -7,13 +7,13 @@
  * withConnectionsSection); bridge mode now uses the same section.
  *
  * Each target with a bridge_reason is traced back to the source along the result's virtual_links (path order), giving
- * {from, to, via, rels} — exactly the chain the tool found, no interpretation. Paths that end on a grouping category
- * ("filed under Thought Leadership & Community") explain nothing and are left out of the section (they stay on the
- * graph).
+ * {from, to, via, rels} — exactly the chain the tool found, no interpretation. Paths that end on a grouping section
+ * ("filed under Thought Leadership & Community") explain nothing: they are left out of the answer and, in bridge mode,
+ * off the graph (dropGroupingBridges), so text and graph agree. Which nodes are groupings is the tool's decision
+ * (node.is_grouping, from domain_registry.BRIDGE_NON_CONNECTOR_LABELS) — no type list here.
  */
 const { withConnectionsSection } = require('./cross_mode');
 
-const BRIDGE_SECTION_SKIP_TYPES = new Set(['Category']);
 // Bridge answers are written entirely by code (2026-11-13): even with the section above written by code and the prompt
 // forbidding it, the model's own paragraph still claimed influence ("directly influenced Cortex-Drive through
 // leadership roles"). Every name, type, description, relationship and note below comes from the tool results.
@@ -36,7 +36,7 @@ function bridgesFromConnectResult(result) {
     for (const l of links) if (!incoming.has(l.target)) incoming.set(l.target, l);
     const out = [];
     for (const target of nodes) {
-        if (!target.bridge_reason || BRIDGE_SECTION_SKIP_TYPES.has(target.type)) continue;
+        if (!target.bridge_reason || target.is_grouping) continue;
         const chain = [];
         const seen = new Set();
         let id = target.element_id || target.id;
@@ -55,11 +55,25 @@ function bridgesFromConnectResult(result) {
             toType: target.type || '',
             fromDescription: source.description || '',
             toDescription: target.description || '',
+            requested: target.requested_target === true,
             via: chain.slice(0, -1).map(l => (byId.get(l.target) || {}).name).filter(Boolean),
             rels: chain.map(relOf),
         });
     }
     return out;
+}
+
+/**
+ * Bridge mode graph: virtual links that end on a grouping section are removed, so the graph shows the same connections
+ * the answer lists. (The gateway then keeps only nodes that still sit on a virtual link.) Mutates and returns the graph.
+ */
+const groupingIdsFromConnectResult = result =>
+    ((result && Array.isArray(result.nodes)) ? result.nodes : []).filter(n => n.is_grouping).map(n => n.element_id || n.id);
+
+/** @param {Set<string>} grouping  ids collected with groupingIdsFromConnectResult from this turn's bridge results */
+function dropGroupingBridges(graph, grouping) {
+    if (grouping.size) graph.virtual_links = (graph.virtual_links || []).filter(l => !grouping.has(l.target) && !grouping.has(l.source));
+    return graph;
 }
 
 /**
@@ -99,5 +113,5 @@ function bridgeModeAnswer({ bridges, notes, failed }) {
     return withConnectionsSection(body, unique) + notesBlock;
 }
 
-module.exports = { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, BRIDGE_SECTION_SKIP_TYPES,
+module.exports = { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, dropGroupingBridges, groupingIdsFromConnectResult,
                    BRIDGE_ITEM_DESCRIPTION_MAX, NO_BRIDGE_ANSWER, BRIDGE_SEARCH_FAILED_ANSWER };

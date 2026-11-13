@@ -154,13 +154,15 @@ function crossEvidenceText({ status, evidence, bridges, keyword }, summarise) {
  * added reasons such as "indicating a relationship through…"). Any section the model wrote is removed first.
  */
 const CONNECTIONS_HEADING = '## How these connect';
+// Bridge mode: the target the question named is shown even when its path runs through the source's own author.
+const REQUESTED_TARGET_SUFFIX = ' — the target named in the question';
 const SESSION_ONLY_NOTE = 'These are session-only connections, shown as gold dashed lines on the graph; nothing was written to the graph.';
 function withConnectionsSection(answer, bridges) {
     const body = String(answer || '').split(/\n#+\s*How these connect[\s\S]*$/i)[0].trimEnd();
     if (!bridges.length) return body;
-    const lines = bridges.map(b => `- **${b.from}** ↔ **${b.to}**${b.via.length ? ` via ${b.via.join(' → ')}` : ''} (${b.rels.join(' → ')})`);
+    const lines = bridges.map(b => `- **${b.from}** ↔ **${b.to}**${b.via.length ? ` via ${b.via.join(' → ')}` : ''} (${b.rels.join(' → ')})${b.requested ? REQUESTED_TARGET_SUFFIX : ''}`);
     return `${body}\n\n${CONNECTIONS_HEADING}\n${lines.join('\n')}\n\n${SESSION_ONLY_NOTE}`;
 }
 
-module.exports = { runCrossMode, crossEvidenceText, withConnectionsSection, CONNECTIONS_HEADING, SESSION_ONLY_NOTE, rrfMerge, rankForTopics, SEARCH_INTENT, DISPLAY,
+module.exports = { runCrossMode, crossEvidenceText, withConnectionsSection, CONNECTIONS_HEADING, SESSION_ONLY_NOTE, REQUESTED_TARGET_SUFFIX, rrfMerge, rankForTopics, SEARCH_INTENT, DISPLAY,
                    CROSS_DOMAIN_LLM_QUOTA, CROSS_DOMAIN_ANCHORS_PER_DOMAIN, RRF_K };

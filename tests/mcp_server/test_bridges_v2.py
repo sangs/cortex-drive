@@ -179,6 +179,17 @@ class LiveBridgesTest(unittest.TestCase):
         self.assertTrue(any(author in n for n in out["bridge_notes"]), out["bridge_notes"])
         self.assertTrue(all(n in out["bridge_summary"] for n in out["bridge_notes"]))
 
+    def test_grouping_and_requested_target_are_flagged(self):
+        """The answer writer and the graph obey the tool's flags instead of keeping their own type list (2026-11-13)."""
+        out = json.loads(self.tools.connect_knowledge_on_demand(
+            source_node_name="Ignite Social Learning Community @ JPMC", target_domain="professional",
+            target_node_name="Cortex-Drive"))
+        targets = [n for n in out["nodes"] if n.get("bridge_reason")]
+        self.assertTrue(targets, out["bridge_summary"])
+        for n in targets:
+            self.assertEqual(bool(n.get("is_grouping")), n["type"] in reg.BRIDGE_NON_CONNECTOR_LABELS, n["name"])
+        self.assertEqual([n["name"] for n in targets if n.get("requested_target")], ["Cortex-Drive"])
+
     def test_within_budget_and_bounded(self):
         for src in self.SOURCES:
             out = self.bridges(src)

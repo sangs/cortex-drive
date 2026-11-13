@@ -786,7 +786,8 @@ async function bentoOverview({ tenantId, userId, guestAnchor }) {
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
 const { mustGround, toolChoiceFor, clearGraph } = require('./utils/grounding_guard');
 const { pickTargetedAnswerNode } = require('./utils/targeted_career');
-const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer } = require('./utils/bridge_section');
+const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, dropGroupingBridges,
+        groupingIdsFromConnectResult } = require('./utils/bridge_section');
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -3684,6 +3685,7 @@ app.post('/query', authMiddleware, async (req, res) => {
         // Bridge mode answers are written entirely by code (2026-11-13): notes from each bridge search, how many
         // searches returned a result, and whether one failed.
         const turnBridgeNotes = [];
+        const turnGroupingIds = new Set();   // bridge targets the tool marked as grouping sections
         let bridgeSearches = 0;
         let bridgeSearchFailed = false;
         // Grounding guard (Invariant 11): a new, non-small-talk question must call a data tool first.
@@ -3826,6 +3828,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                                 bridgeSearches++;
                                 turnBridges.push(...bridgesFromConnectResult(parsed));
                                 turnBridgeNotes.push(...notesFromConnectResult(parsed));
+                                groupingIdsFromConnectResult(parsed).forEach(id => turnGroupingIds.add(id));
                             }
 
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
@@ -4162,6 +4165,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                 // "No data found" (AP-25) keeps precedence.
                 if (domainSignal === 'cross_domain' && !bridgeContext && bridgeSearchRan && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
                     finalAnswer = bridgeModeAnswer({ bridges: turnBridges, notes: turnBridgeNotes, failed: bridgeSearchFailed });
+                    // The graph shows the same connections the answer lists (grouping sections are in neither).
+                    dropGroupingBridges(accumulatedGraph, turnGroupingIds);
                 } else if (turnBridges.length && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
                     // Any other turn that happened to run a bridge search: "How these connect" is written by code from the
                     // chains the tool found, with the session-only note. Any connection section the model wrote is replaced.
