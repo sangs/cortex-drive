@@ -96,12 +96,15 @@ CLOUD_SQL_CONN="cortex-drive-496915:us-central1:cortex-openfga-db"
 # (',' is gcloud's own separator). Production OWNER_USER_ID itself is always included by the gateway.
 #   user_3LFIHAyUMoFU4p7J321fqf5mDzo = sangeethavijayl@cortex-drive.com (added 2026-10-26)
 OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS:-user_3LFIHAyUMoFU4p7J321fqf5mDzo}"
+# ROUTING_V2 defaults to "owner" (routing v2 on for the platform owner — the live setting since 2026-11-10). Until
+# 2026-11-12 it defaulted to "off", and a deploy without ROUTING_V2 exported silently turned routing v2 off (gateway
+# 00116; caught by the post-deploy check: 5.7 answered from general knowledge again).
 NEW_ENV_VARS="ENABLE_DOCUMENT_DOMAIN=${ENABLE_DOCUMENT_DOMAIN:?run: source scripts/cloud-env.sh},MCP_SERVER_URL=${MCP_URL},OWNER_CLERK_SUBS=${OWNER_CLERK_SUBS},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
 CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
 PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
 CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\
 ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true},\
-ROUTING_V2=${ROUTING_V2:-off}"
+ROUTING_V2=${ROUTING_V2:-owner}"
 
 # --- Env-var drift guard --------------------------------------------------
 # Incident 2026-09-08: ENABLE_SEMANTIC_CANDIDATE_SEARCH was turned on live via a
@@ -128,6 +131,28 @@ live_plain_names = {e["name"] for e in env_list if "value" in e}  # excludes sec
 new_names = {kv.split("=", 1)[0] for kv in sys.argv[1].split(",") if kv}
 print("\n".join(sorted(live_plain_names - new_names)))
 ' "$NEW_ENV_VARS")
+
+# Changed values (2026-11-12): a live plain var this deploy would set to a different value. Same silent failure as a
+# dropped var (ROUTING_V2 owner → off), so it aborts too unless the change is intended.
+CHANGED_VARS=$(echo "$CURRENT_ENV_JSON" | "${REPO}/.venv/bin/python" -c '
+import json, sys
+current = json.loads(sys.stdin.read() or "{}")
+env_list = (current.get("spec", {}).get("template", {}).get("spec", {})
+            .get("containers", [{}])[0].get("env", []) or [])
+live = {e["name"]: e["value"] for e in env_list if "value" in e}
+new = dict(kv.split("=", 1) for kv in sys.argv[1].split(",") if "=" in kv)
+print("\n".join(f"{k}: {live[k]} -> {new[k]}" for k in sorted(live.keys() & new.keys()) if live[k] != new[k]))
+' "$NEW_ENV_VARS")
+if [ -n "$CHANGED_VARS" ]; then
+    echo "❌ ABORTING: this deploy would change live env var value(s) on cortex-gateway:"
+    echo "$CHANGED_VARS" | sed 's/^/     - /'
+    echo "   Export the live value before deploying (e.g. ROUTING_V2=owner), or if the change is intended:"
+    echo "   ALLOW_ENV_VAR_CHANGE=true bash scripts/build-deploy-gateway.sh"
+    if [ "${ALLOW_ENV_VAR_CHANGE:-false}" != "true" ]; then
+        exit 1
+    fi
+    echo "   ALLOW_ENV_VAR_CHANGE=true set — proceeding with the change above."
+fi
 
 if [ -n "$DROPPED_VARS" ]; then
     echo "❌ ABORTING: this deploy would silently drop the following env var(s) —"
