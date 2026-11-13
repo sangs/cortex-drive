@@ -39,9 +39,17 @@ eq(ev('quantum computing', { mode: 'single', domains: ['career'] }), true, 'reco
 eq(ev('quantum computing', null), true, 'routing v2 off: existing rule');
 eq(discoveryEvidence({ routing: disc, toolArgs: {}, question: 'What is it?', toolContent: '{"nodes":[{"name":"x"}]}' }), false, 'nothing left to match → no evidence');
 
+// 2b. Routing v2 off (every user but the owner): the v1 classifier recognised nothing → same strict rule (2026-11-12)
+const v1 = (kw, unrecognised) => discoveryEvidence({ routing: null, unrecognised, toolArgs: { keyword: kw }, question: kw, toolContent: JSON.stringify(fixture[kw]) });
+eq(v1('quantum computing', true), false, 'v1 unrecognised: loose matches are not evidence (5.7 for members/guests)');
+eq(v1('blockchain', true), false, 'v1 unrecognised: semantic neighbour is not evidence');
+eq(v1('DuckLake', true), true, 'v1 unrecognised: a real match is evidence');
+eq(v1('quantum computing', false), true, 'v1 recognised question: existing rule');
+eq(discoveryEvidence({ routing: null, unrecognised: true, toolArgs: { source_node_name: 'Ignite' }, question: 'How did X influence Y?', toolContent: '{"nodes":[{"name":"Y"}]}' }), true, 'v1 bridge call (no keyword): existing rule');
+
 // 3. Wiring
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 ok(/toolsForRoute\(toolsOfferedFor\(\{ isGuest: req\.guestAuth === true \}, mcpToolsDefinitions\), routingV2\)/.test(src), 'tool loop offers toolsForRoute');
-ok(/discoveryEvidence\(\{ routing: routingV2, toolArgs, question, toolContent \}\)/.test(src), 'evidence count applies discoveryEvidence');
+ok(/discoveryEvidence\(\{ routing: routingV2, unrecognised: !domainConfident, toolArgs, question, toolContent \}\)/.test(src), 'evidence count applies discoveryEvidence, v1 included');
 
 console.log(`verify_turn_grounding: ${passed} checks passed`);

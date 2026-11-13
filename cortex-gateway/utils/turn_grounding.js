@@ -6,6 +6,8 @@
  *    is withheld unless the route includes documents (4.1: a website question went to the document tool).
  * 2. discoveryEvidence: when routing found nothing of the question in the asker's catalog (mode "discovery"), a tool
  *    result counts as evidence only if it contains every meaningful word of what was searched for, as whole words.
+ *    The same rule applies when routing v2 is off for the asker (every user but the owner) and the v1 classifier
+ *    recognised nothing (confident=false, safe default) — 2026-11-12: v1 still answered 5.7 from general knowledge.
  *    Loose keyword and semantic matches (5.7: "quantum computing" → a company and projects; "blockchain" → LangChain)
  *    are not evidence, so the answer becomes "No data found" instead of general knowledge.
  */
@@ -37,12 +39,15 @@ function termPattern(term) {
 /**
  * @param {object} p
  * @param {object|null} p.routing      routing v2 result (null when routing v2 is off for this user)
+ * @param {boolean} [p.unrecognised]   routing v2 off: the v1 classifier was not confident (nothing recognised)
  * @param {object} p.toolArgs          the LLM's tool arguments (keyword / question)
  * @param {string} p.question          the user's question (fallback for the search terms)
  * @param {string} p.toolContent       the tool result after the domain guard
  */
-function discoveryEvidence({ routing, toolArgs = {}, question, toolContent }) {
-    if (!routing || routing.mode !== 'discovery') return true;
+function discoveryEvidence({ routing, unrecognised = false, toolArgs = {}, question, toolContent }) {
+    // v1: only calls that searched for words (keyword / question); a bridge call has neither and keeps the existing rule.
+    const strict = routing ? routing.mode === 'discovery' : (unrecognised && Boolean(toolArgs.keyword || toolArgs.question));
+    if (!strict) return true;
     const terms = meaningfulTerms(toolArgs.keyword || toolArgs.question || question);
     if (!terms.length) return false;
     const text = String(toolContent || '');

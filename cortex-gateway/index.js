@@ -786,6 +786,7 @@ async function bentoOverview({ tenantId, userId, guestAnchor }) {
 const { createDomainCoverage, resolveClarifyChoice } = require('./utils/domain_coverage');
 const { mustGround, toolChoiceFor, clearGraph } = require('./utils/grounding_guard');
 const { pickTargetedAnswerNode } = require('./utils/targeted_career');
+const { bridgesFromConnectResult } = require('./utils/bridge_section');
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -3677,6 +3678,9 @@ app.post('/query', authMiddleware, async (req, res) => {
         // and how many returned evidence the LLM could ground an answer in. If calls > 0 and
         // evidence === 0, the LLM's answer can only have come from training data.
         let dataToolCalls = 0;
+        // Bridge chains found by connect_knowledge_on_demand this turn; the gateway writes "How these connect" from them
+        // (utils/bridge_section.js, validation 1.3 2026-11-12), never the LLM.
+        const turnBridges = [];
         // Grounding guard (Invariant 11): a new, non-small-talk question must call a data tool first.
         const groundThisTurn = mustGround(question, history);
         let groundingEvidence = 0;
@@ -3812,6 +3816,8 @@ app.post('/query', authMiddleware, async (req, res) => {
                             if (isToolErrorResult(parsed)) {
                                 console.error(`[GATEWAY] Tool returned error — ${toolName}: ${parsed.error}`);
                                 hadToolFailure = true;
+                            } else if (toolName === 'connect_knowledge_on_demand') {
+                                turnBridges.push(...bridgesFromConnectResult(parsed));
                             }
 
                             // Domain guard: inclusion filter — only keep nodes in this domain's manifest.
@@ -3901,7 +3907,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                         // toolContent here is post-domain-guard — exactly what the LLM receives.
                         dataToolCalls++;
                         if (countsAsEvidenceOnTurn(domainSignal, toolName) && toolResultHasEvidence(toolName, toolContent)
-                            && discoveryEvidence({ routing: routingV2, toolArgs, question, toolContent })) groundingEvidence++;
+                            && discoveryEvidence({ routing: routingV2, unrecognised: !domainConfident, toolArgs, question, toolContent })) groundingEvidence++;
 
                         messages.push({
                             role: "tool",
@@ -4139,6 +4145,13 @@ app.post('/query', authMiddleware, async (req, res) => {
                 if (groundThisTurn && dataToolCalls === 0) {
                     console.warn('[GROUNDING] new question answered with no data tool — answer replaced with "No data found"');
                     finalAnswer = NO_DATA_FOUND_ANSWER(question);
+                }
+                // Bridge mode: "How these connect" is written by code from the chains the tool found, with the session-only note
+                // (same section as cross mode). Any connection section the model wrote is replaced.
+                if (turnBridges.length && finalAnswer !== NO_DATA_FOUND_ANSWER(question)) {
+                    const seenBridge = new Set();
+                    const unique = turnBridges.filter(b => { const k = `${b.from}|${b.to}`; if (seenBridge.has(k)) return false; seenBridge.add(k); return true; });
+                    finalAnswer = withConnectionsSection(finalAnswer, unique);
                 }
                 if (finalAnswer === NO_DATA_FOUND_ANSWER(question)) {
                     // The graph must not show what the answer says does not exist.

@@ -1,0 +1,139 @@
+{
+  "nodes": [
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "node_id": "af4be31e-283b-46bc-8909-f8db3884a590",
+      "name": "Ignite Social Learning Community @ JPMC",
+      "type": "ThoughtLeadership",
+      "has_federated_bridge": true,
+      "relevance_tier": "confirmed"
+    },
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:680",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:680",
+      "node_id": "3bb1cb27-c8cd-4c39-9bd0-a5efbdb730c5",
+      "name": "Thought Leadership & Community",
+      "type": "Category",
+      "has_federated_bridge": true,
+      "relevance_tier": "structural",
+      "bridge_domain": "professional",
+      "bridge_domain_name": "Career",
+      "description": "",
+      "is_bento_eligible": true,
+      "bridge_reason": "Connected via: CONTAINS",
+      "candidacy_source": "label_match"
+    },
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:613",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:613",
+      "node_id": "cd413869-6496-49b8-952f-43f0a271bf50",
+      "name": "AWS",
+      "type": "Technology",
+      "has_federated_bridge": true,
+      "relevance_tier": "structural",
+      "bridge_domain": "professional",
+      "bridge_domain_name": "Career",
+      "description": "",
+      "is_bento_eligible": true,
+      "bridge_reason": "Connected via: USES_TOOL",
+      "candidacy_source": "label_match"
+    },
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:605",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:605",
+      "node_id": "e05c2cd8-b8a7-425e-866e-4c2f66e6cbd6",
+      "name": "ML",
+      "type": "Technology",
+      "has_federated_bridge": true,
+      "relevance_tier": "structural",
+      "bridge_domain": "professional",
+      "bridge_domain_name": "Career",
+      "description": "",
+      "is_bento_eligible": true,
+      "bridge_reason": "Connected via: USES_TOOL",
+      "candidacy_source": "label_match"
+    },
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:312",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:312",
+      "node_id": "87ecec17-df1d-4b84-baf6-1c8ea576abc0",
+      "name": "Sangeetha Ramadurai",
+      "type": "Person",
+      "has_federated_bridge": true,
+      "relevance_tier": "confirmed",
+      "is_bridge": true,
+      "is_bento_eligible": false
+    },
+    {
+      "id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:688",
+      "element_id": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:688",
+      "node_id": "0892113f-9e16-49f3-9adb-48b1e0110f61",
+      "name": "Cortex-Drive",
+      "type": "Project",
+      "has_federated_bridge": true,
+      "relevance_tier": "confirmed",
+      "bridge_domain": "professional",
+      "bridge_domain_name": "Career",
+      "description": "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
+      "is_bento_eligible": true,
+      "bridge_reason": "Connected via: LED \u2192 HELD_ROLE",
+      "candidacy_source": "label_match"
+    }
+  ],
+  "virtual_links": [
+    {
+      "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:680",
+      "type": "VIRTUAL_BRIDGE",
+      "discovery_reason": "via CONTAINS",
+      "relevance_tier": "structural"
+    },
+    {
+      "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:613",
+      "type": "VIRTUAL_BRIDGE",
+      "discovery_reason": "via USES_TOOL",
+      "relevance_tier": "structural"
+    },
+    {
+      "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:605",
+      "type": "VIRTUAL_BRIDGE",
+      "discovery_reason": "via USES_TOOL",
+      "relevance_tier": "structural"
+    },
+    {
+      "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:57",
+      "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:312",
+      "type": "VIRTUAL_BRIDGE",
+      "discovery_reason": "via LED",
+      "relevance_tier": "confirmed"
+    },
+    {
+      "source": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:312",
+      "target": "4:a90eaf7d-022e-4717-affe-f53c867f3b8f:688",
+      "type": "VIRTUAL_BRIDGE",
+      "discovery_reason": "via HELD_ROLE",
+      "relevance_tier": "confirmed"
+    }
+  ],
+  "bridge_summary": "Found 4 cross-domain bridge(s). Ignite Social Learning Community @ JPMC \u2192 Thought Leadership & Community via CONTAINS; Ignite Social Learning Community @ JPMC \u2192 AWS via USES_TOOL; Ignite Social Learning Community @ JPMC \u2192 ML via USES_TOOL; Ignite Social Learning Community @ JPMC \u2192 Cortex-Drive via LED \u2192 HELD_ROLE (explicitly requested). Paths through its own author or owner (Sangeetha Ramadurai) are not counted as bridges.",
+  "confidence_tier": "explicit",
+  "target_domains": [
+    "professional"
+  ],
+  "limit": 10,
+  "max_limit": 25,
+  "show_more_step": 10,
+  "has_more": false,
+  "search": {
+    "hops": 2,
+    "partial": false,
+    "visited": 56,
+    "same_author": [
+      "Sangeetha Ramadurai"
+    ],
+    "ms": 411
+  }
+}
