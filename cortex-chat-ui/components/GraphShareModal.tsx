@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, UserPlus, Building2, Check, Loader2, Share2, Link2, Copy } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 type GraphTab = 'user' | 'group' | 'link';
 

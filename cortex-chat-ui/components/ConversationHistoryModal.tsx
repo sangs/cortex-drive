@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, History, Trash2, Loader2, MessageSquare, ChevronRight, RefreshCw } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 interface ConversationListItem {
     conversation_id: string;

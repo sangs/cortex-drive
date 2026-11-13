@@ -8,7 +8,7 @@ import {
     X, ChevronRight, Calendar, ExternalLink, Clock, Send, Trash2,
 } from 'lucide-react';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

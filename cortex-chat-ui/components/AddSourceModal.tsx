@@ -7,7 +7,7 @@ import { X, Globe, Loader2, CheckCircle2, FileText } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
 import type { SourceVisibility } from '@/hooks/use-capabilities';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 // Phase B M3': the Document option is off unless the deployment enables it (feature flag).
 const DOCUMENT_SOURCES_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DOCUMENT_SOURCES === 'true';
 

@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 export type SourceVisibility = 'private' | 'organization' | 'public';
 export interface Capabilities {

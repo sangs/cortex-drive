@@ -9,7 +9,7 @@ import { useCapabilities } from '@/hooks/use-capabilities';
 import type { BridgeOptions } from '@/utils/bridgeTypes';
 import { groupHalfSections, type PanelSection } from '@/utils/graphConstants';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 // Layout (design 2026-11-03 §4.2): the server picks the sections for a node from its labels
 // (domain_registry.PANEL_LAYOUTS) and returns them as `panel_layout`; this panel only knows how to draw

@@ -9,11 +9,10 @@ import {
     Sparkles, Network, Loader2, Sun, Moon
 } from 'lucide-react';
 import { visibleNodeIds, panelCacheKey, panelDetailFields } from '@/utils/graphConstants';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 const EnterpriseGraph = dynamic(() => import('@/components/EnterpriseGraph'), { ssr: false });
 const BentoDetailPanel = dynamic(() => import('@/components/BentoDetailPanel'), { ssr: false });
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
 
 interface SnapshotNode {
     id: string;

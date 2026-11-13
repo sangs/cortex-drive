@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { Inbox, MessageSquare, Network, ChevronDown, ChevronRight } from 'lucide-react';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 export interface SharedItem {
     grantId: string;

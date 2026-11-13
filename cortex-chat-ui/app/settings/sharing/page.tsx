@@ -9,7 +9,7 @@ import {
     Users, UserCheck, Clock, Send, XCircle, Shield, UserMinus,
 } from 'lucide-react';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 type Tab = 'public-links' | 'named-shares' | 'pending-invites';
 

@@ -34,6 +34,7 @@ import {
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
 import { useMCP } from "@/hooks/use-mcp";
+import { GATEWAY_URL } from "@/lib/gateway";
 import type { BridgeOptions, BridgeProgressItem } from "@/utils/bridgeTypes";
 import { clarifyChoiceFor, readClarify } from "@/utils/clarify";
 import type { Clarify, ClarifyChoice, ClarifyOption } from "@/utils/clarify";
@@ -233,7 +234,7 @@ export default function DashboardPage() {
     // reports actual MCP-server and Neo4j connectivity independently.
     useEffect(() => {
         if (!hasMounted) return;
-        const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+        const gatewayUrl = GATEWAY_URL;
         let cancelled = false;
 
         const pollSystemStatus = async () => {
@@ -283,7 +284,7 @@ export default function DashboardPage() {
             setIsActivating(false); // already ran this session — unblock immediately
             return;
         }
-        const gw = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+        const gw = GATEWAY_URL;
         getToken().then(async token => {
             if (!token) { setIsActivating(false); return; }
             const headers = { Authorization: `Bearer ${token}` };
@@ -862,7 +863,7 @@ export default function DashboardPage() {
             try {
                 console.log("Hydrating node (High-Speed Path via Gateway):", freshNode.id || freshNode.name);
                 const token = await getToken();
-                const response = await fetch(`${process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000'}/api/get_node_details`, {
+                const response = await fetch(`${GATEWAY_URL}/api/get_node_details`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

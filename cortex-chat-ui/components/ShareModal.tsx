@@ -7,7 +7,7 @@ import { X, Link2, UserPlus, Users, Building2, Check, Copy, Trash2, Loader2, Che
 import { useAuth } from '@clerk/nextjs';
 import { useCapabilities } from '@/hooks/use-capabilities';
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:4000';
+import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 
 type Tab = 'link' | 'person' | 'group' | 'manage';
 
