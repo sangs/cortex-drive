@@ -12,7 +12,15 @@
       "Source",
       "Publication",
       "Community"
-    ]
+    ],
+    "bridge_source_kinds": {
+      "episode": [
+        "Episode"
+      ],
+      "podcast": [
+        "Podcast"
+      ]
+    }
   },
   "career": {
     "node_types": [
@@ -61,13 +69,35 @@
       "ThoughtLeadership",
       "Community",
       "Person"
-    ]
+    ],
+    "bridge_source_kinds": {
+      "thought leadership": [
+        "ThoughtLeadership"
+      ],
+      "project": [
+        "Project"
+      ],
+      "certification": [
+        "Certification"
+      ],
+      "open source": [
+        "OpenSource"
+      ]
+    }
   },
   "website": {
     "node_types": [
       "WebsiteSource",
       "SourceSnapshot"
-    ]
+    ],
+    "bridge_source_kinds": {
+      "page": [
+        "WebsiteSource"
+      ],
+      "website": [
+        "WebsiteSource"
+      ]
+    }
   },
   "document": {
     "node_types": [
@@ -80,6 +110,14 @@
       "ReferenceLink",
       "Topic"
     ],
-    "_comment": "Phase B M5. Python node_set (DOCUMENT_GRAPH_NODES) + DOCUMENT_ENTITY_LABELS: the gateway guard must keep the <=10 linked entities the graph view shows (design \u00a71.3.6), while Cypher-level scope excludes shared labels (\u00a71.3.5). Mirror kept equal by tests/mcp_server/test_domain_registry_contract.py."
+    "_comment": "Phase B M5. Python node_set (DOCUMENT_GRAPH_NODES) + DOCUMENT_ENTITY_LABELS: the gateway guard must keep the <=10 linked entities the graph view shows (design \u00a71.3.6), while Cypher-level scope excludes shared labels (\u00a71.3.5). Mirror kept equal by tests/mcp_server/test_domain_registry_contract.py.",
+    "bridge_source_kinds": {
+      "document": [
+        "DocumentSource"
+      ],
+      "paper": [
+        "DocumentSource"
+      ]
+    }
   }
 }

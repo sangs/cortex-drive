@@ -200,6 +200,11 @@ BRIDGE_PAIR_MAX_PAIRS = int(os.environ.get("BRIDGE_PAIR_MAX_PAIRS", "9"))
 BRIDGE_PAIR_CANDIDATES = int(os.environ.get("BRIDGE_PAIR_CANDIDATES", "5"))
 # Rounds of "exclude the hubs found, search again" per pair search.
 BRIDGE_PAIR_ROUNDS = int(os.environ.get("BRIDGE_PAIR_ROUNDS", "3"))
+# Bridge plan (bridge-pipeline-without-model-design-2026-11-13.md §4.3): the gateway picks a bridge question's sources
+# in code. Mirrored in cortex-gateway/config/bridge_plan.json (tests/mcp_server/test_domain_registry_contract.py).
+BRIDGE_PLAN_MAX_SOURCES = 6            # searches run for one question; more candidates are ranked and the rest noted
+BRIDGE_PLAN_SOURCE_DEADLINE_MS = 20000 # one slow source must not hold the answer
+BRIDGE_PLAN_CLARIFY_MAX_OPTIONS = 5    # items offered by "Which item should the connection start from?"
 
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
@@ -305,6 +310,15 @@ DOMAIN_MANIFESTS = {
         # live-confirmed the LLM can skip that step and fabricate a source name instead.
         # enumerate_bridge_sources() matches on these labels directly, deterministically.
         "bridge_source_labels": ["ThoughtLeadership"],
+        # Words a question uses for a kind of item, and the labels they mean (bridge plan design 2026-11-13 §4.1
+        # rule 3c). Every label must be in this domain's node_set and in ROUTING_NAME_LABELS, so its items are in
+        # the routing catalog. Mirrored in cortex-gateway/config/domain_manifests.json.
+        "bridge_source_kinds": {
+            "thought leadership": ["ThoughtLeadership"],
+            "project": ["Project"],
+            "certification": ["Certification"],
+            "open source": ["OpenSource"],
+        },
         "bridge_target": True,
         "display_name": "Career",
         "realm": "INTERNAL"
@@ -323,6 +337,7 @@ DOMAIN_MANIFESTS = {
         "node_set": CORTEX_DRIVE_NODES + ["Publication", "Community"],
         "anchor_labels": ["Episode", "Topic", "Concept", "Technology", "Publication", "Podcast"],
         "backbone_labels": ["Episode", "Topic", "Technology", "Publication", "Concept", "Category", "Podcast", "Source"],
+        "bridge_source_kinds": {"episode": ["Episode"], "podcast": ["Podcast"]},
         "bridge_target": True,
         "display_name": "Podcast",
         "realm": "INTERNAL"
@@ -357,6 +372,7 @@ DOMAIN_MANIFESTS = {
         "node_set": ["WebsiteSource", "SourceSnapshot"],
         "anchor_labels": ["WebsiteSource"],
         "backbone_labels": ["WebsiteSource"],
+        "bridge_source_kinds": {"page": ["WebsiteSource"], "website": ["WebsiteSource"]},
         "bridge_target": True,
         "display_name": "Websites",
         "realm": "INTERNAL"
@@ -393,6 +409,7 @@ DOMAIN_MANIFESTS = {
         "node_set": list(DOCUMENT_GRAPH_NODES),
         "anchor_labels": ["DocumentSource", "Section"],
         "backbone_labels": ["DocumentSource"],
+        "bridge_source_kinds": {"document": ["DocumentSource"], "paper": ["DocumentSource"]},
         "visual_deny_labels": ["ContentBlock"],
         "universal_discovery": False,
         "bridge_target": True,
@@ -535,6 +552,15 @@ DOMAIN_FEATURE_FLAGS = {"document": ENABLE_DOCUMENT_DOMAIN}
 
 def is_domain_enabled(domain: str) -> bool:
     return DOMAIN_FEATURE_FLAGS.get(domain, True)
+
+
+# Registry domain → the gateway's domain signal (the gateway says "career" for the professional domain).
+GATEWAY_DOMAIN_SIGNALS = {"professional": "career", "podcast": "podcast", "website": "website", "document": "document"}
+
+
+def get_bridge_source_kinds(domain: str) -> dict:
+    """Kind word → labels for one domain (manifest `bridge_source_kinds`); empty when the domain has none."""
+    return dict(DOMAIN_MANIFESTS.get(domain, {}).get("bridge_source_kinds", {}))
 
 
 def get_bridge_target_domains() -> list:

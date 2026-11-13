@@ -298,4 +298,4 @@ function personFromHistory(history, lookups) {
     return null;
 }
 
-module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer };
+module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer, findAll, wordRe };

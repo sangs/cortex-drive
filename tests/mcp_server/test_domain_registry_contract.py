@@ -35,6 +35,49 @@ class GatewayMirrorTest(unittest.TestCase):
         self.assertFalse(set(reg.DOMAIN_MANIFESTS["document"]["node_set"]) & set(DOCUMENT_ENTITY_LABELS))
 
 
+class BridgeSourceKindsTest(unittest.TestCase):
+    """Bridge plan design 2026-11-13 §4.1 rule 3c, §4.3: kind words and limits, registry ↔ gateway mirror."""
+
+    PLAN = json.load(open(os.path.join(ROOT, "cortex-gateway", "config", "bridge_plan.json")))
+
+    def test_gateway_mirror(self):
+        for domain, signal in reg.GATEWAY_DOMAIN_SIGNALS.items():
+            self.assertEqual(GATEWAY[signal].get("bridge_source_kinds", {}), reg.get_bridge_source_kinds(domain), domain)
+
+    def test_every_content_domain_has_kinds(self):
+        self.assertEqual(sorted(reg.GATEWAY_DOMAIN_SIGNALS), sorted(reg.CONTENT_DOMAINS))
+        for domain in reg.CONTENT_DOMAINS:
+            self.assertTrue(reg.get_bridge_source_kinds(domain), domain)
+
+    def test_labels_belong_to_the_domain_and_are_in_the_routing_catalog(self):
+        for domain, signal in reg.GATEWAY_DOMAIN_SIGNALS.items():
+            for word, labels in reg.get_bridge_source_kinds(domain).items():
+                self.assertEqual(word, word.lower().strip(), word)
+                self.assertTrue(labels, word)
+                for label in labels:
+                    self.assertIn(label, reg.DOMAIN_MANIFESTS[domain]["node_set"], f"{domain}:{word}")
+                    self.assertIn(label, reg.ROUTING_NAME_LABELS[signal], f"{domain}:{word}")
+
+    def test_a_kind_word_names_one_domain(self):
+        seen = {}
+        for domain in reg.GATEWAY_DOMAIN_SIGNALS:
+            for word in reg.get_bridge_source_kinds(domain):
+                self.assertNotIn(word, seen, f"{word}: {seen.get(word)} and {domain}")
+                seen[word] = domain
+
+    def test_existing_source_labels_are_covered(self):
+        # `bridge_source_labels` (the model path) stays until the switch; its labels must be reachable by a kind word.
+        for domain, manifest in reg.DOMAIN_MANIFESTS.items():
+            kinds = {l for labels in reg.get_bridge_source_kinds(domain).values() for l in labels}
+            self.assertTrue(set(manifest.get("bridge_source_labels", [])) <= kinds, domain)
+
+    def test_limits_mirror(self):
+        self.assertEqual(self.PLAN["max_sources"], reg.BRIDGE_PLAN_MAX_SOURCES)
+        self.assertEqual(self.PLAN["source_deadline_ms"], reg.BRIDGE_PLAN_SOURCE_DEADLINE_MS)
+        self.assertEqual(self.PLAN["clarify_max_options"], reg.BRIDGE_PLAN_CLARIFY_MAX_OPTIONS)
+        self.assertGreater(reg.BRIDGE_PLAN_MAX_SOURCES, 0)
+
+
 class UniversalDiscoveryTest(unittest.TestCase):
     def test_document_not_in_all_unions(self):
         for label in DOCUMENT_GRAPH_NODES:

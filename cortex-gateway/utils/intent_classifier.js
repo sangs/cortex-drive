@@ -208,7 +208,7 @@ function buildRoutingLookups(catalog, viewer) {
             continue;
         }
         entity.set(e.name.toLowerCase(), e.domain);
-        titles.push({ name: e.name, domain: e.domain, type: e.type || null });
+        titles.push({ name: e.name, domain: e.domain, type: e.type || null, node_id: e.node_id || null });
         const pattern = e.short_name ? _shortNamePattern(e.short_name) : null;
         if (pattern) short.push({ pattern, domain: e.domain, matched: e.short_name.toLowerCase(), title: e.name });
     }

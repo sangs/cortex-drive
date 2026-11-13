@@ -1,0 +1,6 @@
+{
+  "_comment": "Bridge plan limits. Mirror of BRIDGE_PLAN_* in src/mcp_server/domain_registry.py; kept equal by tests/mcp_server/test_domain_registry_contract.py.",
+  "max_sources": 6,
+  "source_deadline_ms": 20000,
+  "clarify_max_options": 5
+}

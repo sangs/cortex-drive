@@ -90,6 +90,16 @@ module.exports = {
     },
     // Bridge phrasing beyond Phase R's cross_domain patterns.
     routingBridgePatternSource: '\\bconnect(?:s|ed)?\\s+across\\b|\\brelation(?:ship)?\\s+between\\b',
+    // Bridge direction (bridge plan design 2026-11-13 §4.1 rule 2; utils/bridge_plan.js): sentence shapes with a
+    // from-side and a to-side, as named groups. Category (a) structural patterns only, never topic words. Used ONLY
+    // to tell the two sides apart in a question routing already classified as a bridge; they route nothing.
+    // First match wins. Evidence: the bridge questions of the labelled routing set (tests/routing_eval, rule G6).
+    bridgeDirectionPatternSources: [
+        '\\btrace\\b.*?\\bfrom\\s+(?<from>.+?)\\s+to\\s+(?<to>.+)$',
+        '\\brelation(?:ship)?\\s+between\\s+(?<from>.+?)\\s+and\\s+(?<to>.+)$',
+        '^(?:how\\s+(?:does|do|did|is|are)\\s+)?(?<from>.+?)\\s+connect(?:s|ed)?\\s+(?:across|to|with)\\s+(?<to>.+)$',
+        '\\bhow\\s+(?:did|does|do|has|have)\\s+(?<from>.+?)\\s+(?:influenc\\w*|affect\\w*|shap\\w*|impact\\w*|inform\\w*)\\s+(?<to>.+)$',
+    ],
     // A career title's head before these separators also names it ("Volarisation Engine @ IBM Dev Day 2026").
     routingTitleHeadSeparators: [' @ ', ' (', ': '],
     routingTitleHeadMinWords: 2,
