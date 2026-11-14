@@ -3,7 +3,7 @@
  * Bridge plan (bridge-pipeline-without-model-design-2026-11-13.md §4.1, §4.3). Deterministic: no LLM, no network.
  *
  * For a question routing v2 classified as a bridge, decide which items the search starts from and what it aims at —
- * the step a model performs today. NOT WIRED into /query yet (design §9 step 3).
+ * the step a model performed. Used by /query for routing v2 bridge questions behind BRIDGE_PLAN (utils/bridge_mode.js).
  *
  *   planBridge(question, lookups, opts) →
  *     { kind: 'plan', rule, sources: [{node_id, name, type, domain}], target: {node_id, name} | null,
@@ -17,6 +17,8 @@
  *   named        catalog items named on the from-side
  *   kind         a kind word on the from-side ("thought leadership", "episodes") → visible items of its labels
  *   subject      a person on the from-side → visible items of every bridge-source kind in their work domains
+ * With a person on the from-side, kind and subject use only that person's own items (ownershipRequest →
+ * MCP person_work_items → opts.ownedIds), never every visible item of the kind.
  *   topic_words  the from-side's remaining words against item names (a paraphrase: "her platform engineering talk")
  * More candidates than the cap are ranked (from-side words in the name, then name) and the rest named in the notes;
  * for topic_words, none or more than the cap is a clarifying question — never a guess.
@@ -40,6 +42,8 @@ const CLARIFY_QUESTION = 'Which item should the connection start from?';
 const TOPIC_WORD_MIN_CHARS = 3;
 const NOT_SEARCHED_NOTE = (searched, total, rest) =>
     `${searched} of ${total} matching items were searched. Not searched: ${rest.join('; ')}.`;
+const OWNERSHIP_UNAVAILABLE_NOTE = subjects =>
+    `Could not check which items belong to ${subjects.join(' and ')}; every matching item you can open was used.`;
 const EXTRA_TARGETS_NOTE = (used, rest) =>
     `The search aimed at ${used}. Also named in the question, not used as the target: ${rest.join('; ')}.`;
 
@@ -53,6 +57,37 @@ const KIND_LABELS_BY_DOMAIN = Object.fromEntries(Object.entries(MANIFESTS).map((
 
 const within = (hit, span) => Boolean(span) && hit.start >= span[0] && hit.end <= span[1];
 const byName = (a, b) => a.name.localeCompare(b.name);
+
+/** Sides of the question and the catalog items named on each. */
+function parse(q, names) {
+    const span = sides(q);
+    const fromText = span ? q.slice(span.from[0], span.from[1]) : q;
+    const toText = span ? q.slice(span.to[0], span.to[1]) : '';
+    const hits = findAll(q, names).sort((a, b) => a.start - b.start);
+    const fromHits = span ? hits.filter(h => within(h, span.from)) : hits.slice(0, 1);
+    const toHits = span ? hits.filter(h => within(h, span.to)) : hits.slice(1);
+    return { span, fromText, toText, fromHits, toHits };
+}
+
+/**
+ * Whose items to look up before planning (design 2026-11-13 §10 gap 1): when the from-side names a person and no item,
+ * the node ids of those people and the labels asked for (the from-side's kind words, else every bridge-source kind of
+ * their work domains). null when no lookup is needed. The caller passes the result to MCP person_work_items.
+ */
+function ownershipRequest(question, lookups) {
+    const q = String(question || '');
+    const { names } = itemNames(lookups);
+    const { fromText, fromHits } = parse(q, names);
+    if (fromHits.length) return null;
+    const subjects = subjectsIn(fromText, lookups);
+    const personIds = subjects.flatMap(n => (lookups.personIds && lookups.personIds.get(n)) || []);
+    if (!personIds.length) return null;
+    const kinds = kindsIn(fromText);
+    const work = name => (lookups.personWork && lookups.personWork.get(name)) || [];
+    const labels = kinds.length ? kinds.flatMap(k => k.labels) : subjects.flatMap(work).flatMap(d => KIND_LABELS_BY_DOMAIN[d] || []);
+    const unique = [...new Set(labels)].sort();
+    return unique.length ? { person_ids: [...new Set(personIds)], labels: unique, subjects } : null;
+}
 
 /** The from-side and to-side of the question as [start, end] spans, or null when no direction is stated. */
 function sides(q) {
@@ -123,19 +158,16 @@ function resolveBridgeSourceChoice(choice, lookups) {
 /**
  * @param {string} question
  * @param {object} lookups  buildRoutingLookups(...) for this asker
- * @param {{resolvedSources?: string[]}} [opts]  node ids from resolveBridgeSourceChoice
+ * @param {{resolvedSources?: string[], ownedIds?: Set<string>, ownershipFailed?: boolean}} [opts]
+ *        resolvedSources: node ids from resolveBridgeSourceChoice;
+ *        ownedIds: node ids of the named people's own items (MCP person_work_items for ownershipRequest's labels);
+ *        ownershipFailed: that lookup failed — every visible item of the kind is used and the notes say so.
  */
 function planBridge(question, lookups, opts = {}) {
     const q = String(question || '');
     const { items, names } = itemNames(lookups);
     if (!items.length) return { kind: 'no_source' };
-
-    const span = sides(q);
-    const fromText = span ? q.slice(span.from[0], span.from[1]) : q;
-    const toText = span ? q.slice(span.to[0], span.to[1]) : '';
-    const hits = findAll(q, names).sort((a, b) => a.start - b.start);
-    const fromHits = span ? hits.filter(h => within(h, span.from)) : hits.slice(0, 1);
-    const toHits = span ? hits.filter(h => within(h, span.to)) : hits.slice(1);
+    const { fromText, toText, fromHits, toHits } = parse(q, names);
     const notes = [];
 
     // Target: a named item on the to-side, else the domains the to-side names, else every other domain.
@@ -170,15 +202,23 @@ function planBridge(question, lookups, opts = {}) {
     const named = [...new Map(fromHits.map(h => [h.value.node_id, h.value])).values()].filter(notTarget);
     if (named.length) return plan(RULE.named, named, false);
 
+    // A person on the from-side: only their own items (ownedIds), never everyone's items of that kind.
+    const owned = subjects.length && opts.ownedIds instanceof Set ? opts.ownedIds : null;
+    if (subjects.length && opts.ownershipFailed) notes.push(OWNERSHIP_UNAVAILABLE_NOTE(subjects));
+    const unique = list => [...new Map(list.map(t => [t.node_id, t])).values()];
+
     // kind: a kind word on the from-side.
     const kinds = kindsIn(fromText);
-    const byKind = [...new Map(kinds.flatMap(k => ofLabels(k.domain, k.labels)).map(t => [t.node_id, t])).values()];
-    if (byKind.length) return plan(RULE.kind, byKind, true);
-
-    // subject: a person on the from-side → every bridge-source kind of their work domains.
-    const bySubject = [...new Map(subjects.flatMap(work)
-        .flatMap(d => ofLabels(d, KIND_LABELS_BY_DOMAIN[d] || [])).map(t => [t.node_id, t])).values()];
-    if (bySubject.length) return plan(RULE.subject, bySubject, true);
+    if (kinds.length) {
+        const byKind = owned ? items.filter(t => owned.has(t.node_id) && notTarget(t))
+            : unique(kinds.flatMap(k => ofLabels(k.domain, k.labels)));
+        if (byKind.length) return plan(RULE.kind, byKind, true);
+    } else if (subjects.length) {
+        // subject: a person on the from-side → their items of every bridge-source kind of their work domains.
+        const bySubject = owned ? items.filter(t => owned.has(t.node_id) && notTarget(t))
+            : unique(subjects.flatMap(work).flatMap(d => ofLabels(d, KIND_LABELS_BY_DOMAIN[d] || [])));
+        if (bySubject.length) return plan(RULE.subject, bySubject, true);
+    }
 
     // topic_words: a paraphrase. A usable match is 1..cap items; otherwise ask.
     // Only the items matching the most from-side words count ("platform engineering" beats "platform" alone).
@@ -195,5 +235,5 @@ function planBridge(question, lookups, opts = {}) {
     return { kind: 'clarify', clarify: { question: CLARIFY_QUESTION, kind: CLARIFY_KIND, options: options.map(asOption) } };
 }
 
-module.exports = { planBridge, resolveBridgeSourceChoice, sides, BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS,
+module.exports = { planBridge, ownershipRequest, resolveBridgeSourceChoice, sides, BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS,
     CLARIFY_QUESTION, RULE };

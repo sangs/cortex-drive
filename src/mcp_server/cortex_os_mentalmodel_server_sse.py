@@ -855,6 +855,29 @@ async def enumerate_bridge_sources(
         expert.close()
 
 @mcp.tool()
+async def person_work_items(
+    person_node_ids: List[str] = Field(..., description="node_ids of the people named in a bridge question."),
+    labels: List[str] = Field(..., description="Bridge-source kind labels to return (others are ignored)."),
+) -> str:
+    """
+    The items these people are directly linked to as their own work, for the gateway's bridge plan (design
+    2026-11-13 §10). Read-only, filtered by the caller's access. Not exposed to the LLM's tool schema — called only by
+    the gateway.
+    """
+    tenant_id = tenant_id_var.get() or os.environ.get("TENANT_ID") or os.environ.get("TEST_TENANT") or "test-tenant"
+    user_id = user_id_var.get() or ""
+    guest_anchor = guest_share_anchor_var.get() or ""
+    allowed_ids = await _get_current_allowed_ids()
+    expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id, guest_share_anchor=guest_anchor, allowed_ids=allowed_ids)
+    try:
+        return await asyncio.to_thread(expert.person_work_items, person_node_ids=person_node_ids, labels=labels)
+    except Exception as e:
+        print(f"Error in person_work_items: {e}")
+        return json.dumps({"error": str(e)})
+    finally:
+        expert.close()
+
+@mcp.tool()
 async def connect_knowledge_on_demand(
     source_node_id: Optional[str] = Field(None, description="The node_id (UUID, preferred) or elementId of the source node."),
     source_node_name: Optional[str] = Field(None, description="The 'name' property of the source node (fallback)."),

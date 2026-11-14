@@ -11,7 +11,7 @@
 process.env.ENABLE_DOCUMENT_DOMAIN = 'true';
 const assert = require('assert');
 const { buildRoutingLookups } = require('../utils/intent_classifier.js');
-const { planBridge, resolveBridgeSourceChoice, sides, BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS,
+const { planBridge, ownershipRequest, resolveBridgeSourceChoice, sides, BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS,
     CLARIFY_QUESTION, RULE } = require('../utils/bridge_plan.js');
 const MANIFESTS = require('../config/domain_manifests.json');
 
@@ -156,6 +156,25 @@ const names = p => p.sources.map(s => s.name);
     ok(JSON.stringify(hidden).indexOf('Hidden Strategy Memo') === -1, 'a hidden title never appears in the result');
     const nobody = buildRoutingLookups({ entries: [] }, { isOwner: false, userId: 'user_x', allowedIds: [] });
     eq(planBridge("How did Sangeetha's thought leadership influence Cortex-Drive?", nobody), { kind: 'no_source' }, 'nothing visible → no source, no guess');
+}
+
+// ── ownership (design §10 gap 1): a named person's kind means their own items ─────────────────────────────
+{
+    const demo = "How did Sangeetha's thought leadership influence Cortex-Drive?";
+    eq(ownershipRequest(demo, owner), { person_ids: ['p1'], labels: ['ThoughtLeadership'], subjects: ['Sangeetha Ramadurai'] });
+    const person = ownershipRequest("Trace the decision from Sangeetha's governance work to the security design of Cortex-Drive", owner);
+    eq(person.labels, ['Certification', 'OpenSource', 'Project', 'ThoughtLeadership'], 'no kind word → every kind of her work domains');
+    eq(ownershipRequest('How does the Graph database page connect to Cortex-Drive?', owner), null, 'no person → no lookup');
+    eq(ownershipRequest("How did Alpha Ledger influence Sangeetha's projects?", owner), null, 'an item named on the from-side → no lookup');
+    const mine = planBridge(demo, owner, { ownedIds: new Set(['tl2']) });
+    eq(ids(mine), ['tl2'], 'only her items');
+    const none = planBridge(demo, owner, { ownedIds: new Set() });
+    ok(none.kind !== 'plan' || none.rule === RULE.topicWords, 'none of hers → never everyone else\'s items of the kind');
+    const failed = planBridge(demo, owner, { ownershipFailed: true });
+    eq(ids(failed).sort(), ['tl1', 'tl2']); ok(/^Could not check which items belong to Sangeetha Ramadurai/.test(failed.notes[0]));
+    const subj = planBridge("Trace the decision from Sangeetha's governance work to the security design of Cortex-Drive", owner,
+                            { ownedIds: new Set(['pr7', 'tl1', 'c1']) });
+    eq(ids(subj), ['pr7', 'tl1'], 'subject rule: her items, ranked, target excluded');
 }
 
 // ── the labelled routing set: every bridge question yields a plan or one question, within the limits ───

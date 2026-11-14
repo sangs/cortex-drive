@@ -2419,6 +2419,38 @@ class ExpertTools:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    def person_work_items(self, person_node_ids: list, labels: list) -> str:
+        """
+        The items these people are directly linked to as their own work (bridge plan design 2026-11-13 §10, gap 1):
+        "Sangeetha's thought leadership" means her items, not every visible thought-leadership item. Same rule as the
+        routing catalog's work_domains: a direct link, not counting consumption (listening, subscribing) or similarity
+        links. Read-only; the security clause applies to the person and to every item. Labels are limited to the
+        manifests' bridge-source kinds. Called only by the gateway (never offered to the LLM).
+        """
+        from domain_registry import get_bridge_source_kind_labels, BRIDGE_PLAN_WORK_ITEMS_MAX
+        from schema_guard import CONSUMPTION_RELATIONSHIPS, SIMILARITY_RELATIONSHIPS
+        allowed = set(get_bridge_source_kind_labels())
+        wanted = sorted({l for l in (labels or []) if l in allowed})
+        ids = [i for i in (person_node_ids or []) if isinstance(i, str) and i]
+        if not wanted or not ids:
+            return json.dumps({"items": []})
+        query = f"""
+        MATCH (p) WHERE p.node_id IN $person_ids AND ({self._get_security_clause("p")})
+        MATCH (p)-[r]-(w)
+        WHERE NOT type(r) IN $not_work AND any(l IN labels(w) WHERE l IN $work_labels)
+          AND ({self._get_security_clause("w")})
+        RETURN DISTINCT w.node_id AS node_id, w.name AS name
+        LIMIT $work_limit
+        """
+        try:
+            result = self._exec_query(query, person_ids=ids, work_labels=wanted,
+                                      not_work=CONSUMPTION_RELATIONSHIPS + SIMILARITY_RELATIONSHIPS,
+                                      work_limit=BRIDGE_PLAN_WORK_ITEMS_MAX, **self._security_params())
+            items = [{"node_id": r["node_id"], "name": r["name"]} for r in result.records if r["node_id"]]
+            return json.dumps({"items": items, "truncated": len(items) >= BRIDGE_PLAN_WORK_ITEMS_MAX})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     def connect_knowledge_on_demand(
         self,
         source_node_id: Optional[str] = None,

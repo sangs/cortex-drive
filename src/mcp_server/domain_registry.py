@@ -205,6 +205,7 @@ BRIDGE_PAIR_ROUNDS = int(os.environ.get("BRIDGE_PAIR_ROUNDS", "3"))
 BRIDGE_PLAN_MAX_SOURCES = 6            # searches run for one question; more candidates are ranked and the rest noted
 BRIDGE_PLAN_SOURCE_DEADLINE_MS = 20000 # one slow source must not hold the answer
 BRIDGE_PLAN_CLARIFY_MAX_OPTIONS = 5    # items offered by "Which item should the connection start from?"
+BRIDGE_PLAN_WORK_ITEMS_MAX = 500      # a person's own items read for "her thought leadership" (person_work_items)
 
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
@@ -561,6 +562,11 @@ GATEWAY_DOMAIN_SIGNALS = {"professional": "career", "podcast": "podcast", "websi
 def get_bridge_source_kinds(domain: str) -> dict:
     """Kind word → labels for one domain (manifest `bridge_source_kinds`); empty when the domain has none."""
     return dict(DOMAIN_MANIFESTS.get(domain, {}).get("bridge_source_kinds", {}))
+
+
+def get_bridge_source_kind_labels() -> list:
+    """Every label any domain lists as a bridge-source kind: the only labels person_work_items may read."""
+    return sorted({l for m in DOMAIN_MANIFESTS.values() for ls in m.get("bridge_source_kinds", {}).values() for l in ls})
 
 
 def get_bridge_target_domains() -> list:

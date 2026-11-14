@@ -99,12 +99,15 @@ OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS:-user_3LFIHAyUMoFU4p7J321fqf5mDzo}"
 # ROUTING_V2 defaults to "owner" (routing v2 on for the platform owner — the live setting since 2026-11-10). Until
 # 2026-11-12 it defaulted to "off", and a deploy without ROUTING_V2 exported silently turned routing v2 off (gateway
 # 00116; caught by the post-deploy check: 5.7 answered from general knowledge again).
+# BRIDGE_PLAN defaults to "owner": bridge questions answered without a model for the platform owner (design
+# bridge-pipeline-without-model-design-2026-11-13.md §9 step 3, approved 2026-11-13). "off" restores the model path.
 NEW_ENV_VARS="ENABLE_DOCUMENT_DOMAIN=${ENABLE_DOCUMENT_DOMAIN:?run: source scripts/cloud-env.sh},MCP_SERVER_URL=${MCP_URL},OWNER_CLERK_SUBS=${OWNER_CLERK_SUBS},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
 CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
 PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
 CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\
 ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true},\
-ROUTING_V2=${ROUTING_V2:-owner}"
+ROUTING_V2=${ROUTING_V2:-owner},\
+BRIDGE_PLAN=${BRIDGE_PLAN:-owner}"
 
 # --- Env-var drift guard --------------------------------------------------
 # Incident 2026-09-08: ENABLE_SEMANTIC_CANDIDATE_SEARCH was turned on live via a

@@ -1,6 +1,8 @@
 // Streamed /query answers (cross-domain mode, design 2026-11-09 §4.2): the gateway sends server-sent events —
 // `progress` per domain as it finishes, then one `result` with the usual payload. Anything else is ignored.
-export type QueryProgressEvent = { type: 'progress'; domain: string; status: string; count: number };
+// Bridge questions answered without a model stream one `progress` per source item: `domain` is then the item's id and
+// `label` its name (design 2026-11-13 §4.2).
+export type QueryProgressEvent = { type: 'progress'; domain: string; status: string; count: number; label?: string };
 
 /** Parse SSE `data:` lines from a chunk buffer; returns the parsed events and the unfinished tail. */
 export function parseSseChunk(buffer: string): { events: any[]; rest: string } {

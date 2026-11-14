@@ -788,6 +788,53 @@ const { mustGround, toolChoiceFor, clearGraph } = require('./utils/grounding_gua
 const { pickTargetedAnswerNode } = require('./utils/targeted_career');
 const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, dropGroupingBridges,
         groupingIdsFromConnectResult } = require('./utils/bridge_section');
+// Bridge questions without a model (bridge-pipeline-without-model-design-2026-11-13.md §9 step 3): BRIDGE_PLAN = off
+// (default) | owner | true, applied only where routing v2 runs. Off → the model path below, unchanged (kept as the
+// fallback for one release, user decision 2026-11-13).
+const { runBridgeMode, bridgePlanMode, bridgePlanFor } = require('./utils/bridge_mode');
+const BRIDGE_PLAN_MODE = bridgePlanMode(process.env.BRIDGE_PLAN);
+
+/**
+ * Runs a routing v2 bridge question with the code-only pipeline and returns the response payload, or null when no
+ * source is visible (the caller then uses the model path). Clarifying questions and answers are written by code.
+ */
+async function answerBridgeMode({ req, question, routing, routingLookups, clarifyChoice, tenantId, userId, accessScope, send }) {
+    const urls = new Set();
+    let hadToolFailure = false;
+    const callTool = async (tool, args) => {
+        const mcp = await callMcpTool(tenantId, tool, args, userId, req.headers['x-schema-readable'] === 'true', req.headers);
+        const text = mcp?.result?.content?.[0]?.text;
+        const parsed = text ? JSON.parse(text) : { error: 'empty tool result' };
+        if (isToolErrorResult(parsed)) hadToolFailure = true;
+        else extractToolUrls(parsed).forEach(u => urls.add(u));
+        return parsed;
+    };
+    const run = await runBridgeMode({ question, lookups: routingLookups, clarifyChoice, callTool,
+                                      onProgress: e => send({ type: 'progress', ...e }) });
+    if (run.kind === 'no_source') return null;
+    if (run.kind === 'clarify') {
+        console.log(`[BRIDGE_PLAN] clarify options=${run.clarify.options.length}`);
+        return { payload: { answer: run.clarify.question, clarify: run.clarify, raw_data: null, domain_signal: 'cross_domain',
+                            routing: routingSummary(routing), access_scope: accessScope }, cacheable: false, graph: null };
+    }
+    if (run.failedSources.length) hadToolFailure = true;
+    console.log(`[BRIDGE_PLAN] rule=${run.plan.rule} sources=${run.plan.sources.length} target=${run.plan.target ? 'item' : run.plan.target_domains.join(',')} bridges=${run.bridges.length} failed=${run.failedSources.length} nodes=${run.graph.nodes.length}`);
+    const auditedAnswer = auditResponseUrls(run.answer, urls);
+    const hasGraph = run.graph.nodes.length > 0;
+    return {
+        payload: {
+            answer: auditedAnswer,
+            raw_data: hasGraph ? JSON.stringify(run.graph) : null,
+            domain_signal: 'cross_domain',
+            routing: routingSummary(routing),
+            bridge_plan: { rule: run.plan.rule, sources: run.plan.sources.length, bridges: run.bridges.length },
+            access_scope: accessScope,
+        },
+        // A "no bridge" answer has no graph and is never cached (AP-22).
+        cacheable: isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph }),
+        graph: hasGraph ? run.graph : null,
+    };
+}
 const domainCoverage = createDomainCoverage({
     post: async ({ tenantId, userId, guestAnchor, terms }) => {
         const bentoBase = process.env.BENTO_SERVER_URL || 'http://localhost:8000';
@@ -3427,6 +3474,40 @@ app.post('/query', authMiddleware, async (req, res) => {
                     .catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
                 if (stream) { send({ type: 'result', ...cross.payload }); return res.end(); }
                 return res.send(cross.payload);
+            }
+            // Bridge mode without a model (design 2026-11-13 §4.2), behind BRIDGE_PLAN. Progress streamed per source.
+            if (routingV2.mode === 'bridge' && bridgePlanFor(BRIDGE_PLAN_MODE, isOwner(userId))) {
+                const stream = String(req.headers.accept || '').includes('text/event-stream');
+                let started = false;
+                const send = event => {
+                    if (!stream || isAborted) return;
+                    if (!started) {
+                        res.setHeader('Content-Type', 'text/event-stream');
+                        res.setHeader('Cache-Control', 'no-cache');
+                        res.setHeader('Connection', 'keep-alive');
+                        res.flushHeaders();
+                        started = true;
+                    }
+                    res.write(`data: ${JSON.stringify(event)}\n\n`);
+                };
+                const bridge = await answerBridgeMode({ req, question, routing: routingV2, routingLookups, clarifyChoice,
+                                                        tenantId, userId, accessScope, send });
+                if (bridge) {
+                    if (bridge.cacheable) await setCachedQueryResponse(cacheKey, bridge.payload);
+                    persistConversationTurn({ tenantId, userId, conversationId, userContent: question,
+                                              assistantContent: bridge.payload.answer, domainSignal: 'cross_domain',
+                                              graphSnapshot: bridge.graph })
+                        .catch(err => console.error('[CONV_HISTORY] persist failed (non-fatal):', err.message));
+                    if (started) { send({ type: 'result', ...bridge.payload }); return res.end(); }
+                    return res.send(bridge.payload);
+                }
+                if (started) {
+                    // No visible source after progress began (cannot happen: progress starts only with a plan). Close cleanly.
+                    send({ type: 'result', answer: NO_DATA_FOUND_ANSWER(question), raw_data: null, domain_signal: 'cross_domain',
+                           routing: routingSummary(routingV2), access_scope: accessScope });
+                    return res.end();
+                }
+                console.log('[BRIDGE_PLAN] no visible source — model path');
             }
         }
 

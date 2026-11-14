@@ -36,7 +36,8 @@ const GUEST_ALLOWED_TOOLS = new Set([
 
 // Never offered to the chat LLM, for anyone (raw query tools: AP-26).
 // bridges_between: gateway-internal, called by cross mode with node ids it already holds (2026-11-10).
-const CHAT_EXCLUDED_TOOLS = new Set(['run_cypher_query', 'bridges_between']);
+// person_work_items: gateway-internal, called by bridge mode for a named person's own items (2026-11-13).
+const CHAT_EXCLUDED_TOOLS = new Set(['run_cypher_query', 'bridges_between', 'person_work_items']);
 
 // Phase B M5: offered only when ENABLE_DOCUMENT_DOMAIN is on. Not in GUEST_ALLOWED_TOOLS (M5-9:
 // guest-link chats get no document passages until reviewed with S2-19).

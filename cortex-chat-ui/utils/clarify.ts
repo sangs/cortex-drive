@@ -1,14 +1,17 @@
 // Clarifying questions from the gateway (routing v2, cross-domain design 2026-11-09 §4.5). The gateway decides when to
-// ask and offers only people the user can see; the browser renders the options and sends the choice back. The gateway
-// re-checks the choice against the user's visible catalog, so nothing here is trusted.
-export type ClarifyOption = { label: string; entity: { kind: 'person'; name: string } | null };
-export type Clarify = { question: string; options: ClarifyOption[] };
-export type ClarifyChoice = { kind: 'person'; name?: string; names?: string[] };
+// ask and offers only people or items the user can see; the browser renders the options and sends the choice back. The
+// gateway re-checks the choice against the user's visible catalog, so nothing here is trusted.
+// Items (kind 'source'): "Which item should the connection start from?" in bridge questions (design 2026-11-13 §9 step 3).
+export type ClarifyEntity = { kind: 'person'; name: string } | { kind: 'source'; name: string; node_id: string };
+export type ClarifyOption = { label: string; entity: ClarifyEntity | null };
+export type Clarify = { question: string; options: ClarifyOption[]; kind?: string };
+export type ClarifyChoice = { kind: 'person'; name?: string; names?: string[] } | { kind: 'source'; node_id: string };
 
-/** The choice to send for an option: one person, or every listed person for "Both" (entity null). */
+/** The choice to send for an option: one item, one person, or every listed person for "Both" (entity null). */
 export function clarifyChoiceFor(option: ClarifyOption, clarify: Clarify): ClarifyChoice | null {
+    if (option.entity?.kind === 'source') return option.entity.node_id ? { kind: 'source', node_id: option.entity.node_id } : null;
     if (option.entity) return { kind: 'person', name: option.entity.name };
-    const names = clarify.options.map(o => o.entity?.name).filter((n): n is string => !!n);
+    const names = clarify.options.map(o => (o.entity?.kind === 'person' ? o.entity.name : undefined)).filter((n): n is string => !!n);
     return names.length ? { kind: 'person', names } : null;
 }
 

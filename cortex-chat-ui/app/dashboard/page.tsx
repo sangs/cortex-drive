@@ -642,11 +642,12 @@ export default function DashboardPage() {
             setLastBridge(null);
             setUndoStack([]);
 
-            // Cross-domain answers stream per-domain progress (design §4.2), shown in the same status line as bridges.
+            // Cross-domain answers stream per-domain progress (design §4.2), and bridge questions per source item (`label`),
+            // shown in the same status line as bridges.
             const result = await query(userMsg, history, forceRefresh, convId, clarifyChoice, (e) =>
                 setBridgeProgress(prev => {
                     const list = prev ? [...prev] : [];
-                    const item = { id: e.domain, name: bridgeDomainName(e.domain === 'career' ? 'professional' : e.domain, bridgeOptions),
+                    const item = { id: e.domain, name: e.label || bridgeDomainName(e.domain === 'career' ? 'professional' : e.domain, bridgeOptions),
                                    status: (e.status === 'timeout' ? 'error' : e.status) as BridgeProgressItem['status'], count: e.count };
                     const at = list.findIndex(p => p.id === e.domain);
                     if (at >= 0) list[at] = item; else list.push(item);
