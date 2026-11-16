@@ -24,9 +24,23 @@ from neo4j.exceptions import AuthError, ServiceUnavailable  # noqa: E402
 import neo4j_connection as nc  # noqa: E402
 import domain_registry as reg  # noqa: E402
 
-# A pre-2026 script with an in-code localhost credential (AP-24). Moving it to the factory would point it at the
-# production database, so it stays as is until the owner decides (tracker S2-82).
-LEGACY_EXCEPTIONS = {os.path.join("scripts", "migrate_geometric_years.py")}
+# Empty since S2-82 (2026-11-16): the last legacy script now uses the factory and the test tenant only.
+LEGACY_EXCEPTIONS: set = set()
+
+
+class LegacyYearsScriptTest(unittest.TestCase):
+    """S2-82: scripts/migrate_geometric_years.py reads and writes only the shared test tenant."""
+
+    def test_test_tenant_only(self):
+        src = open(os.path.join(ROOT, "scripts", "migrate_geometric_years.py"), encoding="utf-8").read()
+        src = src.split('"""', 2)[2]   # code only: the docstring describes the old queries
+        self.assertIn("from tests.test_tenant import TEST_TENANT_ID", src)
+        self.assertIn("create_driver()", src)
+        self.assertNotIn("password", src.lower().replace("no credentials", ""))
+        self.assertNotIn("--tenant", src, "no option to point the script at another tenant")
+        for query in ("MATCH (n {tenant_id: $tenant})", "MATCH (y:Year {tenant_id: $tenant, created_by: $tag})"):
+            self.assertIn(query, src)
+        self.assertNotIn("MATCH (y:Year) DETACH DELETE", src)
 
 
 class OneFactoryTest(unittest.TestCase):
