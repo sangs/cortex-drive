@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from domain_registry import (CONTENT_DOMAINS, ROUTING_NAME_LABELS, ROUTING_PERSON_LABELS, ROUTING_SOURCE_DOMAINS,
                              ROUTING_TOPIC_LABELS, TOPIC_ALIAS_GENERIC_SUFFIXES, TOPIC_ALIAS_MIN_CHARS,
-                             get_exclusive_labels)
+                             get_exclusive_labels, canonical_domain, external_signal)
 from schema_guard import (CONSUMPTION_RELATIONSHIPS, ENTITY_CATALOG_VERSION_KEY_PREFIX, SIMILARITY_RELATIONSHIPS,
                           SOURCE_SHORT_NAME_MIN_CHARS, SOURCE_SHORT_NAME_SEPARATORS)
 
@@ -70,9 +70,10 @@ def topic_aliases(name: str) -> list:
 
 
 def _domain_for(labels: set):
+    """The routing domain of a node, as the gateway names it (external_signal of the domain id)."""
     for domain, domain_labels in ROUTING_NAME_LABELS.items():
         if labels & set(domain_labels):
-            return domain
+            return external_signal(domain)
     if labels & set(ROUTING_PERSON_LABELS):
         return "person"
     return None
@@ -104,12 +105,12 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                 continue
             seen.add(key)
             entry = {"name": name, "domain": domain, "node_id": r["node_id"], "tier": tier}
-            node_type = next((l for l in ROUTING_NAME_LABELS.get(domain, []) if l in r["labels"]), None)
+            node_type = next((l for l in ROUTING_NAME_LABELS.get(canonical_domain(domain) or "", []) if l in r["labels"]), None)
             if node_type:
                 entry["type"] = node_type   # e.g. Project vs Degree: picks the suggested-question template (§4.5)
             if r["owner_id"]:
                 entry["owner_id"] = r["owner_id"]   # who added it: the owner's routing skips others' (2026-10-28)
-            if domain in ROUTING_SOURCE_DOMAINS:
+            if canonical_domain(domain) in ROUTING_SOURCE_DOMAINS:
                 sn = short_name(name)
                 if sn:
                     entry["short_name"] = sn
@@ -195,7 +196,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             bridge_entities[name.lower()] = list(BRIDGE_DOMAINS)
 
     # `domains` / `persons` keep the pre-S2-60 shape so an older gateway can read a newer file.
-    domains = {d: sorted({e["name"] for e in entries if e["domain"] == d}) for d in ROUTING_NAME_LABELS}
+    domains = {external_signal(d): sorted({e["name"] for e in entries if e["domain"] == external_signal(d)})
+               for d in ROUTING_NAME_LABELS}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tenant_id": tenant_id,

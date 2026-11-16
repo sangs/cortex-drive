@@ -31,6 +31,14 @@ const items = { question: 'Which item should the connection start from?', kind: 
 eq(clarifyChoiceFor(items.options[1], items), { kind: 'source', node_id: 'tl2' }, 'one item by id');
 eq(readClarify(items), items, 'item payload kept');
 eq(clarifyChoiceFor({ label: 'x', entity: { kind: 'source', name: 'x', node_id: '' } }, items), null, 'an item without an id sends nothing');
+// A kind word with several meanings (bridge design §13.3 step e): the picked kind goes back as a domain.
+const kinds = { question: 'Which kind of "article" should the connection start from?', kind: 'bridge_kind', options: [
+    { label: 'Career', entity: { kind: 'source_kind' as const, domain: 'career' } },
+    { label: 'Websites', entity: { kind: 'source_kind' as const, domain: 'website' } },
+] };
+eq(clarifyChoiceFor(kinds.options[1], kinds), { kind: 'source_kind', domain: 'website' }, 'one kind by domain');
+eq(clarifyChoiceFor({ label: 'x', entity: { kind: 'source_kind', domain: '' } }, kinds), null, 'a kind without a domain sends nothing');
+ok(readClarify(kinds) !== null, 'a kind question is a valid clarify payload');
 
 const page = readFileSync(new URL('../app/dashboard/page.tsx', import.meta.url), 'utf8');
 ok(/msg\.clarify && i === messages\.length - 1 && !isProcessing/.test(page), 'options only under the latest answer, not while busy');

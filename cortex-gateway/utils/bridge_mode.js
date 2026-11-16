@@ -12,7 +12,7 @@
  * a model. Every tool call carries the asker's identity; the MCP security clause applies on every hop (AP-30).
  */
 const LIMITS = require('../config/bridge_plan.json');
-const { planBridge, ownershipRequest, resolveBridgeSourceChoice } = require('./bridge_plan');
+const { planBridge, ownershipRequest, resolveBridgeSourceChoice, resolveBridgeKindChoice } = require('./bridge_plan');
 const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, dropGroupingBridges,
         groupingIdsFromConnectResult } = require('./bridge_section');
 
@@ -80,7 +80,8 @@ function keepBridgeParticipants(graph) {
  */
 async function runBridgeMode({ question, lookups, clarifyChoice, callTool, onProgress = () => {},
                                deadlineMs = BRIDGE_PLAN_SOURCE_DEADLINE_MS }) {
-    const opts = { resolvedSources: resolveBridgeSourceChoice(clarifyChoice, lookups) };
+    // A picked item, or a picked kind for a shared kind word (design §13.3 step e; re-checked by the planner).
+    const opts = { resolvedSources: resolveBridgeSourceChoice(clarifyChoice, lookups), kindChoice: resolveBridgeKindChoice(clarifyChoice) };
     const own = opts.resolvedSources.length ? null : ownershipRequest(question, lookups);
     if (own) {
         try {

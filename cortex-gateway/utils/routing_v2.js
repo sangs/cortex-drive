@@ -27,7 +27,8 @@ const SAFE_DEFAULT = 'career';
 const CAREER = 'career';
 const DOCUMENT = 'document';
 const CROSS_DOMAIN = 'cross_domain';
-const KNOWN_DOMAINS = ['career', 'podcast', 'website', 'document'];
+const { contentDomainIds, externalSignal } = require('./domain_ids');
+const KNOWN_DOMAINS = contentDomainIds().map(externalSignal);   // routing names, from the manifests
 const SCORE = { scope: 1.0, subject: 0.9, title: 0.9, coverage: 0.6, contentKind: 0.1 };
 
 const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -36,6 +37,8 @@ const WORK_RE = (CFG.subjectWorkWords || []).length ? new RegExp(`\\b(?:${CFG.su
 const BRIDGE_RE = [
     ...INTENT_PATTERNS.filter(p => p.domain_signal === CROSS_DOMAIN).map(p => p.pattern),
     ...(CFG.routingBridgePatternSource ? [new RegExp(CFG.routingBridgePatternSource, 'i')] : []),
+    // The planner's direction shapes also make a question a bridge: one list, two readers (held-out round 1, G5).
+    ...(CFG.bridgeDirectionPatternSources || []).map(src => new RegExp(src, 'i')),
 ];
 const DOCUMENT_STRUCTURE_RE = INTENT_PATTERNS.filter(p => p.domain_signal === DOCUMENT).map(p => p.pattern);
 const { isSmallTalk } = require('./grounding_guard');

@@ -141,6 +141,23 @@ guest link. Reference: `documents/security/user-roles-and-access-model.md` (peop
 - New hierarchy levels (groups, workspaces) are added as new Permify relations and new table
   columns, never by rewriting existing checks.
 
+### 14. Enterprise-Grade Engineering Standard — Applies to Every Change
+
+Applies to every fix, enhancement, design, feature, test, implementation and architecture discussion (owner
+instruction 2026-11-16).
+- **Enterprise grade and scalable**: design for many tenants, many domains and large graphs. State the scale
+  assumption (e.g. catalog size, nodes per tenant) and how cost grows; no per-question scans of whole catalogs where a
+  per-version index will do.
+- **No hardcoding anywhere** (extends Invariant 1): values, word lists, labels, limits and mappings live in the
+  registry / config as data. Adding a domain or source type must not need code changes.
+- **Reusable modules, no unwieldy code**: one concern per module; shared logic is extracted and reused, never copied
+  ("one list, two readers"). Do not grow `index.js` / `expert_tools.py` with new inline logic when a module fits.
+- **Alternatives are documented**: every design note lists the alternatives considered, with pros and cons, and the
+  reason for the choice.
+- **Revisit conditions are explicit**: where a choice is good only under current conditions, the note says
+  "Revisit when …" with a measurable trigger, and the item is added to the tracker's **Revisits** table
+  (`documents/cortex_master_implementation_tracker.md` §2) and tracked to completion.
+
 ---
 
 ## File Ownership Map

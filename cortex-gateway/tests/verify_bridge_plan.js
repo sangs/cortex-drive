@@ -116,14 +116,40 @@ const names = p => p.sources.map(s => s.name);
 
 // ── topic_words: a paraphrase resolves silently when 1..cap items match, otherwise one question ─────────
 {
-    const p = planBridge('How did her platform engineering talk influence Cortex-Drive?', owner);
+    const p = planBridge('How did her platform engineering ideas influence Cortex-Drive?', owner);
     eq(p.kind, 'plan'); eq(p.rule, RULE.topicWords);
     eq(ids(p), ['tl1'], 'the item matching the most words; "Data Engineering Podcast" matches fewer');
+    // "talk" is a thought-leadership kind word (round 1, G4): the kind rule, narrowed by the same words, same item.
+    const talk = planBridge('How did her platform engineering talk influence Cortex-Drive?', owner);
+    eq([talk.rule, ids(talk)], [RULE.kind, ['tl1']]);
     const none = planBridge('How did it influence that?', owner);
     eq(none.kind, 'clarify'); eq(none.clarify.question, CLARIFY_QUESTION); eq(none.clarify.kind, 'bridge_source');
     ok(none.clarify.options.length > 0 && none.clarify.options.length <= BRIDGE_PLAN_CLARIFY_MAX_OPTIONS);
     ok(none.clarify.options.every(o => o.entity.kind === 'source' && o.entity.node_id && o.label === o.entity.name));
     ok(!('sources' in none), 'a clarifying question carries no guessed sources');
+}
+
+// ── held-out round 1 mechanisms (design §12): synthetic names, not the held-out wording ─────────────────
+{
+    // G1: a kind word plus a short title picks that item, not every item of the kind.
+    const g1 = planBridge('How did the DuckLake episode influence Cortex-Drive?', owner);
+    eq([g1.rule, ids(g1)], [RULE.kind, ['e2']]);
+    const all = planBridge('How did the episodes influence Cortex-Drive?', owner);
+    eq(ids(all).sort(), ['e1', 'e2'], 'no narrowing word → every item of the kind, as before');
+    // G2: a kind word plus a short title on the to-side is the target item; a tie keeps the domains.
+    const g2 = planBridge('How does the Graph database page connect to the KuzuDB episode?', owner);
+    eq([g2.target && g2.target.node_id, g2.target_domains], ['e1', []]);
+    const tie = planBridge('How does the Graph database page connect to the Lakehouse or Graphs episode?', owner);
+    eq([tie.target, tie.target_domains], [null, ['podcast']], 'two episodes match one word each → domains');
+    // G3: a pointing word before a kind word, nothing else: one question among that kind.
+    const g3 = planBridge('How did that episode influence Cortex-Drive?', owner);
+    eq(g3.kind, 'clarify'); eq(g3.clarify.options.map(o => o.entity.node_id).sort(), ['e1', 'e2']);
+    const pointedNamed = planBridge('How did that KuzuDB episode influence Cortex-Drive?', owner);
+    eq(ids(pointedNamed), ['e1'], 'a pointing word with a matching word still picks the item');
+    // G5: routing reads the planner's direction shapes ("connected with" is a bridge).
+    const { routeQuestion } = require('../utils/routing_v2.js');
+    routeQuestion('How is the Graph database page connected with the podcast episodes?', owner, { coverage: async () => ({}) })
+        .then(r => { assert.strictEqual(r.mode, 'bridge', 'connected with → bridge'); });
 }
 
 // ── chosen: the answer to the clarifying question ──────────────────────────────────────────────────────

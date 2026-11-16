@@ -66,3 +66,7 @@ tests/gateway/test_multiturn_orchestration.sh
 /tmp/query_response.json
 not_used/
 cortex-gateway/gateway.log
+
+# Backups made by the local-dev-runbook Neo4j step 4 (hold secrets; never commit)
+.env.bak
+.env.*.bak

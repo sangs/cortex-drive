@@ -13,6 +13,7 @@
  *
  * Every dependency is passed in (tool calls, filters, summaries), so the module is tested without a network.
  */
+const { canonicalDomain } = require('./domain_ids');   // routing name → search domain id
 const RRF_K = 60;
 // Per-domain deadline. The design's ~1.2 s assumed a direct query; a search through MCP takes a few seconds, so this
 // starts at 6 s and is to be tuned from production measurements (each domain is reported as it finishes).
@@ -20,7 +21,6 @@ const CROSS_DOMAIN_SEARCH_DEADLINE_MS = Number(process.env.CROSS_DOMAIN_SEARCH_D
 const CROSS_DOMAIN_LLM_QUOTA = 5;          // results per domain in the answer's evidence
 const CROSS_DOMAIN_GRAPH_CAP = 40;         // nodes per domain drawn on the graph
 const CROSS_DOMAIN_ANCHORS_PER_DOMAIN = 2; // top results per domain used as bridge endpoints
-const SEARCH_INTENT = { career: 'professional', podcast: 'podcast', website: 'website', document: 'document' };
 const DISPLAY = { career: 'Career', podcast: 'Podcast', website: 'Website', document: 'Document' };
 
 const withDeadline = (promise, ms) => {
@@ -66,7 +66,7 @@ async function runCrossMode({ domains, terms, weights = {}, callTool, filter = (
         onProgress({ domain, status: 'searching', count: 0 });
         try {
             const parsed = await withDeadline(callTool('search_enterprise_graph',
-                { keyword, domain_intent: SEARCH_INTENT[domain] || domain, scoped_expansion: true }), deadlineMs);
+                { keyword, domain_intent: canonicalDomain(domain) || domain, scoped_expansion: true }), deadlineMs);
             if (!parsed || parsed.error) {
                 onProgress({ domain, status: 'error', count: 0 });
                 return { domain, status: 'error', parsed: { nodes: [], links: [] } };
@@ -164,5 +164,5 @@ function withConnectionsSection(answer, bridges) {
     return `${body}\n\n${CONNECTIONS_HEADING}\n${lines.join('\n')}\n\n${SESSION_ONLY_NOTE}`;
 }
 
-module.exports = { runCrossMode, crossEvidenceText, withConnectionsSection, CONNECTIONS_HEADING, SESSION_ONLY_NOTE, REQUESTED_TARGET_SUFFIX, rrfMerge, rankForTopics, SEARCH_INTENT, DISPLAY,
+module.exports = { runCrossMode, crossEvidenceText, withConnectionsSection, CONNECTIONS_HEADING, SESSION_ONLY_NOTE, REQUESTED_TARGET_SUFFIX, rrfMerge, rankForTopics, DISPLAY,
                    CROSS_DOMAIN_LLM_QUOTA, CROSS_DOMAIN_ANCHORS_PER_DOMAIN, RRF_K };

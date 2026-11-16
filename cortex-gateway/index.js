@@ -10,24 +10,16 @@ const { DOCUMENT_SEARCH_TOOL, buildDocumentEvidenceContent, documentEvidenceUrls
 
 // Inclusion-based domain manifests (AP-3: single source of truth in config/domain_manifests.json).
 const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config', 'domain_manifests.json'), 'utf-8'));
-const DOMAIN_ALLOWED_TYPES = {
-    podcast: new Set(_domainManifestsRaw.podcast.node_types),
-    career: new Set(_domainManifestsRaw.career.node_types),
-    website: new Set(_domainManifestsRaw.website.node_types),
-    document: new Set(_domainManifestsRaw.document.node_types), // Phase B M5 (reached only with ENABLE_DOCUMENT_DOMAIN)
-};
+// Domain ids and aliases (domain-id-aliases-design-2026-11-16.md): the mirror is keyed by domain id ("professional");
+// the gateway routes with each domain's external signal ("career"). No hand-written id↔alias tables.
+const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/domain_ids');
+const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
+// Node types per routing domain, keyed by the gateway's signal (document reached only with ENABLE_DOCUMENT_DOMAIN).
+const DOMAIN_ALLOWED_TYPES = Object.fromEntries(contentDomainIds()
+    .map(id => [externalSignal(id), new Set(_domainManifestsRaw[id].node_types)]));
 
-// search_enterprise_graph's own domain_intent enum uses Python/domain_registry.py naming
-// ("professional"), which differs from classifyDomain()'s domainSignal ("career") — the
-// pre-existing mismatch website-domain-cross-domain-routing-design-2026-08-24.md §2.1 flagged
-// as "out of scope to fix". Needed here specifically to key DOMAIN_ALLOWED_TYPES (JS-side,
-// "career") off a tool call's actual domain_intent argument (Python-side, "professional").
-const DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY = { professional: 'career', podcast: 'podcast', website: 'website', document: 'document' };
-
-// The reverse direction (AP-25): a confident single-domain classification → the
-// search_enterprise_graph domain_intent that enforces it at the Cypher level. cross_domain is
-// deliberately absent — cross-domain turns are meant to search more than one domain.
-const DOMAIN_SIGNAL_TO_SEARCH_INTENT = { podcast: 'podcast', career: 'professional', website: 'website', document: 'document' };
+// A confident single-domain classification → the search_enterprise_graph domain_intent that enforces it at the Cypher
+// level (AP-25): canonicalDomain(domainSignal). cross_domain is not a domain, so it maps to nothing.
 
 // Invariant 11 wording for a turn where data tools ran but none returned anything (AP-25).
 const NO_DATA_FOUND_ANSWER = (question) => `No data found in Cortex-Drive for "${String(question).trim()}".`;
@@ -513,7 +505,7 @@ function isCacheableResponse({ auditedAnswer, hadToolFailure, hasGraph }) {
  */
 function enforcedSearchIntent(toolName, toolArgs, { domainSignal, domainConfident, bridgeContext }) {
     if (toolName !== 'search_enterprise_graph' || !domainConfident || bridgeContext) return null;
-    const intent = DOMAIN_SIGNAL_TO_SEARCH_INTENT[domainSignal];
+    const intent = canonicalDomain(domainSignal);
     if (!intent) return null;
     return (!toolArgs.domain_intent || toolArgs.domain_intent === 'all') ? intent : null;
 }
@@ -688,7 +680,7 @@ const shareLinks = createShareLinks({
 });
 
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
-const { runCrossMode, crossEvidenceText, withConnectionsSection, SEARCH_INTENT: CROSS_SEARCH_INTENT } = require('./utils/cross_mode');
+const { runCrossMode, crossEvidenceText, withConnectionsSection } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
 // Bridge endpoints in cross mode: types that belong to one domain only (from the manifests), minus structural ones.
 const CROSS_NON_ANCHOR_TYPES = new Set(['Category', 'Year', 'Tool', 'PreparatoryNote', 'Chunk', 'Source', 'SourceSnapshot', 'ContentBlock']);
@@ -728,7 +720,7 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
         answer = NO_DATA_FOUND_ANSWER(question);
     } else {
         const summarise = (domain, nodes) => buildLlmToolContent('search_enterprise_graph',
-            JSON.stringify({ nodes, links: [] }), { domain_intent: CROSS_SEARCH_INTENT[domain] || domain });
+            JSON.stringify({ nodes, links: [] }), { domain_intent: canonicalDomain(domain) || domain });
         const evidence = crossEvidenceText(result, summarise);
         const system = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req))
             + '\n\n' + gatewayCrossDomainAnswerPrompt;
@@ -799,6 +791,8 @@ const BRIDGE_PLAN_MODE = bridgePlanMode(process.env.BRIDGE_PLAN);
  * source is visible (the caller then uses the model path). Clarifying questions and answers are written by code.
  */
 async function answerBridgeMode({ req, question, routing, routingLookups, clarifyChoice, tenantId, userId, accessScope, send }) {
+    const startedAt = Date.now();
+    const userType = req.headers['x-user-type'];   // gateway-assigned (AP-23); logged as a role, never an id
     const urls = new Set();
     let hadToolFailure = false;
     const callTool = async (tool, args) => {
@@ -813,12 +807,18 @@ async function answerBridgeMode({ req, question, routing, routingLookups, clarif
                                       onProgress: e => send({ type: 'progress', ...e }) });
     if (run.kind === 'no_source') return null;
     if (run.kind === 'clarify') {
-        console.log(`[BRIDGE_PLAN] clarify options=${run.clarify.options.length}`);
+        logEvent(LOG_EVENTS.BRIDGE_PLAN_CLARIFY, { clarify_kind: run.clarify.kind, options: run.clarify.options.length,
+                                                   kind_step: run.kind_step, ms: Date.now() - startedAt, user_type: userType });
         return { payload: { answer: run.clarify.question, clarify: run.clarify, raw_data: null, domain_signal: 'cross_domain',
                             routing: routingSummary(routing), access_scope: accessScope }, cacheable: false, graph: null };
     }
     if (run.failedSources.length) hadToolFailure = true;
-    console.log(`[BRIDGE_PLAN] rule=${run.plan.rule} sources=${run.plan.sources.length} target=${run.plan.target ? 'item' : run.plan.target_domains.join(',')} bridges=${run.bridges.length} failed=${run.failedSources.length} nodes=${run.graph.nodes.length}`);
+    logEvent(LOG_EVENTS.BRIDGE_PLAN_DECIDED, {
+        rule: run.plan.rule, kind_step: run.plan.kind_step || undefined,
+        kind_domains: run.plan.kind_step ? [...new Set(run.plan.sources.map(s => s.domain))] : undefined,
+        source_count: run.plan.sources.length, target: run.plan.target ? 'item' : 'domains',
+        target_domains: run.plan.target ? undefined : run.plan.target_domains, bridges: run.bridges.length,
+        failed: run.failedSources.length, nodes: run.graph.nodes.length, ms: Date.now() - startedAt, user_type: userType });
     const auditedAnswer = auditResponseUrls(run.answer, urls);
     const hasGraph = run.graph.nodes.length > 0;
     return {
@@ -3507,7 +3507,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                            routing: routingSummary(routingV2), access_scope: accessScope });
                     return res.end();
                 }
-                console.log('[BRIDGE_PLAN] no visible source — model path');
+                logEvent(LOG_EVENTS.BRIDGE_PLAN_MODEL_FALLBACK, { reason: 'no_visible_source', user_type: req.headers['x-user-type'] });
             }
         }
 
@@ -3745,7 +3745,7 @@ app.post('/query', authMiddleware, async (req, res) => {
                             // filtering each call's own fresh nodes before it runs is sufficient and
                             // correctly generalizes to N-way multi-domain accumulation.
                             const _domainIntentKey = (toolName === 'search_enterprise_graph' && toolArgs.domain_intent && toolArgs.domain_intent !== 'all')
-                                ? (DOMAIN_INTENT_TO_ALLOWED_TYPES_KEY[toolArgs.domain_intent] || toolArgs.domain_intent)
+                                ? (externalSignal(toolArgs.domain_intent) || toolArgs.domain_intent)
                                 : domainSignal;
                             const _allowedForDomain = DOMAIN_ALLOWED_TYPES[_domainIntentKey];
                             if (_allowedForDomain && parsed.nodes) {

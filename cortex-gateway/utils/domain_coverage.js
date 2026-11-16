@@ -5,7 +5,7 @@
  * maps content domains to the classifier's names. Returns null when the check is unavailable or slow, so routing
  * never mistakes an outage for "no data".
  */
-const TO_GATEWAY = { professional: 'career', podcast: 'podcast', website: 'website', document: 'document' };
+const { externalSignal } = require('./domain_ids');   // registry id → the gateway's routing name
 const COVERAGE_TIMEOUT_MS = Number(process.env.ROUTING_COVERAGE_TIMEOUT_MS || 1500);
 
 function createDomainCoverage({ post, timeoutMs = COVERAGE_TIMEOUT_MS, log = console }) {
@@ -19,7 +19,8 @@ function createDomainCoverage({ post, timeoutMs = COVERAGE_TIMEOUT_MS, log = con
             ]);
             const out = {};
             for (const [d, hit] of Object.entries((body && body.coverage) || {})) {
-                if (TO_GATEWAY[d]) out[TO_GATEWAY[d]] = !!hit;
+                const signal = externalSignal(d);
+                if (signal) out[signal] = !!hit;
             }
             return out;
         } catch (e) {
@@ -40,4 +41,4 @@ function resolveClarifyChoice(choice, lookups) {
     return ok.length === names.length ? ok : [];
 }
 
-module.exports = { createDomainCoverage, resolveClarifyChoice, TO_GATEWAY };
+module.exports = { createDomainCoverage, resolveClarifyChoice };

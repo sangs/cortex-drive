@@ -94,6 +94,9 @@ module.exports = {
     // from-side and a to-side, as named groups. Category (a) structural patterns only, never topic words. Used ONLY
     // to tell the two sides apart in a question routing already classified as a bridge; they route nothing.
     // First match wins. Evidence: the bridge questions of the labelled routing set (tests/routing_eval, rule G6).
+    // Pointing words (held-out round 1, G3): directly before a bridge-source kind word ("that episode") with no name,
+    // person or matching word, the planner asks which item rather than searching every item of the kind.
+    bridgeDeicticWords: ['this', 'that', 'these', 'those'],
     bridgeDirectionPatternSources: [
         '\\btrace\\b.*?\\bfrom\\s+(?<from>.+?)\\s+to\\s+(?<to>.+)$',
         '\\brelation(?:ship)?\\s+between\\s+(?<from>.+?)\\s+and\\s+(?<to>.+)$',

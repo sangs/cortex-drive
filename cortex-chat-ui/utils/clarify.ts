@@ -2,14 +2,18 @@
 // ask and offers only people or items the user can see; the browser renders the options and sends the choice back. The
 // gateway re-checks the choice against the user's visible catalog, so nothing here is trusted.
 // Items (kind 'source'): "Which item should the connection start from?" in bridge questions (design 2026-11-13 §9 step 3).
-export type ClarifyEntity = { kind: 'person'; name: string } | { kind: 'source'; name: string; node_id: string };
+// Kinds (kind 'source_kind'): a kind word with several meanings ("article"), "Which kind … ?" (design 2026-11-13 §13.3).
+export type ClarifyEntity = { kind: 'person'; name: string } | { kind: 'source'; name: string; node_id: string }
+    | { kind: 'source_kind'; domain: string };
 export type ClarifyOption = { label: string; entity: ClarifyEntity | null };
 export type Clarify = { question: string; options: ClarifyOption[]; kind?: string };
-export type ClarifyChoice = { kind: 'person'; name?: string; names?: string[] } | { kind: 'source'; node_id: string };
+export type ClarifyChoice = { kind: 'person'; name?: string; names?: string[] } | { kind: 'source'; node_id: string }
+    | { kind: 'source_kind'; domain: string };
 
 /** The choice to send for an option: one item, one person, or every listed person for "Both" (entity null). */
 export function clarifyChoiceFor(option: ClarifyOption, clarify: Clarify): ClarifyChoice | null {
     if (option.entity?.kind === 'source') return option.entity.node_id ? { kind: 'source', node_id: option.entity.node_id } : null;
+    if (option.entity?.kind === 'source_kind') return option.entity.domain ? { kind: 'source_kind', domain: option.entity.domain } : null;
     if (option.entity) return { kind: 'person', name: option.entity.name };
     const names = clarify.options.map(o => (o.entity?.kind === 'person' ? o.entity.name : undefined)).filter((n): n is string => !!n);
     return names.length ? { kind: 'person', names } : null;

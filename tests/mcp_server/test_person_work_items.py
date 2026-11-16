@@ -35,7 +35,7 @@ class PersonWorkItemsTest(unittest.TestCase):
         t = _tools(records=[{"node_id": "tl1", "name": "Talk"}])
         with mock.patch.dict(os.environ, {"OWNER_USER_ID": "user_owner"}):
             out = json.loads(t.person_work_items(["p1"], ["ThoughtLeadership", "Salary"]))
-        self.assertEqual(out["items"], [{"node_id": "tl1", "name": "Talk"}])
+        self.assertEqual(out["items"], [{"node_id": "tl1", "name": "Talk", "roles": ["owner"]}])
         self.assertFalse(out["truncated"])
         q, kw = t.driver.execute_query.call_args[0][0], t.driver.execute_query.call_args[1]
         used = set(re.findall(r"\$(\w+)", q))
@@ -59,6 +59,18 @@ class PersonWorkItemsTest(unittest.TestCase):
         t = _tools()
         t.driver.execute_query.side_effect = RuntimeError("down")
         self.assertIn("error", json.loads(t.person_work_items(["p1"], ["Project"])))
+
+    def test_roles_host_owns_guest_is_expert(self):
+        """Owner decision 2026-11-16 (held-out round 1, G6): host → owner of the podcast; guest → subject-matter expert."""
+        t = _tools(records=[{"node_id": "pod1", "name": "Show", "rel_types": ["HOSTS"]},
+                            {"node_id": "e1", "name": "Ep", "rel_types": ["GUEST_ON"]},
+                            {"node_id": "tl1", "name": "Talk", "rel_types": ["AUTHORED"]}])
+        with mock.patch.dict(os.environ, {"OWNER_USER_ID": "user_owner"}):
+            out = json.loads(t.person_work_items(["p1"], ["Podcast", "Episode", "ThoughtLeadership"]))
+        self.assertEqual({i["node_id"]: i["roles"] for i in out["items"]},
+                         {"pod1": [reg.PERSON_WORK_ROLE_OWNER], "e1": [reg.PERSON_WORK_ROLE_EXPERT],
+                          "tl1": [reg.PERSON_WORK_ROLE_OWNER]})
+        self.assertEqual(len(out["items"]), 3, "the role is reported, it does not filter")
 
     def test_kind_labels_are_the_manifest_union(self):
         labels = reg.get_bridge_source_kind_labels()

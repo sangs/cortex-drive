@@ -20,9 +20,10 @@
       "podcast": [
         "Podcast"
       ]
-    }
+    },
+    "display_name": "Podcast"
   },
-  "career": {
+  "professional": {
     "node_types": [
       "Project",
       "Purpose",
@@ -82,8 +83,28 @@
       ],
       "open source": [
         "OpenSource"
+      ],
+      "talk": [
+        "ThoughtLeadership"
+      ],
+      "keynote": [
+        "ThoughtLeadership"
+      ],
+      "presentation": [
+        "ThoughtLeadership"
+      ],
+      "article": [
+        "ThoughtLeadership"
+      ],
+      "publication": [
+        "ThoughtLeadership"
       ]
-    }
+    },
+    "aliases": [
+      "career"
+    ],
+    "external_signal": "career",
+    "display_name": "Career"
   },
   "website": {
     "node_types": [
@@ -96,8 +117,12 @@
       ],
       "website": [
         "WebsiteSource"
+      ],
+      "article": [
+        "WebsiteSource"
       ]
-    }
+    },
+    "display_name": "Websites"
   },
   "document": {
     "node_types": [
@@ -117,7 +142,11 @@
       ],
       "paper": [
         "DocumentSource"
+      ],
+      "article": [
+        "DocumentSource"
       ]
-    }
+    },
+    "display_name": "Documents"
   }
 }

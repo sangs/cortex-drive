@@ -9,6 +9,7 @@ No network.
     .venv/bin/python -m unittest tests.mcp_server.test_domain_registry_contract -v
 """
 import json
+import re
 import os
 import sys
 import unittest
@@ -41,29 +42,33 @@ class BridgeSourceKindsTest(unittest.TestCase):
     PLAN = json.load(open(os.path.join(ROOT, "cortex-gateway", "config", "bridge_plan.json")))
 
     def test_gateway_mirror(self):
-        for domain, signal in reg.GATEWAY_DOMAIN_SIGNALS.items():
-            self.assertEqual(GATEWAY[signal].get("bridge_source_kinds", {}), reg.get_bridge_source_kinds(domain), domain)
+        self.assertEqual(sorted(GATEWAY), sorted(reg.CONTENT_DOMAINS), "the mirror is keyed by domain id")
+        for domain in reg.CONTENT_DOMAINS:
+            self.assertEqual(GATEWAY[domain].get("bridge_source_kinds", {}), reg.get_bridge_source_kinds(domain), domain)
 
     def test_every_content_domain_has_kinds(self):
-        self.assertEqual(sorted(reg.GATEWAY_DOMAIN_SIGNALS), sorted(reg.CONTENT_DOMAINS))
         for domain in reg.CONTENT_DOMAINS:
             self.assertTrue(reg.get_bridge_source_kinds(domain), domain)
 
     def test_labels_belong_to_the_domain_and_are_in_the_routing_catalog(self):
-        for domain, signal in reg.GATEWAY_DOMAIN_SIGNALS.items():
+        for domain in reg.CONTENT_DOMAINS:
             for word, labels in reg.get_bridge_source_kinds(domain).items():
                 self.assertEqual(word, word.lower().strip(), word)
                 self.assertTrue(labels, word)
                 for label in labels:
                     self.assertIn(label, reg.DOMAIN_MANIFESTS[domain]["node_set"], f"{domain}:{word}")
-                    self.assertIn(label, reg.ROUTING_NAME_LABELS[signal], f"{domain}:{word}")
+                    self.assertIn(label, reg.ROUTING_NAME_LABELS[domain], f"{domain}:{word}")
 
-    def test_a_kind_word_names_one_domain(self):
-        seen = {}
-        for domain in reg.GATEWAY_DOMAIN_SIGNALS:
+    def test_shared_kind_words_are_computed_not_listed(self):
+        """Design §13.3: a word may belong to several domains; the ambiguous ones are computed (printed, not gated)."""
+        meanings = {}
+        for domain in reg.CONTENT_DOMAINS:
             for word in reg.get_bridge_source_kinds(domain):
-                self.assertNotIn(word, seen, f"{word}: {seen.get(word)} and {domain}")
-                seen[word] = domain
+                meanings.setdefault(word, []).append(domain)
+        shared = {w: ds for w, ds in meanings.items() if len(ds) > 1}
+        print(f"\n  kind words with several meanings: {shared}")
+        self.assertIn("article", shared)
+        self.assertFalse(hasattr(reg, "AMBIGUOUS_KIND_WORDS"), "never a hand-kept list of ambiguous words")
 
     def test_existing_source_labels_are_covered(self):
         # `bridge_source_labels` (the model path) stays until the switch; its labels must be reachable by a kind word.
@@ -76,6 +81,53 @@ class BridgeSourceKindsTest(unittest.TestCase):
         self.assertEqual(self.PLAN["source_deadline_ms"], reg.BRIDGE_PLAN_SOURCE_DEADLINE_MS)
         self.assertEqual(self.PLAN["clarify_max_options"], reg.BRIDGE_PLAN_CLARIFY_MAX_OPTIONS)
         self.assertGreater(reg.BRIDGE_PLAN_MAX_SOURCES, 0)
+
+
+class DomainIdAliasTest(unittest.TestCase):
+    """domain-id-aliases-design-2026-11-16.md §5: one id per domain, aliases as data, no hand-written tables."""
+
+    def test_aliases_are_unique_and_never_another_id(self):
+        seen = {}
+        for domain, m in reg.DOMAIN_MANIFESTS.items():
+            for alias in m.get("aliases", []):
+                self.assertNotIn(alias, reg.DOMAIN_MANIFESTS, f"{alias} is a domain id")
+                self.assertNotIn(alias, seen, f"{alias}: {seen.get(alias)} and {domain}")
+                seen[alias] = domain
+
+    def test_canonical_round_trip(self):
+        for domain, m in reg.DOMAIN_MANIFESTS.items():
+            self.assertEqual(reg.canonical_domain(domain), domain)
+            self.assertEqual(reg.canonical_domain(domain.upper()), domain)
+            for alias in m.get("aliases", []):
+                self.assertEqual(reg.canonical_domain(alias), domain)
+        self.assertEqual(reg.canonical_domain("career"), "professional")
+        self.assertIsNone(reg.canonical_domain("no-such-domain"))
+        self.assertIsNone(reg.canonical_domain(None))
+
+    def test_external_signal(self):
+        self.assertEqual(reg.external_signal("professional"), "career")
+        self.assertEqual(reg.external_signal("career"), "career")
+        self.assertEqual(reg.external_signal("podcast"), "podcast")
+
+    def test_lookups_accept_an_alias(self):
+        self.assertEqual(reg.get_authorized_labels("career"), reg.get_authorized_labels("professional"))
+        self.assertEqual(reg.get_domain_display_name("career"), "Career")
+        self.assertEqual(reg.resolve_bridge_target_domains(["career"], []), ["professional"])
+
+    def test_mirror_carries_aliases_and_signal(self):
+        for domain in reg.CONTENT_DOMAINS:
+            m = reg.DOMAIN_MANIFESTS[domain]
+            self.assertEqual(GATEWAY[domain].get("aliases", []), m.get("aliases", []), domain)
+            self.assertEqual(GATEWAY[domain].get("external_signal"), m.get("external_signal"), domain)
+            self.assertEqual(GATEWAY[domain].get("display_name"), m.get("display_name"), domain)
+
+    def test_no_hand_written_id_alias_tables(self):
+        import glob
+        pattern = re.compile(r"""['"]?professional['"]?\s*:\s*['"]career['"]|['"]?career['"]?\s*:\s*['"]professional['"]""")
+        files = glob.glob(os.path.join(ROOT, "src", "mcp_server", "*.py")) + \
+            glob.glob(os.path.join(ROOT, "cortex-gateway", "*.js")) + glob.glob(os.path.join(ROOT, "cortex-gateway", "utils", "*.js"))
+        offenders = [f for f in files if pattern.search(open(f, encoding="utf-8").read())]
+        self.assertEqual(offenders, [], "use canonical_domain / external_signal (domain_ids.js) instead")
 
 
 class UniversalDiscoveryTest(unittest.TestCase):

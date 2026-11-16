@@ -206,6 +206,12 @@ BRIDGE_PLAN_MAX_SOURCES = 6            # searches run for one question; more can
 BRIDGE_PLAN_SOURCE_DEADLINE_MS = 20000 # one slow source must not hold the answer
 BRIDGE_PLAN_CLARIFY_MAX_OPTIONS = 5    # items offered by "Which item should the connection start from?"
 BRIDGE_PLAN_WORK_ITEMS_MAX = 500      # a person's own items read for "her thought leadership" (person_work_items)
+# A person's role on an item they are directly linked to (held-out round 1, G6; owner decision 2026-11-16): the host
+# owns the podcast; a guest is the episode's subject-matter expert. Any other direct work link is ownership.
+# A possessive ("Ryan Blue's episode") covers every role; the role is reported, it does not filter.
+PERSON_WORK_ROLE_OWNER = "owner"
+PERSON_WORK_ROLE_EXPERT = "subject_matter_expert"
+PERSON_WORK_ROLES = {"HOSTS": PERSON_WORK_ROLE_OWNER, "GUEST_ON": PERSON_WORK_ROLE_EXPERT}
 
 # Minimum number of DISTINCT query keywords a connect_knowledge_on_demand path must match to be
 # tiered "confirmed" rather than "structural" (2026-09-11). Found live, same investigation as
@@ -280,7 +286,7 @@ def get_visual_deny_list(domain: str = None) -> list:
     """Labels excluded from the visual graph: the global bridge labels, plus the domain's own
     `visual_deny_labels` (M5-8: ContentBlock is hidden for `document` only — its text goes to the chat
     with citations)."""
-    manifest = DOMAIN_MANIFESTS.get((domain or "").lower()) if domain else None
+    manifest = DOMAIN_MANIFESTS.get(canonical_domain(domain) or "") if domain else None
     return VISUAL_DENY_LIST + (manifest.get("visual_deny_labels", []) if manifest else [])
 
 
@@ -292,6 +298,10 @@ def _in_universal_discovery(manifest: dict) -> bool:
 DOMAIN_MANIFESTS = {
     "professional": {
         "persona": "professional",
+        # Domain id `professional` is authoritative; `career` is its alias, and the value the gateway sends to the browser
+        # (domain-id-aliases-design-2026-11-16.md). Resolve names with canonical_domain() / external_signal().
+        "aliases": ["career"],
+        "external_signal": "career",
         "ui_hints": {
             "impact_label": "Professional Impact",
             "tech_label": "Core Stack",
@@ -319,6 +329,15 @@ DOMAIN_MANIFESTS = {
             "project": ["Project"],
             "certification": ["Certification"],
             "open source": ["OpenSource"],
+            # Spoken or written thought leadership (held-out round 1, G4, 2026-11-16).
+            "talk": ["ThoughtLeadership"],
+            "keynote": ["ThoughtLeadership"],
+            "presentation": ["ThoughtLeadership"],
+            # Written thought leadership (the InfoQ item is ThoughtLeadership:Publication). "article" is shared with
+            # website and document: the planner settles it from the question (bridge design §13.3), no list of
+            # ambiguous words is kept.
+            "article": ["ThoughtLeadership"],
+            "publication": ["ThoughtLeadership"],
         },
         "bridge_target": True,
         "display_name": "Career",
@@ -373,7 +392,7 @@ DOMAIN_MANIFESTS = {
         "node_set": ["WebsiteSource", "SourceSnapshot"],
         "anchor_labels": ["WebsiteSource"],
         "backbone_labels": ["WebsiteSource"],
-        "bridge_source_kinds": {"page": ["WebsiteSource"], "website": ["WebsiteSource"]},
+        "bridge_source_kinds": {"page": ["WebsiteSource"], "website": ["WebsiteSource"], "article": ["WebsiteSource"]},
         "bridge_target": True,
         "display_name": "Websites",
         "realm": "INTERNAL"
@@ -410,7 +429,7 @@ DOMAIN_MANIFESTS = {
         "node_set": list(DOCUMENT_GRAPH_NODES),
         "anchor_labels": ["DocumentSource", "Section"],
         "backbone_labels": ["DocumentSource"],
-        "bridge_source_kinds": {"document": ["DocumentSource"], "paper": ["DocumentSource"]},
+        "bridge_source_kinds": {"document": ["DocumentSource"], "paper": ["DocumentSource"], "article": ["DocumentSource"]},
         "visual_deny_labels": ["ContentBlock"],
         "universal_discovery": False,
         "bridge_target": True,
@@ -431,14 +450,14 @@ def get_backbone_labels(domain: str = "all") -> list:
             if _in_universal_discovery(manifest):
                 backbone.update(manifest.get("backbone_labels", []))
         return list(backbone)
-    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    manifest = DOMAIN_MANIFESTS.get(canonical_domain(domain) or "")
     return manifest.get("backbone_labels", []) if manifest else []
 
 def get_authorized_labels(domain: str) -> list:
     """Return the list of labels authorized for the given domain context."""
     if domain.lower() == "all":
         return None
-    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    manifest = DOMAIN_MANIFESTS.get(canonical_domain(domain) or "")
     return manifest["node_set"] if manifest else []
 
 def get_anchor_labels(domain: str) -> list:
@@ -450,7 +469,7 @@ def get_anchor_labels(domain: str) -> list:
             if _in_universal_discovery(manifest):
                 anchors.update(manifest.get("anchor_labels", []))
         return list(anchors)
-    manifest = DOMAIN_MANIFESTS.get(domain.lower())
+    manifest = DOMAIN_MANIFESTS.get(canonical_domain(domain) or "")
     return manifest.get("anchor_labels", []) if manifest else []
 
 def get_manifest_for_label(label: str) -> dict:
@@ -495,9 +514,10 @@ _NOT_PROVENANCE_LABELS = set(SEED_BUILTIN_VOCABULARY_LABELS) | {"Category"}
 # Routing name catalog (S2-60): the labels whose `name` routes a question to a domain by naming it (the
 # gateway classifier's Phase E). Not get_exclusive_labels(): that returns nothing for career and includes
 # passage-level labels (Chunk, Section, ContentBlock) nobody names. Shared labels (Concept, Technology,
-# Topic, …) are excluded — they appear in several domains. Keys are gateway domain signals.
+# Topic, …) are excluded — they appear in several domains. Keys are domain ids; the catalog writes each entry's domain
+# as external_signal(id), the name the gateway routes with.
 ROUTING_NAME_LABELS = {
-    "career": ["Company", "Role", "Project", "Startup", "Hackathon", "ThoughtLeadership",
+    "professional": ["Company", "Role", "Project", "Startup", "Hackathon", "ThoughtLeadership",
                "Degree", "Institution", "Certification", "OpenSource", "Team"],
     "podcast": ["Episode", "Podcast"],
     "website": ["WebsiteSource"],
@@ -555,8 +575,35 @@ def is_domain_enabled(domain: str) -> bool:
     return DOMAIN_FEATURE_FLAGS.get(domain, True)
 
 
-# Registry domain → the gateway's domain signal (the gateway says "career" for the professional domain).
-GATEWAY_DOMAIN_SIGNALS = {"professional": "career", "podcast": "podcast", "website": "website", "document": "document"}
+# Domain ids and aliases (domain-id-aliases-design-2026-11-16.md): one id per domain (the DOMAIN_MANIFESTS key); aliases
+# and the gateway's external signal are manifest data. No hand-written id↔alias tables anywhere else.
+def _build_domain_names() -> dict:
+    names = {}
+    for domain_id, manifest in DOMAIN_MANIFESTS.items():
+        for name in [domain_id, *manifest.get("aliases", [])]:
+            key = name.strip().lower()
+            if names.get(key, domain_id) != domain_id:
+                raise ValueError(f"domain name {name!r} used by {names[key]!r} and {domain_id!r}")
+            names[key] = domain_id
+    return names
+
+
+_DOMAIN_NAMES = _build_domain_names()
+
+
+def canonical_domain(name):
+    """A domain id or alias → the domain id; None when unknown (never a guess)."""
+    return _DOMAIN_NAMES.get(str(name or "").strip().lower())
+
+
+def domain_aliases(domain_id: str) -> list:
+    return list(DOMAIN_MANIFESTS.get(canonical_domain(domain_id) or "", {}).get("aliases", []))
+
+
+def external_signal(domain_id: str) -> str:
+    """The name the gateway routes with and sends to the browser (manifest `external_signal`, else the id)."""
+    d = canonical_domain(domain_id)
+    return DOMAIN_MANIFESTS[d].get("external_signal", d) if d else domain_id
 
 
 def get_bridge_source_kinds(domain: str) -> dict:
@@ -602,7 +649,7 @@ def resolve_bridge_target_domains(requested, source_labels) -> list:
     - Named domains are kept as asked, including the source's own domain.
     - Unknown or disabled names are dropped. Result is in CONTENT_DOMAINS order, de-duplicated."""
     offered = get_bridge_target_domains()
-    asked = [str(r).strip().lower() for r in (requested or [BRIDGE_AUTO_DOMAINS]) if r]
+    asked = [canonical_domain(r) or str(r).strip().lower() for r in (requested or [BRIDGE_AUTO_DOMAINS]) if r]
     chosen = {d for d in asked if d in offered}
     if BRIDGE_AUTO_DOMAINS in asked:
         own = set(get_source_domains(source_labels))
@@ -636,7 +683,7 @@ def classify_bridge_candidate(labels, domain: str) -> str:
 
 
 def get_domain_display_name(domain: str) -> str:
-    return DOMAIN_MANIFESTS.get(domain, {}).get("display_name", domain)
+    return DOMAIN_MANIFESTS.get(canonical_domain(domain) or "", {}).get("display_name", domain)
 
 
 # ── Bento panel layouts (bridge-discovery-and-bento-panel-design-2026-11-03.md §4.2) ─────────────────

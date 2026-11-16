@@ -1,0 +1,22 @@
+{
+  "_comment": "Structured gateway log events (bridge design 2026-11-13 §13.3 Observability; tracker S2-80). Each event has a tag (the [TAG] prefix kept in `message` for grep), a severity and the ONLY fields it may carry: anything else is dropped, so question text, names and ids stay out by construction. Strings are clipped to max_string_chars. Code refers to events through utils/log_event.js LOG_EVENTS constants, never by string. Cloud Logging query: jsonPayload.tag=\"BRIDGE_PLAN\" AND jsonPayload.event=\"bridge_plan.decided\".",
+  "max_string_chars": 40,
+  "max_array_items": 10,
+  "events": {
+    "bridge_plan.decided": {
+      "tag": "BRIDGE_PLAN",
+      "severity": "INFO",
+      "fields": ["rule", "kind_step", "kind_domains", "source_count", "target", "target_domains", "bridges", "failed", "nodes", "ms", "user_type"]
+    },
+    "bridge_plan.clarify": {
+      "tag": "BRIDGE_PLAN",
+      "severity": "INFO",
+      "fields": ["clarify_kind", "options", "kind_step", "ms", "user_type"]
+    },
+    "bridge_plan.model_fallback": {
+      "tag": "BRIDGE_PLAN",
+      "severity": "INFO",
+      "fields": ["reason", "user_type"]
+    }
+  }
+}

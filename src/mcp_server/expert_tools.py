@@ -1788,6 +1788,9 @@ class ExpertTools:
         # Keyword-based triggering (checking for "career", "map", etc.) is suppressed because it
         # intercepts Q2 career map queries, returning backbone-only nodes that fail the
         # CAREER_CHAT_NODE_TYPES filter in the gateway and produce ungrounded LLM responses.
+        # Either a domain id or an alias ("career") is accepted; everything below compares ids (domain-id-aliases design).
+        from domain_registry import canonical_domain
+        domain_intent = canonical_domain(domain_intent) or domain_intent
         if wants_visual_map and domain_intent in ("professional", "all"):
             # node_name omitted deliberately (2026-09-14, was a hardcoded literal name) —
             # get_cluster_context falls back to _resolve_primary_subject() for the tenant.
@@ -2398,8 +2401,8 @@ class ExpertTools:
         deterministically, before the LLM ever gets a turn on a cross_domain query. See
         auth-derived-identity-and-bridge-source-config-design-2026-09-12.md §4.
         """
-        from domain_registry import DOMAIN_MANIFESTS
-        manifest = DOMAIN_MANIFESTS.get(domain.lower(), {})
+        from domain_registry import DOMAIN_MANIFESTS, canonical_domain
+        manifest = DOMAIN_MANIFESTS.get(canonical_domain(domain) or "", {})
         labels = manifest.get("bridge_source_labels", [])
         if not labels:
             return json.dumps({"sources": []})
@@ -2427,7 +2430,8 @@ class ExpertTools:
         links. Read-only; the security clause applies to the person and to every item. Labels are limited to the
         manifests' bridge-source kinds. Called only by the gateway (never offered to the LLM).
         """
-        from domain_registry import get_bridge_source_kind_labels, BRIDGE_PLAN_WORK_ITEMS_MAX
+        from domain_registry import (get_bridge_source_kind_labels, BRIDGE_PLAN_WORK_ITEMS_MAX, PERSON_WORK_ROLES,
+                                     PERSON_WORK_ROLE_OWNER)
         from schema_guard import CONSUMPTION_RELATIONSHIPS, SIMILARITY_RELATIONSHIPS
         allowed = set(get_bridge_source_kind_labels())
         wanted = sorted({l for l in (labels or []) if l in allowed})
@@ -2439,14 +2443,17 @@ class ExpertTools:
         MATCH (p)-[r]-(w)
         WHERE NOT type(r) IN $not_work AND any(l IN labels(w) WHERE l IN $work_labels)
           AND ({self._get_security_clause("w")})
-        RETURN DISTINCT w.node_id AS node_id, w.name AS name
+        RETURN w.node_id AS node_id, w.name AS name, collect(DISTINCT type(r)) AS rel_types
         LIMIT $work_limit
         """
         try:
             result = self._exec_query(query, person_ids=ids, work_labels=wanted,
                                       not_work=CONSUMPTION_RELATIONSHIPS + SIMILARITY_RELATIONSHIPS,
                                       work_limit=BRIDGE_PLAN_WORK_ITEMS_MAX, **self._security_params())
-            items = [{"node_id": r["node_id"], "name": r["name"]} for r in result.records if r["node_id"]]
+            role = lambda types: sorted({PERSON_WORK_ROLES.get(t, PERSON_WORK_ROLE_OWNER) for t in types or []}
+                                        or {PERSON_WORK_ROLE_OWNER})
+            items = [{"node_id": r["node_id"], "name": r["name"], "roles": role(r.get("rel_types"))}
+                     for r in result.records if r["node_id"]]
             return json.dumps({"items": items, "truncated": len(items) >= BRIDGE_PLAN_WORK_ITEMS_MAX})
         except Exception as e:
             return json.dumps({"error": str(e)})

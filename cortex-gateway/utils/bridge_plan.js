@@ -27,10 +27,10 @@
  * limits are manifest data (domain_registry.py, mirrored in config/domain_manifests.json and config/bridge_plan.json).
  */
 const CFG = require('../config/intent_keywords.js');
-const MANIFESTS = require('../config/domain_manifests.json');
 const LIMITS = require('../config/bridge_plan.json');
 const { findAll, wordRe } = require('./routing_v2.js');
-const { SEARCH_INTENT } = require('./cross_mode.js');
+const { canonicalDomain, externalSignal, manifestFor } = require('./domain_ids');
+const { kindMentions, resolveKind, labelsByDomain, narrowingWords, meaningfulWords, wordMatches } = require('./kind_vocabulary');
 
 const BRIDGE_PLAN_MAX_SOURCES = LIMITS.max_sources;
 const BRIDGE_PLAN_CLARIFY_MAX_OPTIONS = LIMITS.clarify_max_options;
@@ -39,7 +39,12 @@ const RULE = { chosen: 'chosen', named: 'named', kind: 'kind', subject: 'subject
 const CLARIFY_KIND = 'bridge_source';
 const CHOICE_KIND = 'source';
 const CLARIFY_QUESTION = 'Which item should the connection start from?';
-const TOPIC_WORD_MIN_CHARS = 3;
+// A kind word with several meanings that the question does not settle (design §13.3 step e).
+const KIND_CLARIFY_KIND = 'bridge_kind';
+const KIND_CHOICE_KIND = 'source_kind';
+const KIND_CLARIFY_QUESTION = word => `Which kind of "${word}" should the connection start from?`;
+const KIND_CHOSEN_STEP = 'chosen';
+const KIND_SEARCHED_ALL_NOTE = (word, domains) => `"${word}" was searched in ${domains.join(', ')}.`;
 const NOT_SEARCHED_NOTE = (searched, total, rest) =>
     `${searched} of ${total} matching items were searched. Not searched: ${rest.join('; ')}.`;
 const OWNERSHIP_UNAVAILABLE_NOTE = subjects =>
@@ -48,12 +53,8 @@ const EXTRA_TARGETS_NOTE = (used, rest) =>
     `The search aimed at ${used}. Also named in the question, not used as the target: ${rest.join('; ')}.`;
 
 const DIRECTION_RE = (CFG.bridgeDirectionPatternSources || []).map(src => new RegExp(src, 'id'));
-const STOP_WORDS = new Set(CFG.groundingStopWords || []);
-// kind word → { domain (gateway signal), labels }
-const KIND_WORDS = new Map(Object.entries(MANIFESTS).flatMap(([domain, m]) =>
-    Object.entries(m.bridge_source_kinds || {}).map(([word, labels]) => [word, { domain, labels }])));
-const KIND_LABELS_BY_DOMAIN = Object.fromEntries(Object.entries(MANIFESTS).map(([domain, m]) =>
-    [domain, [...new Set(Object.values(m.bridge_source_kinds || {}).flat())]]));
+// routing domain → every bridge-source label (manifest kind words, utils/kind_vocabulary.js)
+const KIND_LABELS_BY_DOMAIN = labelsByDomain();
 
 const within = (hit, span) => Boolean(span) && hit.start >= span[0] && hit.end <= span[1];
 const byName = (a, b) => a.name.localeCompare(b.name);
@@ -82,7 +83,7 @@ function ownershipRequest(question, lookups) {
     const subjects = subjectsIn(fromText, lookups);
     const personIds = subjects.flatMap(n => (lookups.personIds && lookups.personIds.get(n)) || []);
     if (!personIds.length) return null;
-    const kinds = kindsIn(fromText);
+    const kinds = kindMentions(fromText).flatMap(m => m.meanings);
     const work = name => (lookups.personWork && lookups.personWork.get(name)) || [];
     const labels = kinds.length ? kinds.flatMap(k => k.labels) : subjects.flatMap(work).flatMap(d => KIND_LABELS_BY_DOMAIN[d] || []);
     const unique = [...new Set(labels)].sort();
@@ -122,29 +123,56 @@ function subjectsIn(text, lookups) {
     return [...new Set((lookups.personPart || []).filter(p => p.pattern.test(text)).map(p => p.name))];
 }
 
-function kindsIn(text) {
-    return findAll(text, KIND_WORDS).map(h => h.value);
-}
-
 function scopeDomainsIn(text) {
     return Object.entries(CFG.routingScopeWords || {})
         .filter(([, words]) => words.some(w => wordRe(w).test(text))).map(([domain]) => domain);
 }
 
-function meaningfulWords(text) {
-    return [...new Set((text.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [])
-        .filter(w => w.length >= TOPIC_WORD_MIN_CHARS && !STOP_WORDS.has(w)))];
+const DEICTIC = new Set((CFG.bridgeDeicticWords || []).map(w => w.toLowerCase()));
+
+/** Only the items matching the most words, when any word matches (round 1, G1); otherwise all of them. */
+function mostMatching(items, words) {
+    const most = Math.max(0, ...items.map(t => wordMatches(t, words)));
+    return most ? items.filter(t => wordMatches(t, words) === most) : items;
 }
 
-const wordMatches = (item, words) => words.filter(w => wordRe(w).test(item.name)).length;
+/** A pointing word directly before a kind word: "that episode", "these papers" (round 1, G3). */
+function pointsAtKind(text) {
+    return kindMentions(text).some(h => {
+        const before = text.slice(0, h.start).match(/([\p{L}]+)\s*$/u);
+        return Boolean(before) && DEICTIC.has(before[1].toLowerCase());
+    });
+}
 
 /** Most from-side words in the name first, then by name — the same order for the same question, every time. */
 function rank(items, words) {
     return [...items].sort((a, b) => wordMatches(b, words) - wordMatches(a, words) || byName(a, b));
 }
 
+/** The one item of the to-side's kind meanings that its words pick, or null (none, or a tie). */
+function targetByKind(toText, items, lookups, meanings) {
+    if (!meanings.length) return null;
+    const words = narrowingWords(toText, subjectsIn(toText, lookups));
+    if (!words.length) return null;
+    const ofKind = items.filter(t => meanings.some(k => t.domain === k.domain && k.labels.includes(t.type)));
+    const picked = mostMatching(ofKind, words);
+    return picked.length === 1 && wordMatches(picked[0], words) > 0 ? picked[0] : null;
+}
+
 const asSource = t => ({ node_id: t.node_id, name: t.name, type: t.type || null, domain: t.domain });
 const asOption = t => ({ label: t.name, entity: { kind: CHOICE_KIND, name: t.name, node_id: t.node_id } });
+
+/** A kind choice from the browser ({kind: 'source_kind', domain}) → a routing domain, or null. The planner accepts it
+ *  only when it is one of the word's meanings with items this asker can open (design §13.5). */
+function resolveBridgeKindChoice(choice) {
+    if (!choice || choice.kind !== KIND_CHOICE_KIND) return null;
+    return externalSignal(choice.domain);
+}
+
+const kindOption = meaning => ({
+    label: (manifestFor(meaning.domain) || {}).display_name || meaning.domain,
+    entity: { kind: KIND_CHOICE_KIND, domain: meaning.domain },
+});
 
 /** A clarifying-question choice from the browser, kept only if every id is an item this asker can open. */
 function resolveBridgeSourceChoice(choice, lookups) {
@@ -158,8 +186,9 @@ function resolveBridgeSourceChoice(choice, lookups) {
 /**
  * @param {string} question
  * @param {object} lookups  buildRoutingLookups(...) for this asker
- * @param {{resolvedSources?: string[], ownedIds?: Set<string>, ownershipFailed?: boolean}} [opts]
+ * @param {{resolvedSources?: string[], kindChoice?: string, ownedIds?: Set<string>, ownershipFailed?: boolean}} [opts]
  *        resolvedSources: node ids from resolveBridgeSourceChoice;
+ *        kindChoice: a routing domain from resolveBridgeKindChoice (the answer to a kind question);
  *        ownedIds: node ids of the named people's own items (MCP person_work_items for ownershipRequest's labels);
  *        ownershipFailed: that lookup failed — every visible item of the kind is used and the notes say so.
  */
@@ -169,16 +198,22 @@ function planBridge(question, lookups, opts = {}) {
     if (!items.length) return { kind: 'no_source' };
     const { fromText, toText, fromHits, toHits } = parse(q, names);
     const notes = [];
-
-    // Target: a named item on the to-side, else the domains the to-side names, else every other domain.
-    const targetItem = toHits.length ? toHits[0].value : null;
-    if (toHits.length > 1) notes.push(EXTRA_TARGETS_NOTE(targetItem.name, toHits.slice(1).map(h => h.value.name)));
     const work = name => (lookups.personWork && lookups.personWork.get(name)) || [];
+    let kindStep = null;   // which step settled a shared kind word (design §13.3), for the log
+
+    // Target: a named item on the to-side; else one item picked by a kind word and its words ("the BERT paper",
+    // round 1, G2; a tie keeps the domains); else the domains the to-side names; else every other domain.
+    // A shared kind word on the to-side is settled by steps a–c; it never asks (every remaining meaning's domain).
+    const toMentions = kindMentions(toText);
+    const toMeanings = toMentions.flatMap(m => resolveKind(m, { text: toText, items, others: toMentions,
+        subjects: subjectsIn(toText, lookups), work, maxAll: BRIDGE_PLAN_MAX_SOURCES, mayAsk: false }).meanings);
+    const targetItem = toHits.length ? toHits[0].value : targetByKind(toText, items, lookups, toMeanings);
+    if (toHits.length > 1) notes.push(EXTRA_TARGETS_NOTE(targetItem.name, toHits.slice(1).map(h => h.value.name)));
     const toDomains = targetItem ? [] : [...new Set([
-        ...scopeDomainsIn(toText), ...kindsIn(toText).map(k => k.domain), ...subjectsIn(toText, lookups).flatMap(work),
-    ])].filter(d => SEARCH_INTENT[d]).sort();
+        ...scopeDomainsIn(toText), ...toMeanings.map(k => k.domain), ...subjectsIn(toText, lookups).flatMap(work),
+    ])].filter(d => canonicalDomain(d)).sort();
     const target = targetItem ? { node_id: targetItem.node_id, name: targetItem.name } : null;
-    const targetDomains = target ? [] : (toDomains.length ? toDomains.map(d => SEARCH_INTENT[d]) : [BRIDGE_AUTO_DOMAINS]);
+    const targetDomains = target ? [] : (toDomains.length ? toDomains.map(d => canonicalDomain(d)) : [BRIDGE_AUTO_DOMAINS]);
 
     const notTarget = t => !targetItem || t.node_id !== targetItem.node_id;
     const subjects = subjectsIn(fromText, lookups);
@@ -189,7 +224,8 @@ function planBridge(question, lookups, opts = {}) {
         if (ordered.length > used.length) {
             notes.push(NOT_SEARCHED_NOTE(used.length, ordered.length, ordered.slice(used.length).map(t => t.name)));
         }
-        return { kind: 'plan', rule, sources: used.map(asSource), target, target_domains: targetDomains, subjects, notes };
+        return { kind: 'plan', rule, sources: used.map(asSource), target, target_domains: targetDomains, subjects, notes,
+                 kind_step: kindStep };
     };
     const ofLabels = (domain, labels) => items.filter(t => t.domain === domain && labels.includes(t.type) && notTarget(t));
 
@@ -207,12 +243,43 @@ function planBridge(question, lookups, opts = {}) {
     if (subjects.length && opts.ownershipFailed) notes.push(OWNERSHIP_UNAVAILABLE_NOTE(subjects));
     const unique = list => [...new Map(list.map(t => [t.node_id, t])).values()];
 
-    // kind: a kind word on the from-side.
-    const kinds = kindsIn(fromText);
-    if (kinds.length) {
-        const byKind = owned ? items.filter(t => owned.has(t.node_id) && notTarget(t))
+    // kind: a kind word on the from-side; a word with several meanings is settled first (design §13.3, steps a–e);
+    // its other words narrow it ("the KuzuDB episode", round 1, G1).
+    const mentions = kindMentions(fromText);
+    if (mentions.length) {
+        const kindCtx = { text: fromText, items: items.filter(notTarget), others: mentions, subjects, work,
+                          maxAll: BRIDGE_PLAN_MAX_SOURCES };
+        const kinds = [];
+        for (const mention of mentions) {
+            const r = resolveKind(mention, kindCtx);
+            if (r.ask) {
+                const picked = r.meanings.filter(m => m.domain === opts.kindChoice);
+                if (!picked.length) {
+                    return { kind: 'clarify', clarify: { question: KIND_CLARIFY_QUESTION(mention.word), kind: KIND_CLARIFY_KIND,
+                        options: r.meanings.slice(0, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS).map(kindOption) }, kind_step: r.step };
+                }
+                kinds.push(...picked); kindStep = KIND_CHOSEN_STEP;
+                continue;
+            }
+            if (r.step) {
+                kindStep = kindStep || r.step;
+                if (r.meanings.length > 1) notes.push(KIND_SEARCHED_ALL_NOTE(mention.word,
+                    r.meanings.map(m => (manifestFor(m.domain) || {}).display_name || m.domain)));
+            }
+            kinds.push(...r.meanings);
+        }
+        const kindDomains = new Set(kinds.map(k => k.domain));
+        // A person's own items (authoritative list) within the settled meanings' domains.
+        const byKind = owned ? items.filter(t => owned.has(t.node_id) && notTarget(t) && kindDomains.has(t.domain))
             : unique(kinds.flatMap(k => ofLabels(k.domain, k.labels)));
-        if (byKind.length) return plan(RULE.kind, byKind, true);
+        const kindWords = narrowingWords(fromText, subjects);
+        const narrowed = mostMatching(byKind, kindWords);
+        // "that episode" with nothing that picks one: ask among that kind (round 1, G3), never search them all.
+        if (byKind.length > 1 && narrowed.length === byKind.length && !subjects.length && pointsAtKind(fromText)) {
+            const options = [...byKind].sort(byName).slice(0, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS);
+            return { kind: 'clarify', clarify: { question: CLARIFY_QUESTION, kind: CLARIFY_KIND, options: options.map(asOption) } };
+        }
+        if (narrowed.length) return plan(RULE.kind, narrowed, true);
     } else if (subjects.length) {
         // subject: a person on the from-side → their items of every bridge-source kind of their work domains.
         const bySubject = owned ? items.filter(t => owned.has(t.node_id) && notTarget(t))
@@ -235,5 +302,6 @@ function planBridge(question, lookups, opts = {}) {
     return { kind: 'clarify', clarify: { question: CLARIFY_QUESTION, kind: CLARIFY_KIND, options: options.map(asOption) } };
 }
 
-module.exports = { planBridge, ownershipRequest, resolveBridgeSourceChoice, sides, BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS,
-    CLARIFY_QUESTION, RULE };
+module.exports = { planBridge, ownershipRequest, resolveBridgeSourceChoice, resolveBridgeKindChoice, sides,
+    BRIDGE_PLAN_MAX_SOURCES, BRIDGE_PLAN_CLARIFY_MAX_OPTIONS, CLARIFY_QUESTION, KIND_CLARIFY_QUESTION, KIND_CLARIFY_KIND,
+    KIND_CHOICE_KIND, RULE };
