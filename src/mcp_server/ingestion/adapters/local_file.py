@@ -2,7 +2,7 @@ import os
 import json
 import re
 from typing import List
-from neo4j import GraphDatabase
+from neo4j_connection import get_driver
 from .base import BaseAdapter
 import sys
 
@@ -12,13 +12,10 @@ from ingestion_engine import IngestionEngine
 class LocalFileAdapter(BaseAdapter):
     """Adapter for ingesting local text transcripts from a directory."""
     
-    def __init__(self, directory: str, uri: str, user: str, password: str, tenant_id: str):
+    def __init__(self, directory: str, tenant_id: str):
         self.directory = directory
         self.tenant_id = tenant_id
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        
-    def __del__(self):
-        self.driver.close()
+        self.driver = get_driver()   # the process-wide pool (neo4j_connection, S2-79)
 
     def get_unprocessed_items(self) -> List[str]:
         if not os.path.exists(self.directory):

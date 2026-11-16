@@ -5,7 +5,9 @@ to all primary hub nodes (Projects, Episodes, Roles, etc.) to enable path-based 
 """
 
 import os
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -22,7 +24,7 @@ if not OWNER_USER_ID:
     exit(1)
 
 def bootstrap_g_acl():
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+    driver = create_driver()
     
     with driver.session() as session:
         # 1. Ensure the User node exists

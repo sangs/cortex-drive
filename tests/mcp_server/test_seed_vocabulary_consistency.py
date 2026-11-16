@@ -57,9 +57,10 @@ class SeedListsTest(unittest.TestCase):
 class LiveMatchesSeedTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from neo4j import GraphDatabase
-        cls.driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                          auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+        import os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../../src/mcp_server'))
+        from neo4j_connection import create_driver  # the one driver factory (S2-79)
+        cls.driver = create_driver()
 
     @classmethod
     def tearDownClass(cls):

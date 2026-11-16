@@ -31,9 +31,10 @@ class SharedDriverTest(unittest.TestCase):
         b.close()
 
     def test_warmup_gives_up_when_unreachable(self):
-        with mock.patch.object(expert_tools, "get_shared_driver") as g:
+        import neo4j_connection   # warm-up lives in the connection factory since S2-79 (2026-11-16)
+        with mock.patch.object(neo4j_connection, "get_driver") as g:
             g.return_value.verify_connectivity.side_effect = OSError("down")
-            with mock.patch.object(expert_tools.time if hasattr(expert_tools, "time") else time, "sleep", lambda s: None):
+            with mock.patch.object(neo4j_connection.time, "sleep", lambda s: None):
                 t0 = time.monotonic()
                 self.assertFalse(expert_tools.warm_neo4j(max_seconds=0.2))
                 self.assertLess(time.monotonic() - t0, 5)

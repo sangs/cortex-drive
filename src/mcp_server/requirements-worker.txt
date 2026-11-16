@@ -9,3 +9,6 @@ docling==2.131.0
 # docling 2.131 imports (the worker image build failed). 3.9.2 is the version the worker tests passed with.
 rapidocr==3.9.2
 anthropic==1.9.0
+
+# Trust store for Neo4j TLS (neo4j_connection, S2-79). Bump deliberately; tracker RV-8.
+certifi==2026.10.19

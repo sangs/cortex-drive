@@ -2,7 +2,7 @@ import os
 import json
 import argparse
 from typing import List, Dict, Any
-from neo4j import GraphDatabase
+from neo4j_connection import get_driver, close_driver
 from dotenv import load_dotenv
 from schema_guard import (
     CORTEX_DRIVE_NODES, 
@@ -24,17 +24,12 @@ class ModelAuditor:
     CORE_RELATIONSHIPS = CORTEX_DRIVE_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
 
     def __init__(self):
-        self.uri = os.environ.get("NEO4J_URI")
-        self.user = os.environ.get("NEO4J_USERNAME")
-        self.password = os.environ.get("NEO4J_PASSWORD")
-        
-        if not all([self.uri, self.user, self.password]):
+        if not all(os.environ.get(k) for k in ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")):
             raise ValueError("Missing Neo4j environment variables in .env")
-            
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        self.driver = get_driver()   # neo4j_connection (S2-79)
 
     def close(self):
-        self.driver.close()
+        close_driver()
 
     def run_audit(self) -> Dict[str, Any]:
         """Runs discovery queries to find malformed data."""

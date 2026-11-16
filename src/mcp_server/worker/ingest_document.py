@@ -129,9 +129,7 @@ def _run_locked(task: dict, *, parser, describer, transport, redis_client, start
         from parsing.docling_parser import DoclingParser
         parser = DoclingParser()
     graph_tenant, visibility = engine_scope(task)
-    adapter = DocumentUrlAdapter(uri, os.environ["NEO4J_URI"], os.environ["NEO4J_USERNAME"],
-                                 os.environ["NEO4J_PASSWORD"], graph_tenant, owner_id,
-                                 parser=parser, transport=transport)
+    adapter = DocumentUrlAdapter(uri, graph_tenant, owner_id, parser=parser, transport=transport)
     engine = IngestionEngine(tenant_id=graph_tenant, visibility=visibility)
     try:
         if not adapter.get_unprocessed_items():

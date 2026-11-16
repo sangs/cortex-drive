@@ -13,16 +13,15 @@ Run manually:
     .venv/bin/python scripts/create_node_metadata_vector_index.py
 """
 
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-driver = GraphDatabase.driver(
-    os.environ.get("NEO4J_URI"),
-    auth=(os.environ.get("NEO4J_USERNAME"), os.environ.get("NEO4J_PASSWORD"))
-)
+driver = create_driver()
 
 
 def create_index():

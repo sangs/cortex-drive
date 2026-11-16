@@ -15,3 +15,6 @@ beautifulsoup4
 google-adk>=1.0.0
 litellm
 uv
+
+# Trust store for Neo4j TLS (neo4j_connection, S2-79). Bump deliberately; tracker RV-8.
+certifi==2026.10.19

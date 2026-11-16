@@ -83,10 +83,12 @@ class DocumentQueryTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from neo4j import GraphDatabase
+        import os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../../src/mcp_server'))
+        from neo4j_connection import create_driver  # the one driver factory (S2-79)
         from parsing.docling_parser import DoclingParser
         from worker.ingest_document import run
-        cls.driver = GraphDatabase.driver(os.environ["NEO4J_URI"], auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+        cls.driver = create_driver()
         cleanup_test_tenant(cls.driver)
         with open(PDF, "rb") as f, open(DOCX, "rb") as g:
             files = {PDF_URL: (f.read(), "application/pdf"), DOCX_URL: (g.read(), DOCX_TYPE)}

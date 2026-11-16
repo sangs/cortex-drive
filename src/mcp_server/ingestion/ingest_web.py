@@ -31,7 +31,7 @@ def main():
         sys.exit(1)
 
     print(f"Registering web source: {url}")
-    adapter = WebUrlAdapter(url, uri, user, password, tenant_id=tenant_id, owner_id=owner_id)
+    adapter = WebUrlAdapter(url, tenant_id=tenant_id, owner_id=owner_id)
 
     # Fetches the URL and compares against the current SourceSnapshot's content hash —
     # returns [url] on first registration or if content changed, [] if unchanged

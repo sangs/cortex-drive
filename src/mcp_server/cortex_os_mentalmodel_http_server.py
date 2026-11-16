@@ -311,7 +311,7 @@ def main():
     server_address = ("", port)
     # Warm the shared Neo4j pool before the port opens (cold-start fix, 2026-11-12), and serve requests concurrently:
     # a single-threaded HTTPServer made a coverage check, a catalog fetch and node details from different users queue.
-    from expert_tools import warm_neo4j
+    from neo4j_connection import warm as warm_neo4j
     print(f"[WARMUP] Neo4j pool {'ready' if warm_neo4j() else 'NOT ready'}")
     ThreadingHTTPServer.daemon_threads = True
     httpd = ThreadingHTTPServer(server_address, ToolHandler)

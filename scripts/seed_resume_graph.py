@@ -22,7 +22,9 @@ Date handling:
 
 import sys
 import os
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 # Add scripts directory to path so date_utils can be imported
@@ -765,7 +767,7 @@ def seed_resume_graph():
         sys.exit(1)
 
     print(f"Connecting to Neo4j at {NEO4J_URI}...")
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+    driver = create_driver()
 
     try:
         with driver.session() as session:

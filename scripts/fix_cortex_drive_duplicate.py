@@ -12,7 +12,9 @@ Run from repo root: .venv/bin/python scripts/fix_cortex_drive_duplicate.py
 """
 
 import os, sys
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 load_dotenv('.env', override=True)
@@ -164,7 +166,7 @@ def main():
     if not NEO4J_PASSWORD:
         print("⛔ NEO4J_PASSWORD not set.")
         sys.exit(1)
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+    driver = create_driver()
     try:
         driver.verify_connectivity()
         print(f"Connected to {NEO4J_URI}")

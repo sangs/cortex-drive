@@ -21,7 +21,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src", "mcp_server"))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(os.path.join(ROOT, ".env"))
-from neo4j import GraphDatabase  # noqa: E402
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from schema_guard import (  # noqa: E402
     CAREER_PUBLIC_FROM_PERSON_RELATIONSHIPS, CAREER_PUBLIC_DETAIL_RELATIONSHIPS, CAREER_PUBLIC_EXCLUDED_LABELS,
 )
@@ -49,7 +51,7 @@ RETURN labels(x)[0] AS label, count(DISTINCT x) AS c ORDER BY c DESC
 
 
 def driver():
-    return GraphDatabase.driver(os.environ["NEO4J_URI"], auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+    return create_driver()
 
 
 def founder_tenant():

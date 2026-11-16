@@ -9,7 +9,9 @@ as metadata nodes to showcase inter-graph discovery.
 
 import os
 import sys
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 load_dotenv('.env', override=True)
@@ -84,7 +86,7 @@ def seed_iceberg():
         sys.exit(1)
 
     print(f"Connecting to Neo4j to seed Federated Iceberg landmarks for {TENANT_ID}...")
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+    driver = create_driver()
     
     try:
         with driver.session() as session:

@@ -54,7 +54,9 @@ class UnitTest(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("NEO4J_URI") and os.environ.get("OPENAI_API_KEY"), "needs Neo4j and OpenAI credentials")
 class IntegrationTest(unittest.TestCase):
     def test_new_document_appears_with_id_tier_and_short_name(self):
-        from neo4j import GraphDatabase
+        import os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../../src/mcp_server'))
+        from neo4j_connection import create_driver  # the one driver factory (S2-79)
         from test_document_query import PDF, PDF_URL, FakeRedis, serve
         from parsing.docling_parser import DoclingParser
         from worker.ingest_document import run
@@ -66,7 +68,7 @@ class IntegrationTest(unittest.TestCase):
 
         if not os.path.exists(PDF):
             self.skipTest("parser-eval PDF missing")
-        driver = GraphDatabase.driver(os.environ["NEO4J_URI"], auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+        driver = create_driver()
         try:
             cleanup_test_tenant(driver)
             with open(PDF, "rb") as f:

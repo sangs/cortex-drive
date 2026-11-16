@@ -4,7 +4,7 @@ import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from openai import OpenAI
-from neo4j import GraphDatabase
+from neo4j_connection import get_driver
 from schema_guard import (
     validate_upsert,
     CORTEX_DRIVE_NODES,
@@ -40,14 +40,10 @@ class IngestionEngine:
             raise ValueError(f"unknown visibility {self.visibility!r}")
         self.expert = ExpertTools(tenant_id=tenant_id)
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        self.driver = GraphDatabase.driver(
-            os.environ["NEO4J_URI"],
-            auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
-        )
+        self.driver = get_driver()   # the process-wide pool (neo4j_connection, S2-79); never closed here
 
     def close(self):
         self.expert.close()
-        self.driver.close()
 
     def process_transcript(self, transcript_text: str, episode_metadata: Dict[str, Any]):
         """

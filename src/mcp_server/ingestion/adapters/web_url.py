@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse
 
 import trafilatura
 from bs4 import BeautifulSoup
-from neo4j import GraphDatabase
+from neo4j_connection import get_driver
 
 from .base import BaseAdapter
 
@@ -82,17 +82,17 @@ class WebUrlAdapter(BaseAdapter):
     returns either [url] (first ingestion, or content changed since last fetch) or []
     (unchanged, skip re-ingestion — the Iceberg-style freshness layer)."""
 
-    def __init__(self, url: str, uri: str, user: str, password: str, tenant_id: str, owner_id: str):
+    def __init__(self, url: str, tenant_id: str, owner_id: str):
         self.url = url
         self.tenant_id = tenant_id
         self.owner_id = owner_id
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = get_driver()   # the process-wide pool (neo4j_connection, S2-79)
         self._last_fetch_content: Optional[str] = None
         self._last_fetch_hash: Optional[str] = None
         self._last_fetch_image_urls: List[str] = []
 
     def __del__(self):
-        self.driver.close()
+        pass   # the shared pool is never closed by an adapter
 
     def fetch(self, source_ref: str) -> str:
         """Fetch and extract clean content from a URL via trafilatura. Caches the result

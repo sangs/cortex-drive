@@ -16,7 +16,9 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 
 CONSTRAINT_NAME = "documentSourceIdentity"
 LABEL = "DocumentSource"
@@ -26,8 +28,7 @@ KEY_PROPERTIES = ("tenant_id", "uri")
 def main() -> int:
     load_dotenv()
     apply = "--apply" in sys.argv[1:]
-    driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                  auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+    driver = create_driver()
     try:
         with driver.session() as session:
             total = session.run(f"MATCH (d:{LABEL}) RETURN count(d) AS c").single()["c"]

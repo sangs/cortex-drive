@@ -10,7 +10,9 @@ next to chunkIndex (multimodal-document-processing-pipeline-2026-08-19.md §9.2)
 import os
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 
 INDEX_NAME = "contentBlockIndex"
 INDEX_LABEL = "ContentBlock"
@@ -21,8 +23,7 @@ SIMILARITY = "cosine"
 
 def main() -> None:
     load_dotenv()
-    driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                  auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+    driver = create_driver()
     try:
         with driver.session() as session:
             session.run(f"""

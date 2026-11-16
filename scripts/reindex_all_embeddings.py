@@ -3,7 +3,9 @@ import json
 import time
 from typing import List, Dict, Any
 from openai import OpenAI
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -20,7 +22,7 @@ if not all([OPENAI_API_KEY, NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD]):
     exit(1)
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+driver = create_driver()
 
 MODERN_MODEL = "text-embedding-3-small"
 

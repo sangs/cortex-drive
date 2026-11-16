@@ -1,6 +1,8 @@
 import os
 import json
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 from schema_guard import (
     CORTEX_DRIVE_NODES, 
@@ -23,7 +25,7 @@ class DryRunAuditor:
         if not self.uri:
             raise ValueError("NEO4J_URI not found in .env")
         
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.pwd))
+        self.driver = create_driver()
         self.legal_labels = CORTEX_DRIVE_NODES + PROJECT_GRAPH_NODES + SYSTEM_NODES
         self.legal_relationships = CORTEX_DRIVE_RELATIONSHIPS + PROJECT_GRAPH_RELATIONSHIPS
 

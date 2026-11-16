@@ -20,7 +20,9 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src" / "mcp_server"))
@@ -37,7 +39,7 @@ def main():
     if not all([uri, password, tenant_id]):
         print("ERROR: NEO4J_URI, NEO4J_PASSWORD, TENANT_ID must be set in .env", file=sys.stderr)
         sys.exit(1)
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = create_driver()
     try:
         catalog = build_entity_catalog(driver, tenant_id)
     finally:

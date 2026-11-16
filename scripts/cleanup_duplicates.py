@@ -1,5 +1,7 @@
 import os
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 
 def cleanup():
     uri = os.environ.get("NEO4J_URI", "neo4j+s://2236ba22.databases.neo4j.io")
@@ -11,7 +13,7 @@ def cleanup():
         print("Error: NEO4J_PASSWORD not set")
         return
 
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = create_driver()
     with driver.session() as session:
         # Delete duplicate hackathons, thought leadership and achievements
         query = """

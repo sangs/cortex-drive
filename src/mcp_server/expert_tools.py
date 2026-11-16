@@ -6,7 +6,6 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-from neo4j import GraphDatabase
 import os
 import json
 import numpy as np
@@ -55,45 +54,10 @@ def _join_words(items: list) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-# ── Shared Neo4j driver (cold-start fix, 2026-11-12) ──────────────────────────────────────────────────────────────────
-# One driver (a connection pool) per process instead of one per request: every ExpertTools used to open its own driver,
-# paying a TLS handshake on every tool call. The neo4j driver is thread-safe; requests take sessions from the pool.
-import threading as _threading
-_shared_driver = None
-_shared_driver_key = None
-_shared_driver_lock = _threading.Lock()
-
-
-def get_shared_driver():
-    """The process-wide Neo4j driver for the current NEO4J_* settings (re-created if they change, e.g. in tests)."""
-    global _shared_driver, _shared_driver_key
-    from domain_registry import NEO4J_LIVENESS_CHECK_S
-    key = (os.environ["NEO4J_URI"], os.environ["NEO4J_USERNAME"])
-    with _shared_driver_lock:
-        if _shared_driver is None or _shared_driver_key != key:
-            if _shared_driver is not None:
-                _shared_driver.close()
-            _shared_driver = GraphDatabase.driver(key[0], auth=(key[1], os.environ["NEO4J_PASSWORD"]),
-                                                  liveness_check_timeout=NEO4J_LIVENESS_CHECK_S)
-            _shared_driver_key = key
-        return _shared_driver
-
-
-def warm_neo4j(max_seconds: float = None) -> bool:
-    """Open the shared pool before a service starts serving (Cloud Run sends traffic once the port opens). Retries until
-    `max_seconds`; returns False if Neo4j is unreachable (e.g. Aura paused) so the service still starts and reports it."""
-    import time
-    from domain_registry import NEO4J_WARMUP_MAX_S
-    deadline = time.monotonic() + (NEO4J_WARMUP_MAX_S if max_seconds is None else max_seconds)
-    while True:
-        try:
-            get_shared_driver().verify_connectivity()
-            return True
-        except Exception as e:  # noqa: BLE001
-            if time.monotonic() >= deadline:
-                print(f"[WARMUP] Neo4j not reachable ({type(e).__name__}); starting without a warm pool")
-                return False
-            time.sleep(2)
+# ── Shared Neo4j driver ──────────────────────────────────────────────────────────────────────────────────────────────
+# One pool per process (cold-start fix 2026-11-12), now created by neo4j_connection with an explicit trust store
+# (S2-79, 2026-11-16). These names stay as aliases for one release; new code imports neo4j_connection directly.
+from neo4j_connection import get_driver as get_shared_driver, warm as warm_neo4j  # noqa: E402
 
 
 class ExpertTools:

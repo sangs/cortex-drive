@@ -1,6 +1,8 @@
 import os
 import sys
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../../src/mcp_server'))
+from neo4j_connection import create_driver  # the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 def run_integrity_check():
@@ -18,7 +20,7 @@ def run_integrity_check():
         print("ERROR: Neo4j credentials missing in environment.")
         sys.exit(1)
         
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = create_driver()
     
     q_isolated_chunks = "MATCH (c:Chunk) WHERE NOT (c)<-[:CONTAINS]-(:Source) RETURN count(c) as count"
     q_missing_source = "MATCH (s:Source) WHERE NOT (s)<-[:HAS_SOURCE]-(:Episode) RETURN count(s) as count"

@@ -25,7 +25,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src", "mcp_server"))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(os.path.join(ROOT, ".env"))
-from neo4j import GraphDatabase  # noqa: E402
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from domain_registry import get_exclusive_labels  # noqa: E402
 
 CAREER_DOMAIN = "professional"
@@ -47,7 +49,7 @@ def main():
         sys.exit(f"--label must be one of the career-exclusive labels: {sorted(allowed)}")
     tenants = [PUBLIC] + [t for t in [os.environ.get("FOUNDER_TENANT_ID") or os.environ.get("TENANT_ID")] if t]
 
-    drv = GraphDatabase.driver(os.environ["NEO4J_URI"], auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+    drv = create_driver()
     try:
         with drv.session() as s:
             rows = s.run("MATCH (n) WHERE n.node_id IN $ids RETURN n.node_id AS id, n.name AS name, "

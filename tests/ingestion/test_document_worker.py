@@ -98,12 +98,13 @@ class DocumentWorkerTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from neo4j import GraphDatabase
+        import os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../../src/mcp_server'))
+        from neo4j_connection import create_driver  # the one driver factory (S2-79)
         from parsing.docling_parser import DoclingParser
         from worker.ingest_document import run
         from worker.status import status_key
-        cls.driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                          auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
+        cls.driver = create_driver()
         cleanup_test_tenant(cls.driver)
         cls.other_before = cls._other_tenant_counts()
         cls.worker_run, cls.status_key = staticmethod(run), staticmethod(status_key)

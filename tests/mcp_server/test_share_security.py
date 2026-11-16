@@ -241,7 +241,8 @@ class ForeignSourceTest(unittest.TestCase):
         records = [] if existing_owner is False else [{"owner_id": existing_owner}]
         driver = mock.MagicMock()
         driver.execute_query.return_value = mock.MagicMock(records=records)
-        with mock.patch.object(sse.GraphDatabase, "driver", return_value=driver), \
+        import neo4j_connection
+        with mock.patch.object(neo4j_connection, "get_driver", return_value=driver), \
                 mock.patch.dict(os.environ, {"NEO4J_URI": "bolt://x", "NEO4J_USERNAME": "u", "NEO4J_PASSWORD": "p"}):
             err = sse._foreign_source_error("DocumentSource", "uri", "https://x/a.pdf", TEST_TENANT_ID, requester)
         return json.loads(err)["error"] if err else None

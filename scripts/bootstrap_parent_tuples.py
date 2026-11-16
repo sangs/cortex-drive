@@ -24,7 +24,9 @@ import argparse
 from pathlib import Path
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 
 load_dotenv()
 
@@ -46,10 +48,7 @@ BATCH_SIZE = 50
 
 
 def get_neo4j_driver():
-    return GraphDatabase.driver(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
-    )
+    return create_driver()
 
 
 def fetch_composition_edges(driver) -> list[tuple[str, str, str]]:

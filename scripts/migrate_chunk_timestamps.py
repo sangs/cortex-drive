@@ -1,6 +1,8 @@
 import os
 import re
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 def migrate():
@@ -10,7 +12,7 @@ def migrate():
     user = os.environ.get("NEO4J_USERNAME")
     password = os.environ.get("NEO4J_PASSWORD")
     
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = create_driver()
     ts_pattern = re.compile(r"\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]")
     
     print("Starting In-Place Chronometric Enrichment...")

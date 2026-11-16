@@ -10,7 +10,7 @@ from src.mcp_server.expert_tools import ExpertTools
 @pytest.fixture
 def mock_expert():
     """Returns an ExpertTools instance with a mocked Neo4j driver."""
-    with patch('src.mcp_server.expert_tools.GraphDatabase.driver') as mock_driver:
+    with patch('neo4j_connection.get_driver') as mock_driver:   # drivers come from neo4j_connection (S2-79)
         expert = ExpertTools(tenant_id="test-tenant")
         expert.driver = mock_driver
         return expert

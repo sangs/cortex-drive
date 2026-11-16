@@ -19,7 +19,7 @@ from typing import Any, List, Optional
 from urllib.parse import urlparse
 
 import httpx
-from neo4j import GraphDatabase
+from neo4j_connection import get_driver
 
 from .base import BaseAdapter
 
@@ -121,18 +121,18 @@ class DocumentUrlAdapter(BaseAdapter):
     hash as the current SourceSnapshot (§1.3.4). The fetched bytes are kept on the instance, so
     process_item() never downloads twice."""
 
-    def __init__(self, url: str, uri: str, user: str, password: str, tenant_id: str, owner_id: str,
+    def __init__(self, url: str, tenant_id: str, owner_id: str,
                  parser=None, transport: Optional[httpx.BaseTransport] = None):
         self.url = url
         self.tenant_id = tenant_id
         self.owner_id = owner_id
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = get_driver()   # the process-wide pool (neo4j_connection, S2-79)
         self.parser = parser
         self._transport = transport
         self.last_fetch: Optional[FetchedDocument] = None
 
     def close(self) -> None:
-        self.driver.close()
+        """Nothing to release: the shared pool is never closed by an adapter."""
 
     def _known_state(self) -> dict:
         with self.driver.session() as session:

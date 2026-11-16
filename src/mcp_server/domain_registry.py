@@ -545,6 +545,15 @@ MCP_TOOL_THREADS = int(os.environ.get("MCP_TOOL_THREADS", "32"))
 MCP_HTTP_PATH = "/mcp"
 NEO4J_LIVENESS_CHECK_S = float(os.environ.get("NEO4J_LIVENESS_CHECK_S", "30"))
 NEO4J_WARMUP_MAX_S = float(os.environ.get("NEO4J_WARMUP_MAX_S", "30"))
+# Neo4j connection factory (neo4j-connection-factory-design-2026-11-16.md, S2-79): the trust store is explicit, the same
+# on every machine and image. NEO4J_TRUST = certifi (Mozilla's list, pinned in requirements) | system | <absolute path>.
+NEO4J_TRUST_CERTIFI = "certifi"
+NEO4J_TRUST_SYSTEM = "system"
+NEO4J_TRUST_DEFAULT = NEO4J_TRUST_CERTIFI
+NEO4J_MAX_POOL_SIZE = int(os.environ.get("NEO4J_MAX_POOL_SIZE", "100"))     # the driver's default, made explicit
+NEO4J_CONNECTION_TIMEOUT_S = float(os.environ.get("NEO4J_CONNECTION_TIMEOUT_S", "30"))
+NEO4J_HEALTH_CHECK_TIMEOUT_S = 5   # a hung or unreachable Aura fails the status check quickly
+NEO4J_WARMUP_RETRY_S = 2           # pause between warm-up attempts
 
 # Vocabulary consolidation (design 2026-11-09 §5.0): the SYSTEM vocabulary labels whose duplicates are merged, the label
 # preference for a survivor on a tie, and names that look plural but are their own product names (never singularized).

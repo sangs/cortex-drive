@@ -12,7 +12,9 @@ cleanup_legacy_projects.py
 import sys
 from dotenv import load_dotenv
 from typing import List
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 import os
 
 # Load environment variables
@@ -38,7 +40,7 @@ def cleanup_legacy_projects():
 
     print(f"Connecting to Neo4j at {NEO4J_URI}...")
     
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+    driver = create_driver()
     
     try:
         with driver.session() as session:

@@ -14,7 +14,6 @@ import json
 import redis.asyncio as aioredis
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from neo4j import GraphDatabase
 from pydantic import Field
 from typing import List, Optional
 
@@ -504,14 +503,10 @@ def _foreign_source_error(label: str, key_prop: str, key_value: str, graph_tenan
     from schema_guard import SOURCE_CONNECTOR_LABELS
     if label not in SOURCE_CONNECTOR_LABELS:
         raise ValueError(f"not a source label: {label}")
-    driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                  auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
-    try:
-        rec = driver.execute_query(
-            f"MATCH (s:{label} {{tenant_id: $tenant_id}}) WHERE s[$key_prop] = $key_value RETURN s.owner_id AS owner_id LIMIT 1",
-            tenant_id=graph_tenant, key_prop=key_prop, key_value=key_value).records
-    finally:
-        driver.close()
+    from neo4j_connection import get_driver
+    rec = get_driver().execute_query(
+        f"MATCH (s:{label} {{tenant_id: $tenant_id}}) WHERE s[$key_prop] = $key_value RETURN s.owner_id AS owner_id LIMIT 1",
+        tenant_id=graph_tenant, key_prop=key_prop, key_value=key_value).records
     if rec and rec[0]["owner_id"] != requester:
         print(f"[AUTHZ/MCP] refused re-adding a source added by someone else (user={requester[:12]})")
         return json.dumps({"error": "This source can't be added."})
@@ -567,7 +562,7 @@ async def register_website_source(
         return foreign_error
 
     def _ingest() -> dict:
-        adapter = WebUrlAdapter(url, neo4j_uri, neo4j_user, neo4j_password, graph_tenant, user_id)
+        adapter = WebUrlAdapter(url, graph_tenant, user_id)
         unprocessed = adapter.get_unprocessed_items()
         if not unprocessed:
             return {"skipped": True, "message": "Content unchanged since last ingestion — already registered."}
@@ -679,22 +674,17 @@ async def get_document_source_status(
         status = None
 
     def _graph_view() -> dict:
-        from neo4j import GraphDatabase
+        from neo4j_connection import get_driver
         from schema_guard import DESCRIPTION_STATUS_PENDING
-        driver = GraphDatabase.driver(os.environ["NEO4J_URI"],
-                                      auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]))
-        try:
-            with driver.session() as session:
-                rec = session.run(
-                    """MATCH (d:DocumentSource {tenant_id: $tenant_id, uri: $uri})
-                       OPTIONAL MATCH (d)-[:HAS_SECTION]->(:Section {revision_id: d.current_snapshot_id})-[:HAS_BLOCK]->(b:ContentBlock)
-                       RETURN d.node_id AS node_id, d.name AS name, d.page_count AS pages, d.last_synced_at AS last_synced_at,
-                              count(b) AS blocks,
-                              count(CASE WHEN b.description_status = $pending THEN 1 END) AS figures_pending""",
-                    tenant_id=tenant_id, uri=url, pending=DESCRIPTION_STATUS_PENDING).single()
-                return dict(rec) if rec and rec["node_id"] else {}
-        finally:
-            driver.close()
+        with get_driver().session() as session:
+            rec = session.run(
+                """MATCH (d:DocumentSource {tenant_id: $tenant_id, uri: $uri})
+                   OPTIONAL MATCH (d)-[:HAS_SECTION]->(:Section {revision_id: d.current_snapshot_id})-[:HAS_BLOCK]->(b:ContentBlock)
+                   RETURN d.node_id AS node_id, d.name AS name, d.page_count AS pages, d.last_synced_at AS last_synced_at,
+                          count(b) AS blocks,
+                          count(CASE WHEN b.description_status = $pending THEN 1 END) AS figures_pending""",
+                tenant_id=tenant_id, uri=url, pending=DESCRIPTION_STATUS_PENDING).single()
+            return dict(rec) if rec and rec["node_id"] else {}
 
     try:
         graph = await asyncio.to_thread(_graph_view)
@@ -1005,23 +995,14 @@ app = mcp.streamable_http_app()
 app.router.routes.extend(mcp.sse_app().routes)
 
 
-# Neo4j health-check connect timeout — kept short so a hung/unreachable Aura instance
-# fails the status check quickly instead of hanging the request.
-NEO4J_HEALTH_CHECK_TIMEOUT_SECONDS = 5
-
-def _check_neo4j_connectivity() -> bool:
-    """Synchronous, tenant-agnostic Neo4j reachability check — a bare driver +
-    verify_connectivity(), not a query. Run off the event loop via asyncio.to_thread
-    since the neo4j driver's verify_connectivity() is blocking."""
-    driver = GraphDatabase.driver(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
-        connection_timeout=NEO4J_HEALTH_CHECK_TIMEOUT_SECONDS,
-    )
-    try:
-        driver.verify_connectivity()
-    finally:
-        driver.close()
+def _check_neo4j_connectivity() -> dict:
+    """Synchronous, tenant-agnostic Neo4j reachability check: a separate short-timeout driver + verify_connectivity(),
+    not a query, so a hung or unreachable Aura fails the status check quickly (NEO4J_HEALTH_CHECK_TIMEOUT_S). Run off
+    the event loop via asyncio.to_thread. Returns {"ok", "cause", "detail"} (neo4j_connection.connection_check);
+    cause = tls | auth | network | unavailable."""
+    from neo4j_connection import connection_check
+    from domain_registry import NEO4J_HEALTH_CHECK_TIMEOUT_S
+    return connection_check(timeout_s=NEO4J_HEALTH_CHECK_TIMEOUT_S)
 
 async def health_check(request):
     """Reports MCP server liveness plus real Neo4j reachability — distinct from the
@@ -1031,12 +1012,14 @@ async def health_check(request):
     the unrelated SSE-connection boolean.
     See documents/architecture/neo4j-status-indicator-design-2026-08-27.md."""
     try:
-        await asyncio.to_thread(_check_neo4j_connectivity)
-        neo4j_status = "up"
-    except Exception as e:
-        print(f"[HEALTH] Neo4j connectivity check failed: {e}")
-        neo4j_status = "down"
-    return JSONResponse({"status": "ok", "neo4j": neo4j_status})
+        check = await asyncio.to_thread(_check_neo4j_connectivity)
+    except Exception as e:  # noqa: BLE001 — a bad NEO4J_* setting must still report, never crash the health route
+        check = {"ok": False, "cause": "unavailable", "detail": type(e).__name__}
+    if check["ok"]:
+        return JSONResponse({"status": "ok", "neo4j": "up"})
+    print(f"[HEALTH] Neo4j connectivity check failed: cause={check['cause']} ({check['detail']})")
+    # cause (tls | auth | network | unavailable) says what failed; no hosts, users or secrets (S2-79).
+    return JSONResponse({"status": "ok", "neo4j": "down", "neo4j_cause": check["cause"]})
 
 app.add_route("/health", health_check, methods=["GET"])
 
@@ -1133,6 +1116,6 @@ async def _serve(port: int):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     # Warm the shared Neo4j pool before the port opens, so Cloud Run sends traffic only to a warm instance.
-    from expert_tools import warm_neo4j
+    from neo4j_connection import warm as warm_neo4j
     print(f"[WARMUP] Neo4j pool {'ready' if warm_neo4j() else 'NOT ready'}")
     asyncio.run(_serve(port))

@@ -1,5 +1,7 @@
 import os
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 # Load configuration
@@ -18,7 +20,7 @@ def nuclear_cleanup():
 
     print(f"🚀 Starting Nuclear Cleanup for tenant: {tenant_id}...")
     
-    driver = GraphDatabase.driver(uri, auth=(user, pwd))
+    driver = create_driver()
     with driver.session() as session:
         # 1. Delete professional resume nodes
         delete_query = """

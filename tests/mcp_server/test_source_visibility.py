@@ -81,7 +81,7 @@ class RegisterTest(unittest.TestCase):
 
     def test_unknown_visibility_refused(self):
         with mock.patch("ingestion_engine.ExpertTools"), mock.patch("ingestion_engine.OpenAI"), \
-                mock.patch("ingestion_engine.GraphDatabase"), \
+                mock.patch("ingestion_engine.get_driver"), \
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "x", "NEO4J_URI": "x", "NEO4J_USERNAME": "x", "NEO4J_PASSWORD": "x"}):
             with self.assertRaises(ValueError):
                 IngestionEngine(tenant_id=ORG, visibility="everyone")

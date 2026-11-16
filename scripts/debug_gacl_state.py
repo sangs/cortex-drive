@@ -1,5 +1,7 @@
 import os
-from neo4j import GraphDatabase
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '../src/mcp_server'))
+from neo4j_connection import create_driver  # noqa: E402 — the one driver factory (S2-79)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,7 +13,7 @@ def debug_gacl():
     
     owner_id = os.getenv("OWNER_USER_ID", "user_3AadvqIme5F12afWwde9nv92T5R")
     
-    driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver = create_driver()
     
     with driver.session() as session:
         print(f"\n🔍 DEBUGGING G-ACL STATE FOR USER: {owner_id}")

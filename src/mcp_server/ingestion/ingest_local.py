@@ -27,7 +27,7 @@ def main():
         sys.exit(1)
         
     print(f"Scanning directory: {transcript_dir}")
-    adapter = LocalFileAdapter(transcript_dir, uri, user, password, tenant_id=tenant_id)
+    adapter = LocalFileAdapter(transcript_dir, tenant_id=tenant_id)
     
     # Filter out files that already have Source nodes
     unprocessed = adapter.get_unprocessed_items()
