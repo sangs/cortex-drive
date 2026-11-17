@@ -4441,8 +4441,9 @@ async function warmUp() {
     console.log(`[WARMUP] ${Date.now() - started} ms — ${summary}`);
 }
 
-// The pause flag's Redis mirror follows Postgres at start-up and periodically (a Redis restart never resumes spend).
-openaiPause.resync();
+// The pause flag's Redis mirror follows Postgres whenever Redis (re)connects and periodically (a Redis restart never
+// resumes spend). On 'ready', not at load: with enableOfflineQueue:false a command before connect fails.
+redis.on('ready', () => openaiPause.resync());
 setInterval(() => openaiPause.resync(), PAUSE_CONFIG.resync_seconds * 1000).unref();
 warmUp().finally(() => app.listen(port, () => {
     console.log(`Cortex Gateway listening at http://localhost:${port}`);

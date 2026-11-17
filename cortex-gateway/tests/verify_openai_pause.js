@@ -125,7 +125,8 @@ test('routes: /query guarded; pause routes owner-only with 404', () => {
         assert.ok(at > 0, `${verb} route exists`);
         assert.ok(/if \(!capabilitiesFor\(principalFromRequest\(req, isOwner\)\)\.finops\) return res\.status\(404\)/.test(src.slice(at, at + 400)), `${verb}: owner only`);
     }
-    assert.ok(src.includes('openaiPause.resync();'), 'resync at start-up');
+    assert.ok(src.includes("redis.on('ready', () => openaiPause.resync())"), 'resync when Redis is ready (not before connect)');
+    assert.ok(!/^openaiPause\.resync\(\);/m.test(src), 'no resync at load time (fails before Redis connects)');
 });
 
 (async () => {
