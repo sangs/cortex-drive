@@ -17,6 +17,12 @@ export FINOPS_PROJECT="finops-admin-130758"
 # Gateway runtime identity (S2-84, documents/architecture/gateway-service-account-design-2026-11-17.md): only the
 # 10 gateway secrets, Cloud SQL client and invoker on MCP/Bento/Permify. Never the default Compute account (Editor).
 export GATEWAY_SA="cortex-gateway@${PROJECT_ID}.iam.gserviceaccount.com"
+# RV-15 part 1 (documents/architecture/mcp-bento-service-accounts-design-2026-11-17.md §4). MCP / Bento: their 8
+# secrets + invoker on Permify (MCP also: enqueue on the ingest queue, act as the invoker). The invoker may only run
+# the ingest worker job; MCP and the worker queue tasks that run as it (S2-87). Never the default Compute account.
+export MCP_SA="cortex-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
+export BENTO_SA="cortex-bento@${PROJECT_ID}.iam.gserviceaccount.com"
+export INGEST_INVOKER_SA="cortex-ingest-invoker@${PROJECT_ID}.iam.gserviceaccount.com"
 export REGION="us-central1"
 export REGISTRY="us-central1-docker.pkg.dev/${PROJECT_ID}/cortex-images"
 
@@ -52,7 +58,7 @@ export DOCUMENTS_ENABLED="${DOCUMENTS_ENABLED:-true}"
 # Queue settings the MCP server and the worker use to start ingest jobs (worker/enqueue.py).
 export DOCUMENT_INGEST_QUEUE="cortex-document-ingest"
 export DOCUMENT_INGEST_JOB="cortex-ingest-worker"
-export DOCUMENT_INGEST_INVOKER_SA="377406326936-compute@developer.gserviceaccount.com"
+export DOCUMENT_INGEST_INVOKER_SA="${INGEST_INVOKER_SA}"
 if [ "$DOCUMENTS_ENABLED" = "true" ]; then
     export DOCUMENT_INGEST_MODE="cloud_tasks"
     export ENABLE_DOCUMENT_DOMAIN="true"

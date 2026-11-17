@@ -66,6 +66,10 @@ class SharedDriverTest(unittest.TestCase):
                 self.assertIn('--service-account "${GATEWAY_SA', command)
         env = open(os.path.join(ROOT, "scripts", "cloud-env.sh")).read()
         self.assertIn('export GATEWAY_SA="cortex-gateway@${PROJECT_ID}.iam.gserviceaccount.com"', env)
+        # RV-15 part 1 / S2-87: ingestion runs as the dedicated invoker, never the default Compute account (Editor).
+        self.assertIn('export INGEST_INVOKER_SA="cortex-ingest-invoker@${PROJECT_ID}.iam.gserviceaccount.com"', env)
+        self.assertIn('export DOCUMENT_INGEST_INVOKER_SA="${INGEST_INVOKER_SA}"', env)
+        self.assertNotIn("developer.gserviceaccount.com", env, "no service runs as the default Compute account")
 
 
 if __name__ == "__main__":
