@@ -75,6 +75,16 @@ class SharedDriverTest(unittest.TestCase):
         self.assertIn('export INGEST_INVOKER_SA="cortex-ingest-invoker@${PROJECT_ID}.iam.gserviceaccount.com"', env)
         self.assertIn('export DOCUMENT_INGEST_INVOKER_SA="${INGEST_INVOKER_SA}"', env)
         self.assertNotIn("developer.gserviceaccount.com", env, "no service runs as the default Compute account")
+        # RV-15 part 2: the UI and Permify (with permify-migrate) run as their own accounts too.
+        ui = open(os.path.join(ROOT, "scripts", "build-deploy-ui.sh")).read()
+        self.assertIn('--service-account "${UI_SA', ui[ui.index("gcloud run deploy cortex-ui"):])
+        permify = open(os.path.join(ROOT, "scripts", "build-deploy-permify.sh")).read()
+        self.assertIn('SERVICE_ACCOUNT="${PERMIFY_SA:?', permify)
+        self.assertNotIn("developer.gserviceaccount.com", permify)
+        self.assertIn('--image "$PERMIFY_IMAGE" --service-account "$SERVICE_ACCOUNT"', permify, "migrate job: same digest, same account")
+        self.assertIn('source "${REPO:?run: source scripts/cloud-env.sh}/scripts/deploy-candidate.sh"', permify)
+        for name in ("UI_SA", "PERMIFY_SA"):
+            self.assertIn(f"export {name}=", env)
 
 
 if __name__ == "__main__":

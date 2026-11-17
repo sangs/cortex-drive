@@ -108,6 +108,7 @@ fi
 
 gcloud run deploy cortex-ui \
     --image "${REGISTRY}/cortex-ui:latest" \
+    --service-account "${UI_SA:?run: source scripts/cloud-env.sh}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --allow-unauthenticated \

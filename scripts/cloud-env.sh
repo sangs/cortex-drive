@@ -23,6 +23,10 @@ export GATEWAY_SA="cortex-gateway@${PROJECT_ID}.iam.gserviceaccount.com"
 export MCP_SA="cortex-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
 export BENTO_SA="cortex-bento@${PROJECT_ID}.iam.gserviceaccount.com"
 export INGEST_INVOKER_SA="cortex-ingest-invoker@${PROJECT_ID}.iam.gserviceaccount.com"
+# RV-15 part 2 (documents/architecture/ui-permify-service-accounts-design-2026-11-17.md §4): the UI reads only the Clerk
+# secret; Permify and permify-migrate read only their database URI secret and use the Cloud SQL client.
+export UI_SA="cortex-ui@${PROJECT_ID}.iam.gserviceaccount.com"
+export PERMIFY_SA="cortex-permify@${PROJECT_ID}.iam.gserviceaccount.com"
 export REGION="us-central1"
 export REGISTRY="us-central1-docker.pkg.dev/${PROJECT_ID}/cortex-images"
 

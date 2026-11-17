@@ -1,7 +1,12 @@
 #!/bin/bash
 # Deploy cortex-permify (authorization service) to Cloud Run. S2-35, 2026-10-21.
-# Usage: source scripts/cloud-env.sh && bash scripts/build-deploy-permify.sh [--check]
-#   --check   run every guard and compare with the live service, but don't deploy.
+# Usage: source scripts/cloud-env.sh && bash scripts/build-deploy-permify.sh [--check | --migrate-job]
+#   --check         run every guard and compare with the live service, but don't deploy.
+#   --migrate-job   point job permify-migrate at the same image digest and account (does not run it).
+#   CANDIDATE_TAG=<tag>  deploy with no traffic, tag URL only (scripts/deploy-candidate.sh).
+#
+# Runtime identity: cortex-permify@ (RV-15 part 2, ui-permify-service-accounts-design-2026-11-17.md §4): only the
+# PERMIFY_DATABASE_URI secret and the Cloud SQL client. The service and permify-migrate share it.
 #
 # No build step: the image is the official Permify image copied into the project registry. It is pinned
 # by DIGEST (the version running since 2026-10-21), not `latest`, so a redeploy can't silently change the
@@ -18,10 +23,13 @@ if [ -z "${PROJECT_ID:-}" ] || [ -z "${REGION:-}" ]; then
 fi
 CHECK_ONLY=false
 [ "${1:-}" = "--check" ] && CHECK_ONLY=true
+MIGRATE_JOB_ONLY=false
+[ "${1:-}" = "--migrate-job" ] && MIGRATE_JOB_ONLY=true
 
 SERVICE="cortex-permify"
 PERMIFY_IMAGE="${PERMIFY_IMAGE:-us-central1-docker.pkg.dev/cortex-drive-496915/cortex-images/cortex-permify@sha256:594cc43e7c3d2f3ac6539aeeefa0b964c4036197572e6df9d93cc2993d5e5b27}"
-SERVICE_ACCOUNT="377406326936-compute@developer.gserviceaccount.com"
+MIGRATE_JOB="permify-migrate"
+SERVICE_ACCOUNT="${PERMIFY_SA:?run: source scripts/cloud-env.sh}"
 CLOUD_SQL_CONN="${PROJECT_ID}:${REGION}:cortex-openfga-db"
 
 # Connection budget on cortex-openfga-db (S2-32): db-f1-micro allows 25, 3 reserved, 2 admin → 20 for apps.
@@ -34,6 +42,14 @@ ARGS="serve,--database-max-connections=${PERMIFY_DB_MAX_CONNECTIONS}"
 # Plain env vars (full authoritative set; --set-env-vars replaces the live set) and secrets.
 NEW_ENV_VARS="PERMIFY_DATABASE_ENGINE=postgres"
 NEW_SECRETS="PERMIFY_DATABASE_URI=PERMIFY_DATABASE_URI:latest"
+
+# --- permify-migrate: same image digest and account as the service (one PERMIFY_IMAGE, two readers) ---------
+if [ "$MIGRATE_JOB_ONLY" = true ]; then
+    gcloud run jobs update "$MIGRATE_JOB" --image "$PERMIFY_IMAGE" --service-account "$SERVICE_ACCOUNT" \
+        --region "$REGION" --project "$PROJECT_ID"
+    echo "✓ ${MIGRATE_JOB} now uses ${PERMIFY_IMAGE} as ${SERVICE_ACCOUNT} (not executed)."
+    exit 0
+fi
 
 # --- Guard 1: connection budget ------------------------------------------------------------------
 if [ $((PERMIFY_DB_MAX_CONNECTIONS * PERMIFY_MAX_INSTANCES)) -gt "$PERMIFY_DB_CONNECTION_BUDGET" ]; then
@@ -82,8 +98,12 @@ if [ "$CHECK_ONLY" = true ]; then
     exit 0
 fi
 
+# Candidate deploy: CANDIDATE_TAG=<tag> → no traffic, tag URL only (shared with the other services).
+source "${REPO:?run: source scripts/cloud-env.sh}/scripts/deploy-candidate.sh"
+
 echo "=== ${SERVICE}: deploy ${PERMIFY_IMAGE} ==="
-gcloud run deploy "$SERVICE" \
+# shellcheck disable=SC2086  # CANDIDATE_FLAGS is intentionally word-split
+gcloud run deploy "$SERVICE" ${CANDIDATE_FLAGS} \
     --image "$PERMIFY_IMAGE" \
     --region "$REGION" \
     --project "$PROJECT_ID" \
