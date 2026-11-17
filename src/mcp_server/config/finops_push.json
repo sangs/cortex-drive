@@ -1,0 +1,13 @@
+{
+  "_comment": "FinOps daily push (design finops-cost-tracking-design-2026-11-16 §4, tracker S2-83 release 2). Read by src/mcp_server/finops_push.py and scripts/build-deploy-finops-push.sh. Project ids come from the environment (USAGE_PROJECT, FINOPS_PROJECT; no defaults). usage_table is the table the cortex-openai-usage log sink writes (Cloud Run stdout, partitioned). The push re-sends the trailing window_days (UTC) on every run, like gmail-digest, so a re-run never double counts and late events are caught.",
+  "usage_dataset": "cortex_usage",
+  "usage_table": "run_googleapis_com_stdout",
+  "usage_event": "openai.usage",
+  "landing_table": "finops_landing.cortex_drive",
+  "provider": "OpenAI",
+  "window_days": 7,
+  "max_backfill_days": 400,
+  "max_bytes_billed": 1073741824,
+  "query_timeout_ms": 60000,
+  "run_id_prefix": "cortex-drive"
+}

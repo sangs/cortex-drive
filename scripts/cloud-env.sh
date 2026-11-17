@@ -12,6 +12,8 @@
 
 # ── GCP project config ────────────────────────────────────────────────────────
 export PROJECT_ID="cortex-drive-496915"
+# finops-admin's Google Cloud project (cost data; FinOps S2-83). Not a secret.
+export FINOPS_PROJECT="finops-admin-130758"
 export REGION="us-central1"
 export REGISTRY="us-central1-docker.pkg.dev/${PROJECT_ID}/cortex-images"
 
