@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from openai import OpenAI
 from neo4j_connection import get_driver
+from usage_log import record_response, baml_call, FEATURE_INGEST_EMBED, FEATURE_EXTRACT  # FinOps (S2-83)
 from schema_guard import (
     validate_upsert,
     CORTEX_DRIVE_NODES,
@@ -153,7 +154,7 @@ class IngestionEngine:
         print(f"Extracting strictly constrained entities for tenant {self.tenant_id} using BAML...")
 
         # Use BAML client for structured extraction
-        extracted = b.ExtractGraph(transcript=text, episode_title=episode_title)
+        extracted = baml_call(FEATURE_EXTRACT, b.ExtractGraph, transcript=text, episode_title=episode_title)
 
         # Convert BAML types to LangChain-compatible Document-like graph structure
         # (or directly to a format we can upsert)
@@ -511,7 +512,7 @@ class IngestionEngine:
         self.owner_id = owner_id or ""
 
         # 1. LLM extraction (title, description, entities, relationships)
-        extraction = b.ExtractWebPage(content=content, url=url)
+        extraction = baml_call(FEATURE_EXTRACT, b.ExtractWebPage, content=content, url=url)
 
         # 2. Schema Validation for WebsiteSource
         source_data = {
@@ -784,7 +785,8 @@ class IngestionEngine:
                 for bid, desc in descriptions.items() if bid in texts]
         for start in range(0, len(rows), DOCUMENT_EMBEDDING_BATCH_SIZE):
             batch = rows[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
-            response = self.client.embeddings.create(model=DOCUMENT_EMBEDDING_MODEL, input=[r['embed_text'] for r in batch])
+            response = record_response(FEATURE_INGEST_EMBED, self.client.embeddings.create(
+                model=DOCUMENT_EMBEDDING_MODEL, input=[r['embed_text'] for r in batch]))
             for r, item in zip(batch, response.data):
                 r['embedding'] = item.embedding
         with self.driver.session() as session:
@@ -800,8 +802,8 @@ class IngestionEngine:
                                    if r['description'] != DOCUMENT_DECORATIVE_FIGURE_DESCRIPTION)
         if not vision_text:
             return {'described': len(rows), 'entities': 0, 'grounded_links': 0}
-        extraction = b.ExtractDocumentGraph(parsed_content="", vision_descriptions=vision_text, document_title=title,
-                                            existing_topics="(topics are set from the document text)")
+        extraction = baml_call(FEATURE_EXTRACT, b.ExtractDocumentGraph, parsed_content="", vision_descriptions=vision_text,
+                                   document_title=title, existing_topics="(topics are set from the document text)")
         extraction.topics = []                       # document-level topics come from stage 1 only
         extraction = self._ground_extraction(extraction, vision_text)
         entity_ids, _ = self._link_document_entities(source_node_id, snapshot_id, extraction, derived_by=DERIVED_BY_VLM)
@@ -844,8 +846,8 @@ class IngestionEngine:
                    for i in range(0, max(len(text), 1), DOCUMENT_EXTRACTION_WINDOW_CHARS)] or [""]
         merged = None
         for window in windows:
-            part = b.ExtractDocumentGraph(parsed_content=window, vision_descriptions="", document_title=title,
-                                          existing_topics=", ".join(existing_topics or []) or "(none yet)")
+            part = baml_call(FEATURE_EXTRACT, b.ExtractDocumentGraph, parsed_content=window, vision_descriptions="",
+                            document_title=title, existing_topics=", ".join(existing_topics or []) or "(none yet)")
             if merged is None:
                 merged = part
                 continue
@@ -960,7 +962,8 @@ class IngestionEngine:
         texts = [(i, blk['text']) for i, blk in enumerate(blocks) if blk['text'].strip()]
         for start in range(0, len(texts), DOCUMENT_EMBEDDING_BATCH_SIZE):
             batch = texts[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
-            response = self.client.embeddings.create(model=DOCUMENT_EMBEDDING_MODEL, input=[t for _, t in batch])
+            response = record_response(FEATURE_INGEST_EMBED, self.client.embeddings.create(
+                model=DOCUMENT_EMBEDDING_MODEL, input=[t for _, t in batch]))
             for (i, _), item in zip(batch, response.data):
                 blocks[i]['embedding'] = item.embedding
 

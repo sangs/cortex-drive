@@ -58,6 +58,7 @@ def _join_words(items: list) -> str:
 # One pool per process (cold-start fix 2026-11-12), now created by neo4j_connection with an explicit trust store
 # (S2-79, 2026-11-16). These names stay as aliases for one release; new code imports neo4j_connection directly.
 from neo4j_connection import get_driver as get_shared_driver, warm as warm_neo4j  # noqa: E402
+from usage_log import record_response, FEATURE_SEARCH_EMBED  # noqa: E402 — FinOps usage recording (S2-83)
 
 
 class ExpertTools:
@@ -423,10 +424,10 @@ class ExpertTools:
 
     def get_embedding(self, question: str, model: str = "text-embedding-3-small") -> List[float]:
         """Get embedding vector for the input question"""
-        response = self.client.embeddings.create(
+        response = record_response(FEATURE_SEARCH_EMBED, self.client.embeddings.create(
             model=model,
             input=question
-        )
+        ))
         return response.data[0].embedding
 
     @staticmethod

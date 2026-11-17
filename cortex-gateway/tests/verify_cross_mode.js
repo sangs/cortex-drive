@@ -95,7 +95,7 @@ const node = (domain, i, extra = {}) => ({ id: `${domain}-${i}`, element_id: `${
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     ok(/routingV2\.mode === 'cross'/.test(src) && /text\/event-stream/.test(src), 'cross mode streams when asked');
     ok(/if \(!result\.anyEvidence\) \{\s*answer = NO_DATA_FOUND_ANSWER\(question\);/.test(src), 'no evidence → No data found, no LLM call');
-    ok(/temperature: ANSWER_TEMPERATURE,\s*\}\);\s*answer = completion/.test(src), 'answer call at temperature 0, no tools');
+    ok(/temperature: ANSWER_TEMPERATURE,\s*\}\)\);\s*answer = completion/.test(src), 'answer call at temperature 0, no tools (usage recorded: withUsage wrapper)');
     ok(/auditResponseUrls\(answer, urls\)/.test(src), 'URL audit on the cross answer');
     ok(/answer = withConnectionsSection\(answer, result\.bridges\)/.test(src), 'connections section written by code');
 

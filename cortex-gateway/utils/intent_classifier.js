@@ -42,6 +42,7 @@ const path = require('path');
 
 const INTENT_KEYWORDS_CONFIG = require('../config/intent_keywords.js');
 const { documentDomainEnabled } = require('./feature_flags');
+const { withUsage, OPENAI_FEATURES, priceFor } = require('./openai_usage');   // FinOps S2-83
 // Phase B M5: `document` matches (Phase R and Phase E) are ignored unless ENABLE_DOCUMENT_DOMAIN.
 const DOCUMENT_DOMAIN = 'document';
 
@@ -326,7 +327,9 @@ function _isContainerReference(q, matchedName) {
 // Cost: ~$0.02 per 1M tokens ≈ $0.0000004 per typical query.
 
 const EMBEDDING_MODEL               = 'text-embedding-3-small';
-const EMBEDDING_COST_PER_TOKEN      = 0.02 / 1_000_000;
+// Estimate for the [CLASSIFY] log line only; the price comes from the one price table (FinOps S2-83), and the
+// recorded cost uses the exact token count from the response (openai.usage events).
+const EMBEDDING_COST_PER_TOKEN      = (priceFor(EMBEDDING_MODEL)?.input_per_1m ?? 0) / 1_000_000;
 const EMBEDDING_CONFIDENCE_THRESHOLD = 0.75;
 
 let _centroids        = null;   // Map<domainSignal, number[]>
@@ -380,10 +383,10 @@ async function initClassifier(openaiClient) {
         }
 
         // Single batched API call for all prototypes
-        const response = await openaiClient.embeddings.create({
+        const response = await withUsage(OPENAI_FEATURES.CLASSIFY_INIT, openaiClient.embeddings.create({
             model: EMBEDDING_MODEL,
             input: allPrototypes
-        });
+        }));
 
         // Slice embeddings back per domain and compute centroid
         const centroids = new Map();
@@ -411,7 +414,8 @@ async function _embeddingClassify(q, openaiClient) {
     const tokenEstimate = Math.ceil(q.split(/\s+/).length * 1.3);
     const costEstimate  = (tokenEstimate * EMBEDDING_COST_PER_TOKEN).toFixed(8);
 
-    const response       = await openaiClient.embeddings.create({ model: EMBEDDING_MODEL, input: [q] });
+    const response       = await withUsage(OPENAI_FEATURES.CLASSIFY_EMBED,
+                                           openaiClient.embeddings.create({ model: EMBEDDING_MODEL, input: [q] }));
     const queryEmbedding = response.data[0].embedding;
 
     let best = { domain: null, score: 0 };

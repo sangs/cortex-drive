@@ -1,0 +1,29 @@
+{
+  "_comment": "Shared cases for the gateway (tests/verify_openai_usage.js) and Python (tests/mcp_server/test_usage_log.py) usage recorders: same input, same cost. Expected costs are computed by hand from config/openai_prices.json (2026-11-16) and must change if those prices change.",
+  "cases": [
+    { "name": "chat gpt-4o dated model", "model": "gpt-4o-2024-08-06",
+      "usage": { "prompt_tokens": 1000, "completion_tokens": 200 },
+      "expect": { "prompt_tokens": 1000, "cached_tokens": 0, "completion_tokens": 200, "cost_usd": 0.0045, "price_missing": false } },
+    { "name": "chat gpt-4o with cached input", "model": "gpt-4o",
+      "usage": { "prompt_tokens": 2000, "completion_tokens": 100, "prompt_tokens_details": { "cached_tokens": 1000 } },
+      "expect": { "prompt_tokens": 2000, "cached_tokens": 1000, "completion_tokens": 100, "cost_usd": 0.00475, "price_missing": false } },
+    { "name": "gpt-4o-mini is not priced as gpt-4o", "model": "gpt-4o-mini-2024-07-18",
+      "usage": { "prompt_tokens": 1000000, "completion_tokens": 1000000 },
+      "expect": { "prompt_tokens": 1000000, "cached_tokens": 0, "completion_tokens": 1000000, "cost_usd": 0.75, "price_missing": false } },
+    { "name": "embeddings", "model": "text-embedding-3-small",
+      "usage": { "prompt_tokens": 50000, "total_tokens": 50000 },
+      "expect": { "prompt_tokens": 50000, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": 0.001, "price_missing": false } },
+    { "name": "BAML usage shape", "model": "gpt-4o",
+      "usage": { "input_tokens": 4000, "output_tokens": 500, "cached_input_tokens": 0 },
+      "expect": { "prompt_tokens": 4000, "cached_tokens": 0, "completion_tokens": 500, "cost_usd": 0.015, "price_missing": false } },
+    { "name": "unknown model is never guessed", "model": "gpt-9-turbo",
+      "usage": { "prompt_tokens": 10, "completion_tokens": 10 },
+      "expect": { "prompt_tokens": 10, "cached_tokens": 0, "completion_tokens": 10, "cost_usd": 0, "price_missing": true } },
+    { "name": "a prefix that is not a model boundary is unknown", "model": "gpt-4omni",
+      "usage": { "prompt_tokens": 10, "completion_tokens": 10 },
+      "expect": { "prompt_tokens": 10, "cached_tokens": 0, "completion_tokens": 10, "cost_usd": 0, "price_missing": true } },
+    { "name": "missing usage", "model": "gpt-4o",
+      "usage": null,
+      "expect": { "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": 0, "price_missing": false } }
+  ]
+}

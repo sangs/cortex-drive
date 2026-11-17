@@ -17,6 +17,16 @@
       "tag": "BRIDGE_PLAN",
       "severity": "INFO",
       "fields": ["reason", "user_type"]
+    },
+    "openai.usage": {
+      "tag": "OPENAI_USAGE",
+      "severity": "INFO",
+      "fields": ["service", "feature", "model", "prompt_tokens", "cached_tokens", "completion_tokens", "cost_usd", "price_missing", "prices_effective", "user_type"]
+    },
+    "openai.price_missing": {
+      "tag": "OPENAI_USAGE",
+      "severity": "WARNING",
+      "fields": ["service", "feature", "model"]
     }
   }
 }

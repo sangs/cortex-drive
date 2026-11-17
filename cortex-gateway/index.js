@@ -14,6 +14,7 @@ const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 // the gateway routes with each domain's external signal ("career"). No hand-written id↔alias tables.
 const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/domain_ids');
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
+const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 // Node types per routing domain, keyed by the gateway's signal (document reached only with ENABLE_DOCUMENT_DOMAIN).
 const DOMAIN_ALLOWED_TYPES = Object.fromEntries(contentDomainIds()
     .map(id => [externalSignal(id), new Set(_domainManifestsRaw[id].node_types)]));
@@ -364,7 +365,7 @@ async function buildQ2WriterCall(node, openaiClient) {
         (node.startYear && node.endYear ? `${node.startYear}–${node.endYear}` :
          node.startYear || node.endYear || '');
 
-    const response = await openaiClient.chat.completions.create({
+    const response = await withUsage(OPENAI_FEATURES.WRITER, openaiClient.chat.completions.create({
         model: "gpt-4o",
         messages: [
             {
@@ -378,7 +379,7 @@ async function buildQ2WriterCall(node, openaiClient) {
         ],
         max_tokens: 200,
         temperature: ANSWER_TEMPERATURE
-    });
+    }));
     return response.choices[0].message.content?.trim() || null;
 }
 
@@ -724,7 +725,7 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
         const evidence = crossEvidenceText(result, summarise);
         const system = gatewaySystemPrompt.replace('{req_securityPrompt_replacement_token}', securityPromptFor(req))
             + '\n\n' + gatewayCrossDomainAnswerPrompt;
-        const completion = await openai.chat.completions.create({
+        const completion = await withUsage(OPENAI_FEATURES.CROSS_ANSWER, openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: system },
@@ -733,7 +734,7 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
                 { role: 'system', content: `EVIDENCE (the only source you may use):\n\n${evidence}` },
             ],
             temperature: ANSWER_TEMPERATURE,
-        });
+        }));
         answer = completion.choices[0].message.content || NO_DATA_FOUND_ANSWER(question);
         // Connections are stated by code from the bridge data, exactly as found (grounding, Invariant 11).
         answer = withConnectionsSection(answer, result.bridges);
@@ -938,6 +939,9 @@ async function getCloudRunToken(targetUrl) {
 }
 
 const app = express();
+
+// First middleware: OpenAI usage recorded anywhere in this request reads its gateway-assigned user type (FinOps S2-83).
+app.use(usageContextMiddleware);
 
 // Capture raw body for webhook routes BEFORE express.json parses them.
 // svix signature verification requires the original bytes, not a parsed object.
@@ -3251,7 +3255,7 @@ function buildCrossDomainInstruction(bridgeContext) {
 async function buildCitationWriterCall(answerText, nodeNames, openaiClient) {
     if (!answerText || nodeNames.size === 0) return '';
     try {
-        const response = await openaiClient.chat.completions.create({
+        const response = await withUsage(OPENAI_FEATURES.CITATION_WRITER, openaiClient.chat.completions.create({
             model: "gpt-4o",
             messages: [
                 { role: "system", content: gatewayCitationWriterPrompt },
@@ -3262,7 +3266,7 @@ async function buildCitationWriterCall(answerText, nodeNames, openaiClient) {
             ],
             max_tokens: 400,
             temperature: 0.2
-        });
+        }));
         const block = response.choices[0].message.content?.trim() || '';
         console.log(`[QUERY] Citation writer call returned ${block.length} chars, hasCitationsTag=${block.includes('<citations>')}: ${block.slice(0, 200)}`);
         return block.includes('<citations>') ? block : '';
@@ -3630,13 +3634,13 @@ app.post('/query', authMiddleware, async (req, res) => {
         while (loopCount < MAX_LOOPS && !isAborted) {
             loopCount++;
 
-            const response = await openai.chat.completions.create({
+            const response = await withUsage(OPENAI_FEATURES.CHAT, openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: messages,
                 tools: offeredTools,
                 tool_choice: toolChoiceFor(loopCount, groundThisTurn),
                 temperature: ANSWER_TEMPERATURE,
-            });
+            }));
 
             const assistantMessage = response.choices[0].message;
             messages.push(assistantMessage);
