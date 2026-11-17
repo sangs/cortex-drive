@@ -82,11 +82,18 @@ else
     echo "✓ No env var drift — every live plain env var is accounted for."
 fi
 
+# Candidate deploy: CANDIDATE_TAG=<tag> → no traffic, tag URL only (RV-15 part 1).
+source "${REPO}/scripts/deploy-candidate.sh"
+
+# shellcheck disable=SC2086  # CANDIDATE_FLAGS is intentionally word-split
 # --min-instances 1 (cold-start fix, 2026-11-12, user approved): a first question no longer waits for
 # scale-from-zero of every service on its path; billed at the idle rate while unused. (Never put comments inside
 # the continued command below: a comment line ends it and silently drops every flag after it.)
-gcloud run deploy cortex-bento \
+# Runtime identity: cortex-bento@ (RV-15 part 1, mcp-bento-service-accounts-design-2026-11-17.md §4): its 8 secrets
+# and invoker on Permify only. Never the default Compute account (Editor).
+gcloud run deploy cortex-bento ${CANDIDATE_FLAGS} \
     --image "${REGISTRY}/cortex-bento:latest" \
+    --service-account "${BENTO_SA:?run: source scripts/cloud-env.sh}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --no-allow-unauthenticated \

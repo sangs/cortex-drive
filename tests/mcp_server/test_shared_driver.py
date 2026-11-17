@@ -62,8 +62,14 @@ class SharedDriverTest(unittest.TestCase):
             self.assertFalse([l for l in command.splitlines() if l.strip().startswith("#")], f"comment inside {svc} deploy")
             self.assertTrue(all(l.rstrip().endswith("\\") for l in command.splitlines()[:-1] if l.strip()),
                             f"{svc}: every line but the last continues the command")
-            if svc == "gateway":   # S2-84: the gateway runs as its own least-privilege account, never the default
-                self.assertIn('--service-account "${GATEWAY_SA', command)
+            # S2-84 / RV-15 part 1: each service runs as its own least-privilege account, never the default one.
+            sa_var = {"gateway": "GATEWAY_SA", "bento": "BENTO_SA"}.get(svc)
+            if sa_var:
+                self.assertIn(f'--service-account "${{{sa_var}', command)
+            if svc in ("gateway", "bento"):   # candidate mode from the one shared helper (no copies)
+                self.assertIn('source "${REPO}/scripts/deploy-candidate.sh"', script)
+                self.assertIn(f"gcloud run deploy cortex-{svc} ${{CANDIDATE_FLAGS}}", command)
+                self.assertNotIn('CANDIDATE_FLAGS="--no-traffic', script)
         env = open(os.path.join(ROOT, "scripts", "cloud-env.sh")).read()
         self.assertIn('export GATEWAY_SA="cortex-gateway@${PROJECT_ID}.iam.gserviceaccount.com"', env)
         # RV-15 part 1 / S2-87: ingestion runs as the dedicated invoker, never the default Compute account (Editor).
