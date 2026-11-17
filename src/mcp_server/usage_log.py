@@ -161,9 +161,43 @@ def record_baml(feature: str, collector: Any, user_type: Optional[str] = None,
         print(f"[OPENAI_USAGE] BAML usage not recorded ({type(exc).__name__})", file=sys.stderr, flush=True)
 
 
+class OpenAIPaused(RuntimeError):
+    """The owner paused usage-based spend (FinOps release 5). The message is safe to show to users."""
+
+
+_pause_cache = {"at": float("-inf"), "paused": False}
+
+
+def _read_pause_flag() -> bool:
+    import redis  # in every image (Redis caches, worker status)
+    client = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"), socket_timeout=1,
+                                  socket_connect_timeout=1, decode_responses=True)
+    raw = client.get(CONFIG["pause"]["redis_key"])
+    return bool(raw) and json.loads(raw).get("paused") is True
+
+
+def ensure_openai_allowed(read_flag: Callable[[], bool] = None, clock: Callable[[], float] = None) -> None:
+    """Raise OpenAIPaused while the owner has paused OpenAI spend. Call BEFORE every OpenAI call.
+    Cached for the configured seconds; if Redis cannot be read, the last known state applies, else not paused
+    (fail open, logged): the pause is a cost control, not a security boundary."""
+    import time
+    clock = clock or time.monotonic
+    now = clock()
+    if now - _pause_cache["at"] >= CONFIG["pause"]["cache_seconds"]:
+        try:
+            _pause_cache["paused"] = (read_flag or _read_pause_flag)()
+        except Exception as exc:
+            print(f"[OPENAI_USAGE] pause flag unreadable ({type(exc).__name__}); continuing "
+                  f"{'paused' if _pause_cache['paused'] else 'not paused'}", file=sys.stderr, flush=True)
+        _pause_cache["at"] = now
+    if _pause_cache["paused"]:
+        raise OpenAIPaused(CONFIG["pause"]["paused_message"])
+
+
 def baml_call(feature: str, fn: Callable, **kwargs):
     """`baml_call(FEATURE_EXTRACT, b.ExtractWebPage, content=..., url=...)`: the call is unchanged, its usage recorded.
-    Usage is recorded even when the call fails, because failed attempts are billed too."""
+    Usage is recorded even when the call fails, because failed attempts are billed too. Refused while paused."""
+    ensure_openai_allowed()
     try:
         from baml_py import Collector
         collector = Collector(name=feature)

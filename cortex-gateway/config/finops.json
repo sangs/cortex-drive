@@ -1,5 +1,5 @@
 {
-  "_comment": "Owner-only /finops summary (FinOps design finops-cost-tracking-design-2026-11-16 §5, §13; tracker S2-83 release 4). Read by utils/finops.js. Project ids come from the environment (FINOPS_PROJECT, USAGE_PROJECT; no defaults). The four views and their logic (month, forecast, freshness) belong to finops-admin (finops-admin/docs/how-it-works.md); this file only names them. The query runs in FINOPS_PROJECT as cortex-gateway@ (READER on view_dataset + jobUser there; READER on usage_dataset here).",
+  "_comment": "Owner-only /finops summary (FinOps design finops-cost-tracking-design-2026-11-16 \u00a75, \u00a713; tracker S2-83 release 4). Read by utils/finops.js. Project ids come from the environment (FINOPS_PROJECT, USAGE_PROJECT; no defaults). The four views and their logic (month, forecast, freshness) belong to finops-admin (finops-admin/docs/how-it-works.md); this file only names them. The query runs in FINOPS_PROJECT as cortex-gateway@ (READER on view_dataset + jobUser there; READER on usage_dataset here).",
   "project_key": "cortex-drive",
   "view_dataset": "finops_cortex_drive",
   "views": {
@@ -20,5 +20,18 @@
   "cache_seconds": 600,
   "cache_key": "finops:summary:v1",
   "currency": "USD",
-  "warn_pcts": [50, 80, 100]
+  "warn_pcts": [
+    50,
+    80,
+    100
+  ],
+  "pause": {
+    "setting_key": "pause_openai",
+    "redis_key": "finops:pause_openai",
+    "cache_seconds": 10,
+    "resync_seconds": 300,
+    "reason_max_chars": 200,
+    "paused_message": "Cortex-Drive is paused by the owner. Questions and new sources are unavailable until it is resumed.",
+    "_comment": "Release 5: the owner's manual pause of usage-based (OpenAI) spend. Source of truth: app_settings (migration 012); Redis mirror read by every service. If Redis cannot be read, services continue (fail open) and log a warning: the pause is a cost control, not a security boundary."
+  }
 }

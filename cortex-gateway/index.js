@@ -16,6 +16,7 @@ const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/d
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
+const { createOpenAIPause, CONFIG: PAUSE_CONFIG } = require('./utils/openai_pause');   // owner's manual pause of OpenAI spend (release 5)
 // Node types per routing domain, keyed by the gateway's signal (document reached only with ENABLE_DOCUMENT_DOMAIN).
 const DOMAIN_ALLOWED_TYPES = Object.fromEntries(contentDomainIds()
     .map(id => [externalSignal(id), new Set(_domainManifestsRaw[id].node_types)]));
@@ -1515,6 +1516,30 @@ app.get('/api/finops/summary', authMiddleware, async (req, res) => {
     } catch (err) {
         console.warn(`[FINOPS] summary unavailable: ${(err.cause && err.cause.message) || err.message}`);
         res.status(503).json({ error: err instanceof finops.FinopsUnavailable ? err.message : 'Cost data is unavailable right now.' });
+    }
+});
+
+// Owner's manual pause of usage-based spend (FinOps S2-83 release 5, design §7). Same owner-only rule and 404 as the
+// summary. While paused, /query answers 503 for every user type and the Python services refuse OpenAI calls.
+const openaiPause = createOpenAIPause({ db, redis });
+app.get('/api/finops/pause', authMiddleware, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!capabilitiesFor(principalFromRequest(req, isOwner)).finops) return res.status(404).json({ error: 'Not found' });
+    try { res.json(await openaiPause.status()); }
+    catch (err) { console.warn(`[FINOPS] pause status unavailable: ${err.message}`); res.status(503).json({ error: 'Pause status is unavailable right now.' }); }
+});
+app.post('/api/finops/pause', authMiddleware, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!capabilitiesFor(principalFromRequest(req, isOwner)).finops) return res.status(404).json({ error: 'Not found' });
+    const { paused, reason } = req.body || {};
+    if (typeof paused !== 'boolean') return res.status(400).json({ error: 'paused must be true or false' });
+    try {
+        const status = await openaiPause.set({ paused, reason, by: req.headers['x-user-id'] });
+        console.log(`[FINOPS] OpenAI spend ${paused ? 'PAUSED' : 'resumed'} by the owner`);
+        res.json(status);
+    } catch (err) {
+        console.warn(`[FINOPS] pause change failed: ${err.message}`);
+        res.status(503).json({ error: 'Could not change the pause right now. Nothing was changed.' });
     }
 });
 
@@ -3382,7 +3407,7 @@ app.post('/api/cache/invalidate', authMiddleware, async (req, res) => {
  * Non-streaming Orchestration Endpoint
  * Used by the Dashboard for backward compatibility.
  */
-app.post('/query', authMiddleware, async (req, res) => {
+app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
     const { question, history, forceRefresh, conversationId, clarify_choice: clarifyChoice } = req.body;
     const tenantId = req.headers['x-tenant-id'];
     const userId = req.headers['x-user-id'] || 'trial-user';
@@ -4416,6 +4441,9 @@ async function warmUp() {
     console.log(`[WARMUP] ${Date.now() - started} ms — ${summary}`);
 }
 
+// The pause flag's Redis mirror follows Postgres at start-up and periodically (a Redis restart never resumes spend).
+openaiPause.resync();
+setInterval(() => openaiPause.resync(), PAUSE_CONFIG.resync_seconds * 1000).unref();
 warmUp().finally(() => app.listen(port, () => {
     console.log(`Cortex Gateway listening at http://localhost:${port}`);
     console.log(`Smart Routing Active:`);

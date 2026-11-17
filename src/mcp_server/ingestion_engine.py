@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from openai import OpenAI
 from neo4j_connection import get_driver
-from usage_log import record_response, baml_call, FEATURE_INGEST_EMBED, FEATURE_EXTRACT  # FinOps (S2-83)
+from usage_log import record_response, baml_call, ensure_openai_allowed, FEATURE_INGEST_EMBED, FEATURE_EXTRACT  # FinOps (S2-83)
 from schema_guard import (
     validate_upsert,
     CORTEX_DRIVE_NODES,
@@ -785,6 +785,7 @@ class IngestionEngine:
                 for bid, desc in descriptions.items() if bid in texts]
         for start in range(0, len(rows), DOCUMENT_EMBEDDING_BATCH_SIZE):
             batch = rows[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
+            ensure_openai_allowed()   # owner's pause (FinOps release 5)
             response = record_response(FEATURE_INGEST_EMBED, self.client.embeddings.create(
                 model=DOCUMENT_EMBEDDING_MODEL, input=[r['embed_text'] for r in batch]))
             for r, item in zip(batch, response.data):
@@ -962,6 +963,7 @@ class IngestionEngine:
         texts = [(i, blk['text']) for i, blk in enumerate(blocks) if blk['text'].strip()]
         for start in range(0, len(texts), DOCUMENT_EMBEDDING_BATCH_SIZE):
             batch = texts[start:start + DOCUMENT_EMBEDDING_BATCH_SIZE]
+            ensure_openai_allowed()   # owner's pause (FinOps release 5)
             response = record_response(FEATURE_INGEST_EMBED, self.client.embeddings.create(
                 model=DOCUMENT_EMBEDDING_MODEL, input=[t for _, t in batch]))
             for (i, _), item in zip(batch, response.data):

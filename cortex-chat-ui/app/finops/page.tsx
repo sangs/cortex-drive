@@ -14,6 +14,7 @@ import { AlertTriangle, ArrowLeft, Loader2, OctagonAlert, RefreshCw } from 'luci
 import { GATEWAY_URL } from '@/lib/gateway';
 import { SOURCE_LABEL, formatUsd, providerColor, type FinopsSummary } from '@/lib/finops-types';
 import FinopsDailyChart from '@/components/FinopsDailyChart';
+import FinopsPauseControl from '@/components/FinopsPauseControl';
 
 function ago(iso: string | null): string {
     if (!iso) return 'never';
@@ -117,6 +118,10 @@ export default function FinopsPage() {
                             <Tile label="Month-end forecast" value={t.forecast_month_end} note="at this month's daily average" />
                             <Tile label="Last month" value={t.last_month} />
                         </div>
+
+                        <Section title="Pause OpenAI spend">
+                            <FinopsPauseControl />
+                        </Section>
 
                         <Section title="Monthly limit">
                             <p className="text-sm text-slate-500">

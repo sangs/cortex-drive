@@ -129,5 +129,59 @@ class CallSitesTest(unittest.TestCase):
             self.assertEqual(re.findall(r"\bb\.Extract\w+\(", src), [], f"{name}: BAML calls go through baml_call")
 
 
+class PauseTest(unittest.TestCase):
+    """FinOps release 5: every OpenAI call is refused while the owner has paused spend."""
+
+    def setUp(self):
+        ul._pause_cache.update({"at": float("-inf"), "paused": False})
+        self.t = 0.0
+
+    def clock(self):
+        return self.t
+
+    def test_refused_while_paused_and_cached(self):
+        reads = []
+        flag = lambda: reads.append(1) or True
+        with self.assertRaises(ul.OpenAIPaused) as ctx:
+            ul.ensure_openai_allowed(flag, self.clock)
+        self.assertEqual(str(ctx.exception), ul.CONFIG["pause"]["paused_message"])
+        with self.assertRaises(ul.OpenAIPaused):
+            ul.ensure_openai_allowed(flag, self.clock)
+        self.assertEqual(len(reads), 1, "cached for cache_seconds")
+        self.t += ul.CONFIG["pause"]["cache_seconds"]
+        ul.ensure_openai_allowed(lambda: False, self.clock)   # resumed: no exception
+
+    def test_fail_open_but_keeps_last_known_state(self):
+        def down():
+            raise ConnectionError("redis down")
+        ul.ensure_openai_allowed(down, self.clock)   # never known paused: allowed
+        ul._pause_cache.update({"at": float("-inf"), "paused": True})
+        with self.assertRaises(ul.OpenAIPaused):
+            ul.ensure_openai_allowed(down, self.clock)
+
+    def test_baml_call_is_refused_before_calling(self):
+        ul._pause_cache.update({"at": 0.0, "paused": True})
+        import time
+        ul._pause_cache["at"] = time.monotonic()
+        called = []
+        with self.assertRaises(ul.OpenAIPaused):
+            ul.baml_call(ul.FEATURE_EXTRACT, lambda **_: called.append(1))
+        self.assertEqual(called, [])
+
+    def test_every_call_site_checks_the_pause(self):
+        base = os.path.join(ROOT, "src", "mcp_server")
+        for name in ("expert_tools.py", "ingestion_engine.py"):
+            src = open(os.path.join(base, name), encoding="utf-8").read()
+            self.assertEqual(len(re.findall(r"embeddings\.create\(", src)),
+                             len(re.findall(r"ensure_openai_allowed\(\)   # owner's pause", src)), name)
+        self.assertIn("    ensure_openai_allowed()\n    try:", open(os.path.join(base, "usage_log.py")).read(),
+                      "baml_call checks first")
+
+    def test_pause_config_comes_from_the_gateway(self):
+        gw = json.load(open(os.path.join(ROOT, "cortex-gateway", "config", "finops.json")))["pause"]
+        gw.pop("_comment", None)
+        self.assertEqual(ul.CONFIG["pause"], gw)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,4 +29,12 @@ ok(/providerColor\(p\.provider\)/.test(chart), 'colour by provider, never by ran
 const proxy = read('proxy.ts');
 ok(!/"\/finops/.test(proxy), '/finops is not a public route (Clerk sign-in required)');
 
+const pause = read('components/FinopsPauseControl.tsx');
+ok(/\$\{GATEWAY_URL\}\/api\/finops\/pause/.test(pause), 'pause control talks to the owner-only gateway route');
+ok(/setConfirming\(true\)/.test(pause) && /Confirm: pause for every user/.test(pause), 'pausing takes two clicks');
+ok(!/window\.confirm|confirm\(/.test(pause.replace(/setConfirming|confirming/g, '')), 'no browser dialog');
+ok(/<FinopsPauseControl \/>/.test(page), 'the page shows the pause control');
+const client = read('lib/mcp-client.ts');
+ok(/body\?\.paused === true && typeof body\.error === "string"\) throw new Error\(body\.error\)/.test(client), 'a paused /query shows the owner\'s message');
+
 console.log(`verify_finops_page: ${passed} checks passed`);

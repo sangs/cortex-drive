@@ -106,6 +106,9 @@ export class MCPClient {
         });
 
         if (!response.ok) {
+            // The owner's pause (FinOps release 5) answers 503 {paused: true, error}: show that message as it is.
+            const body = await response.clone().json().catch(() => null);
+            if (body?.paused === true && typeof body.error === "string") throw new Error(body.error);
             throw new Error(`Orchestration query failed: ${response.statusText}`);
         }
 
