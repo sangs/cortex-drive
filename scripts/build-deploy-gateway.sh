@@ -220,6 +220,7 @@ gcloud run deploy cortex-gateway ${CANDIDATE_FLAGS} \
     --timeout 600 \
     --min-instances 1 \
     --max-instances 5 \
+    --service-account "${GATEWAY_SA:?run: source scripts/cloud-env.sh}" \
     --add-cloudsql-instances "${CLOUD_SQL_CONN}" \
     --set-env-vars "${NEW_ENV_VARS}" \
     --set-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest,CLERK_SECRET_KEY=CLERK_SECRET_KEY:latest,\

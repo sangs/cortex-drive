@@ -62,6 +62,10 @@ class SharedDriverTest(unittest.TestCase):
             self.assertFalse([l for l in command.splitlines() if l.strip().startswith("#")], f"comment inside {svc} deploy")
             self.assertTrue(all(l.rstrip().endswith("\\") for l in command.splitlines()[:-1] if l.strip()),
                             f"{svc}: every line but the last continues the command")
+            if svc == "gateway":   # S2-84: the gateway runs as its own least-privilege account, never the default
+                self.assertIn('--service-account "${GATEWAY_SA', command)
+        env = open(os.path.join(ROOT, "scripts", "cloud-env.sh")).read()
+        self.assertIn('export GATEWAY_SA="cortex-gateway@${PROJECT_ID}.iam.gserviceaccount.com"', env)
 
 
 if __name__ == "__main__":
