@@ -14,7 +14,7 @@ const SOURCE_WRITER_USER_TYPES = new Set([USER_TYPES.OWNER, USER_TYPES.ORG_ADMIN
 const GROUP_MANAGER_USER_TYPES = SOURCE_WRITER_USER_TYPES;
 
 const NO_CAPABILITIES = Object.freeze({
-    addSource: false, sourceVisibilities: [], share: false, shareOrgWide: false, manageGroups: false, admin: false,
+    addSource: false, sourceVisibilities: [], share: false, shareOrgWide: false, manageGroups: false, admin: false, finops: false,
 });
 
 /**
@@ -35,6 +35,8 @@ function capabilitiesFor({ type, isOwner = false, isOrgAdmin = false, guest = fa
         manageGroups: GROUP_MANAGER_USER_TYPES.has(type),
         // Schema/statistics, cache invalidation, pending-invite sweep (x-schema-readable).
         admin,
+        // Cost page and summary (FinOps S2-83, design §8): the platform owner only, never org admins (AP-27).
+        finops: owner,
     };
 }
 

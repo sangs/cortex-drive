@@ -107,7 +107,8 @@ PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERM
 CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\
 ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true},\
 ROUTING_V2=${ROUTING_V2:-owner},\
-BRIDGE_PLAN=${BRIDGE_PLAN:-owner}"
+BRIDGE_PLAN=${BRIDGE_PLAN:-owner},\
+FINOPS_PROJECT=${FINOPS_PROJECT:?run: source scripts/cloud-env.sh},USAGE_PROJECT=${PROJECT_ID}"
 
 # --- Env-var drift guard --------------------------------------------------
 # Incident 2026-09-08: ENABLE_SEMANTIC_CANDIDATE_SEARCH was turned on live via a

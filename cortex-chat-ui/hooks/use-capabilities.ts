@@ -18,9 +18,10 @@ export interface Capabilities {
     shareOrgWide: boolean;
     manageGroups: boolean;
     admin: boolean;
+    finops: boolean;   // owner-only cost page (FinOps S2-83)
 }
 export const NO_CAPABILITIES: Capabilities = Object.freeze({
-    addSource: false, sourceVisibilities: [], share: false, shareOrgWide: false, manageGroups: false, admin: false,
+    addSource: false, sourceVisibilities: [], share: false, shareOrgWide: false, manageGroups: false, admin: false, finops: false,
 }) as Capabilities;
 
 // One request per signed-in user per page load, shared by every component that asks.

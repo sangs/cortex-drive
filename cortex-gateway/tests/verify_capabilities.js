@@ -42,6 +42,8 @@ for (const [name, p] of Object.entries(PRINCIPALS)) {
     eq([c.addSource, c.sourceVisibilities, c.share, c.shareOrgWide, c.manageGroups, c.admin],
        [addSource, vis, share, orgWide, groups, admin], `${name}: capabilities match roles doc §3`);
 }
+// FinOps (S2-83 release 4): the cost page is the platform owner's only, never an org admin's (AP-27).
+for (const [name, p] of Object.entries(PRINCIPALS)) eq(capabilitiesFor(p).finops, name === 'owner', `${name}: finops only for the owner`);
 eq(capabilitiesFor().addSource, false, 'no principal: nothing allowed (fail closed)');
 eq(capabilitiesFor({ type: USER_TYPES.COLLABORATOR, isOrgAdmin: true }).admin, false,
    'a stray admin flag never lifts a collaborator');

@@ -1,0 +1,24 @@
+{
+  "_comment": "Owner-only /finops summary (FinOps design finops-cost-tracking-design-2026-11-16 §5, §13; tracker S2-83 release 4). Read by utils/finops.js. Project ids come from the environment (FINOPS_PROJECT, USAGE_PROJECT; no defaults). The four views and their logic (month, forecast, freshness) belong to finops-admin (finops-admin/docs/how-it-works.md); this file only names them. The query runs in FINOPS_PROJECT as cortex-gateway@ (READER on view_dataset + jobUser there; READER on usage_dataset here).",
+  "project_key": "cortex-drive",
+  "view_dataset": "finops_cortex_drive",
+  "views": {
+    "month_summary": "v_month_summary",
+    "by_provider": "v_by_provider_mtd",
+    "cost_daily": "v_cost_daily",
+    "source_status": "v_source_status"
+  },
+  "usage_dataset": "cortex_usage",
+  "usage_table": "run_googleapis_com_stdout",
+  "usage_event": "openai.usage",
+  "gcp_provider": "Google Cloud",
+  "app_recorded_source": "app_recorded",
+  "billing_time_zone": "America/Los_Angeles",
+  "daily_days": 30,
+  "max_bytes_billed": 209715200,
+  "query_timeout_ms": 30000,
+  "cache_seconds": 600,
+  "cache_key": "finops:summary:v1",
+  "currency": "USD",
+  "warn_pcts": [50, 80, 100]
+}

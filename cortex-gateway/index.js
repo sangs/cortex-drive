@@ -15,6 +15,7 @@ const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/domain_ids');
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
+const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
 // Node types per routing domain, keyed by the gateway's signal (document reached only with ENABLE_DOCUMENT_DOMAIN).
 const DOMAIN_ALLOWED_TYPES = Object.fromEntries(contentDomainIds()
     .map(id => [externalSignal(id), new Set(_domainManifestsRaw[id].node_types)]));
@@ -1502,6 +1503,19 @@ app.post('/api/webhooks/clerk', async (req, res) => {
 // same rules (utils/capabilities.js), so hiding a control is never the protection.
 app.get('/api/me/capabilities', authMiddleware, (req, res) => {
     res.json({ type: req.headers['x-user-type'] || '', capabilities: capabilitiesFor(principalFromRequest(req, isOwner)) });
+});
+
+// Owner-only cost summary (FinOps S2-83 release 4, design §5/§8). Everyone else gets 404, so the route's existence
+// is not revealed (AP-27). The logic lives in utils/finops.js; the numbers in finops-admin's views.
+app.get('/api/finops/summary', authMiddleware, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!capabilitiesFor(principalFromRequest(req, isOwner)).finops) return res.status(404).json({ error: 'Not found' });
+    try {
+        res.json(await finops.getSummary({ refresh: req.query.refresh === '1', redis }));
+    } catch (err) {
+        console.warn(`[FINOPS] summary unavailable: ${(err.cause && err.cause.message) || err.message}`);
+        res.status(503).json({ error: err instanceof finops.FinopsUnavailable ? err.message : 'Cost data is unavailable right now.' });
+    }
 });
 
 app.post('/api/auth/activate-pending', authMiddleware, async (req, res) => {

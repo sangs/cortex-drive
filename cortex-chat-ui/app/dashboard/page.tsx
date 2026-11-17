@@ -29,7 +29,8 @@ import {
     RefreshCw,
     Share2,
     Globe,
-    Undo2
+    Undo2,
+    DollarSign
 } from 'lucide-react';
 import A2UIRenderer from "@/components/a2ui/A2UIRenderer";
 import dynamic from "next/dynamic";
@@ -1432,11 +1433,18 @@ export default function DashboardPage() {
                                         </span>
                                     </div>
                                 </div>
+                                <div className="flex items-center gap-2">
+                                {caps.finops && (
+                                <Link href="/finops" title="Costs">
+                                    <DollarSign className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
+                                </Link>
+                                )}
                                 {(caps.share || caps.manageGroups) && (
                                 <Link href="/settings/sharing" title="Sharing & Access">
                                     <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
                                 </Link>
                                 )}
+                                </div>
                             </div>
                         </div>
                     ) : (

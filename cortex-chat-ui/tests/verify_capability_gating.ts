@@ -13,7 +13,7 @@ const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'u
 const hook = read('hooks/use-capabilities.ts');
 ok(/useState<Capabilities>\(NO_CAPABILITIES\)/.test(hook), 'starts with no capabilities (fail closed while loading)');
 ok(/if \(!resp\.ok\) return NO_CAPABILITIES/.test(hook), 'a failed call grants nothing');
-ok(/addSource: false, sourceVisibilities: \[\], share: false, shareOrgWide: false, manageGroups: false, admin: false/.test(hook),
+ok(/addSource: false, sourceVisibilities: \[\], share: false, shareOrgWide: false, manageGroups: false, admin: false, finops: false/.test(hook),
    'NO_CAPABILITIES is all false');
 
 const dash = read('app/dashboard/page.tsx');
@@ -22,6 +22,7 @@ ok(/open=\{addSourceModalOpen && caps\.addSource\}/.test(dash), 'Add Source dial
 ok(/allowedVisibilities=\{caps\.sourceVisibilities\}/.test(dash), 'visibility choices come from the capabilities');
 ok(/graphData\.nodes\.length > 0 && caps\.share && \(/.test(dash), 'Share Graph needs share');
 ok(/\{\(caps\.share \|\| caps\.manageGroups\) && \(\s*<Link href="\/settings\/sharing"/.test(dash), 'settings link needs share or groups');
+ok(/\{caps\.finops && \(\s*<Link href="\/finops"/.test(dash), 'costs link only for the owner (finops capability)');
 
 const modal = read('components/AddSourceModal.tsx');
 ok(/visibilityOptions\.map\(o => <option/.test(modal) && !/VISIBILITY_OPTIONS\.map\(o => <option/.test(modal),
