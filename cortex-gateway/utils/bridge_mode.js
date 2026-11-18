@@ -12,6 +12,7 @@
  * a model. Every tool call carries the asker's identity; the MCP security clause applies on every hop (AP-30).
  */
 const LIMITS = require('../config/bridge_plan.json');
+const { isFatalToolError } = require('./user_errors');   // a graph outage ends the request (S2-90)
 const { planBridge, ownershipRequest, resolveBridgeSourceChoice, resolveBridgeKindChoice } = require('./bridge_plan');
 const { bridgesFromConnectResult, notesFromConnectResult, bridgeModeAnswer, dropGroupingBridges,
         groupingIdsFromConnectResult } = require('./bridge_section');
@@ -89,6 +90,7 @@ async function runBridgeMode({ question, lookups, clarifyChoice, callTool, onPro
             if (!r || r.error || !Array.isArray(r.items)) opts.ownershipFailed = true;
             else opts.ownedIds = new Set(r.items.map(i => i.node_id));
         } catch (e) {
+            if (isFatalToolError(e)) throw e;
             opts.ownershipFailed = true;
         }
     }
@@ -108,6 +110,7 @@ async function runBridgeMode({ question, lookups, clarifyChoice, callTool, onPro
             onProgress({ domain: source.node_id, label: source.name, status: chains ? STATUS.found : STATUS.none, count: chains });
             return { source, status: chains ? STATUS.found : STATUS.none, parsed };
         } catch (e) {
+            if (isFatalToolError(e)) throw e;
             const status = e.message === 'deadline' ? STATUS.timeout : STATUS.error;
             onProgress({ domain: source.node_id, label: source.name, status, count: 0 });
             return { source, status, parsed: null };

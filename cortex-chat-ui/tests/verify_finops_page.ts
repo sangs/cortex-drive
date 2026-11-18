@@ -35,6 +35,7 @@ ok(/setConfirming\(true\)/.test(pause) && /Confirm: pause for every user/.test(p
 ok(!/window\.confirm|confirm\(/.test(pause.replace(/setConfirming|confirming/g, '')), 'no browser dialog');
 ok(/<FinopsPauseControl \/>/.test(page), 'the page shows the pause control');
 const client = read('lib/mcp-client.ts');
-ok(/body\?\.paused === true && typeof body\.error === "string"\) throw new Error\(body\.error\)/.test(client), 'a paused /query shows the owner\'s message');
+ok(/body\.paused === true \|\| typeof body\.code === "string"/.test(client) && /gatewayErrorMessage\(response, `Orchestration query failed/.test(client),
+   'a paused (or classified, S2-90) /query shows the gateway\'s safe message');
 
 console.log(`verify_finops_page: ${passed} checks passed`);

@@ -2,6 +2,17 @@ import type { ClarifyChoice } from '../utils/clarify';
 import { readEventStream, readQueryStream } from '../utils/queryStream';
 import type { QueryProgressEvent } from '../utils/queryStream';
 import { GATEWAY_URL } from './gateway';
+
+/**
+ * The gateway's message for a failed request, when it is one of its safe ones: the owner's pause ({paused: true, error})
+ * or a classified failure ({error, code}, S2-90: fixed text by class, never a raw cause). Otherwise the fallback.
+ */
+async function gatewayErrorMessage(response: Response, fallback: string): Promise<string> {
+    const body = await response.clone().json().catch(() => null);
+    const safe = body && typeof body.error === "string" && (body.paused === true || typeof body.code === "string");
+    return safe ? body.error : fallback;
+}
+
 export class MCPClient {
     private tenantId: string;
     private getToken: () => Promise<string | null>;
@@ -51,7 +62,7 @@ export class MCPClient {
                     body: JSON.stringify(params.arguments || {}),
                 }
             );
-            if (!response.ok) throw new Error(`Tool call failed: ${response.statusText}`);
+            if (!response.ok) throw new Error(await gatewayErrorMessage(response, `Tool call failed: ${response.statusText}`));
             return await response.json();
         }
 
@@ -72,7 +83,7 @@ export class MCPClient {
         };
         if (token) headers["Authorization"] = `Bearer ${token}`;
         const response = await fetch(`${gatewayBase}/api/bridges/stream`, { method: "POST", headers, signal, body: JSON.stringify(body) });
-        if (!response.ok || !response.body) throw new Error(`Bridge discovery failed: ${response.statusText}`);
+        if (!response.ok || !response.body) throw new Error(await gatewayErrorMessage(response, `Bridge discovery failed: ${response.statusText}`));
         return await readEventStream(response.body, onEvent);
     }
 
@@ -106,10 +117,8 @@ export class MCPClient {
         });
 
         if (!response.ok) {
-            // The owner's pause (FinOps release 5) answers 503 {paused: true, error}: show that message as it is.
-            const body = await response.clone().json().catch(() => null);
-            if (body?.paused === true && typeof body.error === "string") throw new Error(body.error);
-            throw new Error(`Orchestration query failed: ${response.statusText}`);
+            // The owner's pause and every classified failure (S2-90) carry a safe, fixed message: show it as it is.
+            throw new Error(await gatewayErrorMessage(response, `Orchestration query failed: ${response.statusText}`));
         }
 
         if ((response.headers.get("Content-Type") || "").includes("text/event-stream") && response.body) {

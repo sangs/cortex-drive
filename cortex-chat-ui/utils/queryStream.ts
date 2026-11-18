@@ -4,6 +4,11 @@
 // `label` its name (design 2026-11-13 §4.2).
 export type QueryProgressEvent = { type: 'progress'; domain: string; status: string; count: number; label?: string };
 
+/** The gateway's safe message from an `error` event (S2-90: fixed text by class, never a raw cause). */
+export function streamErrorMessage(e: any): string | null {
+    return e && e.type === 'error' && typeof e.error === 'string' ? e.error : null;
+}
+
 /** Parse SSE `data:` lines from a chunk buffer; returns the parsed events and the unfinished tail. */
 export function parseSseChunk(buffer: string): { events: any[]; rest: string } {
     const events: any[] = [];
@@ -31,6 +36,7 @@ export async function readQueryStream(body: ReadableStream<Uint8Array>, onProgre
         for (const e of events) {
             if (e.type === 'progress') onProgress?.(e as QueryProgressEvent);
             else if (e.type === 'result') { const { type, ...payload } = e; result = payload; }
+            else if (streamErrorMessage(e)) throw new Error(streamErrorMessage(e) as string);
         }
         if (done) break;
     }
@@ -52,6 +58,7 @@ export async function readEventStream(body: ReadableStream<Uint8Array>, onEvent:
         for (const e of events) {
             if (e.type === 'result') result = e;
             onEvent(e);
+            if (!result && streamErrorMessage(e)) throw new Error(streamErrorMessage(e) as string);
         }
         if (done) break;
     }

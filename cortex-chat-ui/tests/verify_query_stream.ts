@@ -2,7 +2,7 @@
  * Streamed /query answers (cross-domain mode, design 2026-11-09 §4.2). Run: `npm test`.
  */
 import assert from 'node:assert/strict';
-import { parseSseChunk, readQueryStream } from '../utils/queryStream.ts';
+import { parseSseChunk, readEventStream, readQueryStream } from '../utils/queryStream.ts';
 
 let passed = 0;
 const eq = (a: unknown, b: unknown, m: string) => { assert.deepEqual(a, b, m); passed++; };
@@ -23,5 +23,13 @@ eq(result, { answer: 'A', domain_signal: 'cross_domain' }, 'result payload witho
 
 const empty = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"type":"progress","domain":"x","status":"found","count":1}\n\n')); c.close(); } });
 await assert.rejects(readQueryStream(empty), /without a result/); passed++;
+
+// S2-90: a failure after the stream started arrives as {type: "error", error: <safe message>, code}: show that message.
+const SAFE = 'The knowledge graph is temporarily unavailable. Try again shortly.';
+const failed = () => new ReadableStream<Uint8Array>({ start(c) {
+    c.enqueue(enc.encode('data: {"type":"progress","domain":"podcast","status":"searching","count":0}\n\n'));
+    c.enqueue(enc.encode(`data: {"type":"error","error":"${SAFE}","code":"graph_unavailable"}\n\n`)); c.close(); } });
+await assert.rejects(readQueryStream(failed()), (e: Error) => e.message === SAFE); passed++;
+await assert.rejects(readEventStream(failed(), () => {}), (e: Error) => e.message === SAFE); passed++;
 
 console.log(`verify_query_stream: ${passed} checks passed`);

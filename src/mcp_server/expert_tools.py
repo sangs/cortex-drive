@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 import json
+from tool_errors import tool_error_json   # Neo4j outage → error_code graph_unavailable (S2-90)
 import numpy as np
 import re
 from typing import List, Dict, Any, Optional, cast, LiteralString
@@ -1366,7 +1367,7 @@ class ExpertTools:
                 payload["withheld_nodes"] = withheld
             return json.dumps(payload, indent=2, default=neo4j_default)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def _run_read_only(self, query: str):
         """Execute in a READ-access transaction; Neo4j rejects writes server-side (AccessMode error)."""
@@ -1560,13 +1561,13 @@ class ExpertTools:
             if not record or not record.get("registered"):
                 return json.dumps({"error": "URL not found or access denied."})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
         from ingestion.adapters.web_url import fetch_and_extract
         try:
             content, _content_hash, image_urls = fetch_and_extract(url)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
         from datetime import datetime
         return json.dumps({
@@ -1635,7 +1636,7 @@ class ExpertTools:
                 })
             return json.dumps(output, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def _inject_federated_demo_boost(self) -> str:
         return "WHEN 'ExternalSilo' IN labels(node) AND any(w IN keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg']) THEN 1000"
@@ -2122,7 +2123,7 @@ class ExpertTools:
             import traceback
             print(f"Error in search_enterprise_graph: {e}")
             traceback.print_exc()
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
 
 
@@ -2149,7 +2150,7 @@ class ExpertTools:
                 unique_rules = sorted(list(set(schema_rules)))
                 return json.dumps({"Active_Database_Schema": unique_rules}, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def _resolve_primary_subject(self) -> Optional[str]:
         """
@@ -2353,7 +2354,7 @@ class ExpertTools:
                 "snapshot": record["snapshot"]
             }, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def enumerate_bridge_sources(self, domain: str = "professional") -> str:
         """
@@ -2386,7 +2387,7 @@ class ExpertTools:
             ]
             return json.dumps({"sources": sources})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def person_work_items(self, person_node_ids: list, labels: list) -> str:
         """
@@ -2422,7 +2423,7 @@ class ExpertTools:
                      for r in result.records if r["node_id"]]
             return json.dumps({"items": items, "truncated": len(items) >= BRIDGE_PLAN_WORK_ITEMS_MAX})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def connect_knowledge_on_demand(
         self,
@@ -3033,7 +3034,7 @@ class ExpertTools:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def _bridge_bfs_layer(self, frontier: list, seen: list) -> list:
         """One hop of the bounded bridge search (design 2026-11-09 §4.3): every neighbour of the frontier
@@ -3970,7 +3971,7 @@ class ExpertTools:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            return json.dumps({"error": str(e)})
+            return tool_error_json(e)
 
     def get_composition_subtree(self, root_node_id: str, max_depth: int = 5) -> dict:
         """BFS over COMPOSITION_RELATIONSHIPS to compute the subtree of a root node.

@@ -11,6 +11,8 @@
  *      larger per-domain limit, excluding what was already returned; their extra bridges arrive as `partial` events.
  *   4. A final `result`: per-domain summaries, has_more, limits for "Show more".
  */
+const { classifyError, isFatalToolError } = require('./user_errors');   // safe messages only (S2-90)
+
 const AUTO = 'auto';
 
 const targetsOf = r => (r && Array.isArray(r.nodes) ? r.nodes.filter(n => n.bridge_reason) : []);
@@ -44,7 +46,8 @@ async function runBridgeStream({ callTool, send, request }) {
         try {
             result = await callTool('connect_knowledge_on_demand', { ...base, domain_filter: [domain], visible_node_ids: [...shown] });
         } catch (e) {
-            result = { error: e.message };
+            if (isFatalToolError(e)) throw e;
+            result = { error: classifyError(e).message };   // never the raw cause (S2-90)
         }
         const status = result.error ? 'error' : result.skipped ? 'skipped' : (targetsOf(result).length ? 'found' : 'none');
         perDomain[domain] = { result, status, targets: targetsOf(result).length };

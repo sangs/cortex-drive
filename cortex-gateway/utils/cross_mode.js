@@ -14,6 +14,7 @@
  * Every dependency is passed in (tool calls, filters, summaries), so the module is tested without a network.
  */
 const { canonicalDomain } = require('./domain_ids');   // routing name → search domain id
+const { isFatalToolError } = require('./user_errors');   // a graph outage ends the request (S2-90)
 const RRF_K = 60;
 // Per-domain deadline. The design's ~1.2 s assumed a direct query; a search through MCP takes a few seconds, so this
 // starts at 6 s and is to be tuned from production measurements (each domain is reported as it finishes).
@@ -80,6 +81,7 @@ async function runCrossMode({ domains, terms, weights = {}, callTool, filter = (
             onProgress({ domain, status: nodes.length ? 'found' : 'none', count: nodes.length });
             return { domain, status: nodes.length ? 'found' : 'none', parsed: { ...kept, nodes } };
         } catch (e) {
+            if (isFatalToolError(e)) throw e;   // Neo4j down: the whole answer is "unavailable", not "no data"
             const status = e.message === 'deadline' ? 'timeout' : 'error';
             onProgress({ domain, status, count: 0 });
             return { domain, status, parsed: { nodes: [], links: [] } };

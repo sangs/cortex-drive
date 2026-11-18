@@ -27,6 +27,11 @@
       "tag": "OPENAI_USAGE",
       "severity": "WARNING",
       "fields": ["service", "feature", "model"]
+    },
+    "user_error": {
+      "tag": "USER_ERROR",
+      "severity": "WARNING",
+      "fields": ["code", "route", "status", "cause", "cause_code", "user_type"]
     }
   }
 }

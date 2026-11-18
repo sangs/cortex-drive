@@ -14,6 +14,7 @@ const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 // the gateway routes with each domain's external signal ("career"). No hand-written id↔alias tables.
 const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/domain_ids');
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
+const { sendSafeError, GraphUnavailableError, isFatalToolError, isGraphUnavailableResult } = require('./utils/user_errors');   // S2-90
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
 const { createOpenAIPause, CONFIG: PAUSE_CONFIG } = require('./utils/openai_pause');   // owner's manual pause of OpenAI spend (release 5)
@@ -1617,7 +1618,7 @@ app.post('/api/auth/activate-pending/sweep', authMiddleware, async (req, res) =>
         res.json({ swept: pending.length, activated, stillPending });
     } catch (err) {
         console.error('[/api/auth/activate-pending/sweep]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1644,7 +1645,7 @@ app.post('/api/share/tenant-wide', authMiddleware, requireCapability('shareOrgWi
         res.json({ ok: true, tenant_wide: true });
     } catch (err) {
         console.error('[/api/share/tenant-wide]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1689,7 +1690,7 @@ app.post('/api/share/infer', authMiddleware, shareAuthz.requireNodeShare(req => 
         res.json({ ...subtree, alreadyAccessible });
     } catch (err) {
         console.error('[/api/share/infer]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1775,7 +1776,7 @@ app.post('/api/share/user', authMiddleware, shareAuthz.requireNodeShare(req => r
         res.json({ grantId, reused, childNodeIds, privateNodeIds });
     } catch (err) {
         console.error('[/api/share/user]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1820,7 +1821,7 @@ app.post('/api/share/group', authMiddleware, shareAuthz.requireNodeShare(req => 
         res.json({ grantId, reused, childNodeIds, privateNodeIds });
     } catch (err) {
         console.error('[/api/share/group]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1883,7 +1884,7 @@ app.delete('/api/share/grants/:grant_id', authMiddleware, shareAuthz.requireGran
         res.json({ revoked: true, audienceCount: audience.length });
     } catch (err) {
         console.error('[DELETE /api/share/grants/:grant_id]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1925,7 +1926,7 @@ app.delete('/api/share/grants/:grant_id/audience/:assignment_id', authMiddleware
         res.json({ revoked: true });
     } catch (err) {
         console.error('[DELETE /api/share/grants/:grant_id/audience/:assignment_id]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1936,7 +1937,7 @@ app.get('/api/share/access/:node_id', authMiddleware, shareAuthz.requireNodeShar
         res.json(access);
     } catch (err) {
         console.error('[/api/share/access]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1957,7 +1958,7 @@ app.get('/api/share/history/:node_id', authMiddleware, shareAuthz.requireNodeSha
         res.json({ active, revoked });
     } catch (err) {
         console.error('[/api/share/history]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1978,7 +1979,7 @@ app.patch('/api/nodes/:nodeId/privacy', authMiddleware, async (req, res) => {
         res.json({ nodeId, is_private });
     } catch (err) {
         console.error('[/api/nodes/privacy]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -1996,7 +1997,7 @@ app.get('/api/user/resolve', authMiddleware, async (req, res) => {
         });
     } catch (err) {
         console.error('[/api/user/resolve]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2019,7 +2020,7 @@ app.post('/api/groups', authMiddleware, requireCapability('manageGroups', 'Only 
     } catch (err) {
         if (err.code === '23505') return res.status(409).json({ error: 'A group with that slug already exists in your org' });
         console.error('[POST /api/groups]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2039,7 +2040,7 @@ app.get('/api/groups', authMiddleware, async (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('[GET /api/groups]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2072,7 +2073,7 @@ app.get('/api/groups/:id', authMiddleware, async (req, res) => {
         res.json({ ...group, members: enriched });
     } catch (err) {
         console.error('[GET /api/groups/:id]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2099,7 +2100,7 @@ app.post('/api/groups/:id/members', authMiddleware, shareAuthz.requireGroupCreat
         res.status(201).json({ ok: true, groupId: id, userSub });
     } catch (err) {
         console.error('[POST /api/groups/:id/members]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2122,7 +2123,7 @@ app.delete('/api/groups/:id/members/:sub', authMiddleware, shareAuthz.requireGro
         res.json({ ok: true });
     } catch (err) {
         console.error('[DELETE /api/groups/:id/members/:sub]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2206,7 +2207,7 @@ app.post('/api/groups/:id/invite', authMiddleware, shareAuthz.requireGroupCreato
         });
     } catch (err) {
         console.error('[POST /api/groups/:id/invite]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2229,7 +2230,7 @@ app.get('/api/groups/:id/invitations', authMiddleware, shareAuthz.requireGroupCr
         res.json(rows);
     } catch (err) {
         console.error('[GET /api/groups/:id/invitations]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2260,7 +2261,7 @@ app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, shareAuth
         res.json({ ok: true });
     } catch (err) {
         console.error('[POST /api/groups/:id/invitations/:inv_id/resend]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2283,7 +2284,7 @@ app.delete('/api/groups/:id/invitations/:inv_id', authMiddleware, shareAuthz.req
         res.json({ ok: true });
     } catch (err) {
         console.error('[DELETE /api/groups/:id/invitations/:inv_id]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2366,7 +2367,7 @@ app.post('/api/share/graph-island', authMiddleware, shareAuthz.requireNodeShare(
         res.json({ grantId, totalNodes: nodeIds.length, reused });
     } catch (err) {
         console.error('[/api/share/graph-island]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2553,7 +2554,7 @@ app.get('/api/share/grants', authMiddleware, async (req, res) => {
         res.json(result);
     } catch (err) {
         console.error('[GET /api/share/grants]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2582,7 +2583,7 @@ app.get('/api/share/pending', authMiddleware, async (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('[GET /api/share/pending]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2615,7 +2616,7 @@ app.post('/api/share/resend-invite/:grant_id', authMiddleware, shareAuthz.requir
         res.json({ ok: true });
     } catch (err) {
         console.error('[POST /api/share/resend-invite]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2638,7 +2639,7 @@ app.delete('/api/share/cancel-invite/:grant_id', authMiddleware, shareAuthz.requ
         res.json({ ok: true });
     } catch (err) {
         console.error('[DELETE /api/share/cancel-invite]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -2692,7 +2693,22 @@ async function callMcpToolHttp(mcpHeaders, toolName, toolArgs, toolCallId) {
     }
 }
 
-async function callMcpTool(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
+/**
+ * Every MCP tool call goes through here. A Neo4j outage comes back in-band ({"error_code": "graph_unavailable"}, MCP
+ * expert_tools) and is raised as GraphUnavailableError, so no path turns an outage into "No data found" (S2-90).
+ */
+async function callMcpTool(...args) {
+    const mcp = await callMcpToolRaw(...args);
+    const text = mcp && mcp.result && mcp.result.content && mcp.result.content[0] && mcp.result.content[0].text;
+    if (typeof text === 'string' && text.includes('"error_code"')) {
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch { /* not JSON: an ordinary result */ }
+        if (isGraphUnavailableResult(parsed)) throw new GraphUnavailableError(String(parsed.error || '').slice(0, 200));
+    }
+    return mcp;
+}
+
+async function callMcpToolRaw(tenantId, toolName, toolArgs, userId = '', schemaReadable = false, reqHeaders = {}) {
     console.log(`[GATEWAY] Calling MCP tool ${toolName} for tenant ${tenantId}, user ${userId} (${MCP_TRANSPORT})`);
 
     const toolCallId = Math.floor(Math.random() * 1000000);
@@ -3186,7 +3202,7 @@ app.get('/api/conversations', authMiddleware, async (req, res) => {
         res.json(rows);
     } catch (err) {
         console.error('[/api/conversations]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -3211,7 +3227,7 @@ app.get('/api/conversations/:id', authMiddleware, async (req, res) => {
         res.json({ ...convRows[0], messages });
     } catch (err) {
         console.error('[/api/conversations/:id]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -3227,7 +3243,7 @@ app.delete('/api/conversations/:id', authMiddleware, async (req, res) => {
         res.json({ ok: true });
     } catch (err) {
         console.error('[/api/conversations/:id delete]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -3861,6 +3877,7 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
                         });
 
                     } catch (err) {
+                        if (isFatalToolError(err)) throw err;   // Neo4j down → safe "unavailable" answer, not "No data found"
                         console.error(`[GATEWAY] Tool call failed — ${toolName}:`, err.message);
                         hadToolFailure = true;
                         dataToolCalls++;
@@ -4253,7 +4270,7 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
 
     } catch (err) {
         console.error("[QUERY] Error:", err);
-        res.status(500).send({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 
@@ -4309,7 +4326,7 @@ const mcpToolEndpoint = (toolName) => async (req, res) => {
         res.json({ content: [{ type: 'text', text: toolContent }] });
     } catch (err) {
         console.error(`[/api/${toolName}] ${err.message}`);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 };
 
@@ -4366,8 +4383,8 @@ app.post('/api/bridges/stream', authMiddleware, async (req, res) => {
             },
         });
     } catch (e) {
-        console.error('[/api/bridges/stream]', e.message);
-        send({ type: 'error', error: e.message });
+        sendSafeError(req, res, e, { route: '/api/bridges/stream' });   // streams a safe error event and ends (S2-90)
+        return;
     }
     res.end();
 });
@@ -4414,7 +4431,7 @@ app.post('/api/get_node_details', authMiddleware, async (req, res) => {
         res.json(data);
     } catch (err) {
         console.error('[/api/get_node_details]', err.message);
-        res.status(500).json({ error: err.message });
+        sendSafeError(req, res, err);
     }
 });
 // The old node link's routes (removed 2026-11-02, design §7b-1) answer 404 instead of reaching the

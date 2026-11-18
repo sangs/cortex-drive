@@ -1,0 +1,19 @@
+{
+  "_comment": "What a user sees when a request fails (S2-90, design documents/architecture/safe-errors-and-alerts-design-2026-11-18.md §2). utils/user_errors.js tries the rules in order; the first match decides the class; no match = 'internal'. A rule matches when EVERY field it lists matches: names = error class name (OpenAI SDK: RateLimitError, AuthenticationError, ...), codes = err.code / err.type / err.error.code / err.error.type, statuses = err.status, message_includes = case-insensitive substrings of err.message. Messages are fixed text: never err.message. The full cause stays in the logs (user_error event). Alerts on these codes: scripts/alerts.json.",
+  "classes": {
+    "ai_unavailable":    { "status": 503, "message": "Cortex-Drive can't answer questions right now. The owner has been notified." },
+    "ai_busy":           { "status": 503, "message": "Cortex-Drive is busy. Try again in a minute." },
+    "graph_unavailable": { "status": 503, "message": "The knowledge graph is temporarily unavailable. Try again shortly." },
+    "timeout":           { "status": 504, "message": "That took too long. Try a narrower question." },
+    "internal":          { "status": 500, "message": "Something went wrong. Try again; if it keeps happening, tell the owner." }
+  },
+  "default_class": "internal",
+  "rules": [
+    { "class": "ai_unavailable",    "names": ["RateLimitError"], "codes": ["insufficient_quota"] },
+    { "class": "ai_unavailable",    "names": ["AuthenticationError", "PermissionDeniedError"] },
+    { "class": "ai_busy",           "names": ["RateLimitError", "InternalServerError", "APIConnectionError"] },
+    { "class": "graph_unavailable", "codes": ["graph_unavailable"] },
+    { "class": "timeout",           "names": ["AbortError", "APIConnectionTimeoutError"] },
+    { "class": "timeout",           "message_includes": ["orchestration timeout", "timed out"] }
+  ]
+}

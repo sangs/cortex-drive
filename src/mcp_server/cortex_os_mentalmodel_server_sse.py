@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse
 import contextvars
 import asyncio
 import json
+from tool_errors import tool_error_json   # Neo4j outage → error_code graph_unavailable (S2-90)
 import redis.asyncio as aioredis
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -127,7 +128,7 @@ async def search_episodes_gds_by_question_tool(
         return await asyncio.to_thread(expert.search_episodes_gds_by_question, question, k=k, limit=limit)
     except Exception as e:
         print(f"Error in search_episodes_gds_by_question_tool: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -149,7 +150,7 @@ async def search_episodes_by_question_tool(
         return await asyncio.to_thread(expert.search_episodes_by_question, question, k=k)
     except Exception as e:
         print(f"Error in search_episodes_by_question_tool: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -177,7 +178,7 @@ async def search_document_blocks(
         return json.dumps(await asyncio.to_thread(expert.search_document_blocks, question, top_k=top_k), default=str)
     except Exception as e:
         print(f"Error in search_document_blocks: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -204,7 +205,7 @@ async def query_relevant_chunks_hybrid_tool(
         return json.dumps(await asyncio.to_thread(expert.query_relevant_chunks_hybrid, question, top_k=top_k))
     except Exception as e:
         print(f"Error in query_relevant_chunks_hybrid_tool: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -220,7 +221,7 @@ async def get_context() -> str:
         return await asyncio.to_thread(expert.get_tool_context)
     except Exception as e:
         print(f"Error in get_context: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -239,7 +240,7 @@ async def get_tool_statistics() -> str:
         return await asyncio.to_thread(expert.get_episode_statistics)
     except Exception as e:
         print(f"Error in get_tool_statistics: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -259,7 +260,7 @@ async def find_episodes_by_people(question: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_people, question)
     except Exception as e:
         print(f"Error in find_episodes_by_people: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -277,7 +278,7 @@ async def get_episodes_with_cast() -> str:
         return await asyncio.to_thread(expert.get_episodes_with_cast)
     except Exception as e:
         print(f"Error in get_episodes_with_cast: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -296,7 +297,7 @@ async def find_episodes_by_concept(question: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_concept, question)
     except Exception as e:
         print(f"Error in find_episodes_by_concept: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -315,7 +316,7 @@ async def find_episodes_by_topic(question: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_topic, question)
     except Exception as e:
         print(f"Error in find_episodes_by_topic: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -334,7 +335,7 @@ async def find_episodes_by_technology(question: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_technology, question)
     except Exception as e:
         print(f"Error in find_episodes_by_technology: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -354,7 +355,7 @@ async def find_episodes_by_reference(reference_string: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_reference, reference_string)
     except Exception as e:
         print(f"Error in find_episodes_by_reference: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -373,7 +374,7 @@ async def find_episodes_by_mentions(search_terms: str) -> str:
         return await asyncio.to_thread(expert.find_episodes_by_mentions, search_terms)
     except Exception as e:
         print(f"Error in find_episodes_by_mentions: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -393,7 +394,7 @@ async def get_people_by_episode_tool(
         return await asyncio.to_thread(expert.get_people_by_episode, episode_name)
     except Exception as e:
         print(f"Error in get_people_by_episode: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -434,7 +435,7 @@ async def get_node_details(
         return await asyncio.to_thread(expert.get_node_details, node_id=node_id, node_name=node_name)
     except Exception as e:
         print(f"Error in get_node_details: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -457,7 +458,7 @@ async def view_source_live(
         return await asyncio.to_thread(expert.view_source_live, url=url)
     except Exception as e:
         print(f"Error in view_source_live: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -550,7 +551,7 @@ async def register_website_source(
     try:
         validate_public_url(url)
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
 
     neo4j_uri = os.environ.get("NEO4J_URI")
     neo4j_user = os.environ.get("NEO4J_USERNAME")
@@ -577,7 +578,7 @@ async def register_website_source(
         result = await asyncio.to_thread(_ingest)
     except Exception as e:
         print(f"Error in register_website_source: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
 
     if result.get("node_id"):
         # S2-60: the new title routes from the next question (gateway refetches this tenant's catalog).
@@ -632,7 +633,7 @@ async def register_document_source(
     try:
         validate_public_url(url)
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     graph_tenant = PUBLIC_TENANT_ID if visibility == SOURCE_VISIBILITY_PUBLIC else tenant_id
     foreign_error = await asyncio.to_thread(_foreign_source_error, "DocumentSource", "uri", url, graph_tenant, user_id_var.get() or "")
     if foreign_error:
@@ -640,7 +641,7 @@ async def register_document_source(
     try:
         result = await enqueue_document_ingestion(build_task(url, tenant_id, user_id, visibility=visibility))
     except EnqueueError as e:
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     except Exception as e:
         print(f"Error in register_document_source: {e}")
         return json.dumps({"error": "Could not queue the document for ingestion."})
@@ -724,7 +725,7 @@ async def search_enterprise_graph(
         return await asyncio.to_thread(_search)
     except Exception as e:
         print(f"Error in search_enterprise_graph: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
 
 @mcp.tool()
 async def bridges_between(
@@ -750,7 +751,7 @@ async def bridges_between(
         return await asyncio.to_thread(_pairs)
     except Exception as e:
         print(f"Error in bridges_between: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
 
 @mcp.tool()
 async def explore_graph_schema() -> str:
@@ -767,7 +768,7 @@ async def explore_graph_schema() -> str:
         return await asyncio.to_thread(expert.explore_graph_schema, schema_readable=schema_readable)
     except Exception as e:
         print(f"Error in explore_graph_schema: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -791,7 +792,7 @@ async def hybrid_discovery_tool(
         return await asyncio.to_thread(expert.hybrid_discovery, question, k=k)
     except Exception as e:
         print(f"Error in hybrid_discovery_tool: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -816,7 +817,7 @@ async def get_cluster_context(
         return await asyncio.to_thread(expert.get_cluster_context, node_id=node_id, node_name=node_name, depth=depth, backbone_only=backbone_only, domain=domain)
     except Exception as e:
         print(f"Error in get_cluster_context: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -840,7 +841,7 @@ async def enumerate_bridge_sources(
         return await asyncio.to_thread(expert.enumerate_bridge_sources, domain=domain)
     except Exception as e:
         print(f"Error in enumerate_bridge_sources: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -863,7 +864,7 @@ async def person_work_items(
         return await asyncio.to_thread(expert.person_work_items, person_node_ids=person_node_ids, labels=labels)
     except Exception as e:
         print(f"Error in person_work_items: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -929,7 +930,7 @@ async def connect_knowledge_on_demand(
         return await asyncio.to_thread(_bridges)
     except Exception as e:
         print(f"Error in connect_knowledge_on_demand: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
 
 @mcp.tool()
 async def list_bridge_domains() -> str:
@@ -946,7 +947,7 @@ async def list_bridge_domains() -> str:
         return await asyncio.to_thread(expert.list_bridge_domains)
     except Exception as e:
         print(f"Error in list_bridge_domains: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
@@ -984,7 +985,7 @@ async def infer_context_on_demand(
         )
     except Exception as e:
         print(f"Error in infer_context_on_demand: {e}")
-        return json.dumps({"error": str(e)})
+        return tool_error_json(e)
     finally:
         expert.close()
 
