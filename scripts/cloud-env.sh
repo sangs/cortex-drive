@@ -27,6 +27,9 @@ export INGEST_INVOKER_SA="cortex-ingest-invoker@${PROJECT_ID}.iam.gserviceaccoun
 # secret; Permify and permify-migrate read only their database URI secret and use the Cloud SQL client.
 export UI_SA="cortex-ui@${PROJECT_ID}.iam.gserviceaccount.com"
 export PERMIFY_SA="cortex-permify@${PROJECT_ID}.iam.gserviceaccount.com"
+# RV-15 part 3 (documents/architecture/default-account-editor-removal-design-2026-11-17.md): every image build runs as
+# cortex-build@ (scripts/build-flags.sh), never the default Compute account.
+export BUILD_SA="cortex-build@${PROJECT_ID}.iam.gserviceaccount.com"
 export REGION="us-central1"
 export REGISTRY="us-central1-docker.pkg.dev/${PROJECT_ID}/cortex-images"
 

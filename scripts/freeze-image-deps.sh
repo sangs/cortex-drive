@@ -27,7 +27,9 @@ steps:
     args: ["-c", "echo '=====WORKER-BEGIN'; pip freeze --all; echo '=====WORKER-END'"]
 EOF
 
-BUILD_ID=$(gcloud builds submit --no-source --config "$TMP/freeze.yaml" --project "$PROJECT_ID" --format="value(id)" | tail -1)
+source "${REPO}/scripts/build-flags.sh"   # builds run as cortex-build@ (RV-15 part 3)
+# shellcheck disable=SC2086  # BUILD_FLAGS is intentionally word-split
+BUILD_ID=$(gcloud builds submit ${BUILD_FLAGS} --no-source --config "$TMP/freeze.yaml" --project "$PROJECT_ID" --format="value(id)" | tail -1)
 gcloud builds log "$BUILD_ID" --project "$PROJECT_ID" > "$TMP/freeze.log"
 
 write_lock() {  # $1 = marker, $2 = output file, $3 = images it locks

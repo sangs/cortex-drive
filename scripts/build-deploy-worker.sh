@@ -89,7 +89,9 @@ images: ["${IMAGE}"]
 timeout: 3600s
 EOF
 echo "=== ${JOB_NAME}: build (staged context $(du -sh "$STAGE" | cut -f1)) ==="
-gcloud builds submit "$STAGE" --config "$STAGE/cloudbuild.yaml" --project "${PROJECT_ID}"
+source "${REPO}/scripts/build-flags.sh"   # builds run as cortex-build@ (RV-15 part 3)
+# shellcheck disable=SC2086  # BUILD_FLAGS is intentionally word-split
+gcloud builds submit ${BUILD_FLAGS} "$STAGE" --config "$STAGE/cloudbuild.yaml" --project "${PROJECT_ID}"
 
 echo "=== ${JOB_NAME}: deploy ==="
 gcloud run jobs deploy "${JOB_NAME}" \

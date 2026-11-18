@@ -85,6 +85,20 @@ class SharedDriverTest(unittest.TestCase):
         self.assertIn('source "${REPO:?run: source scripts/cloud-env.sh}/scripts/deploy-candidate.sh"', permify)
         for name in ("UI_SA", "PERMIFY_SA"):
             self.assertIn(f"export {name}=", env)
+        # RV-15 part 3: every image build runs as cortex-build@ through the one shared BUILD_FLAGS (no copies).
+        self.assertIn('export BUILD_SA="cortex-build@${PROJECT_ID}.iam.gserviceaccount.com"', env)
+        flags = open(os.path.join(ROOT, "scripts", "build-flags.sh")).read()
+        self.assertIn("--service-account projects/", flags)
+        self.assertIn("--gcs-log-dir gs://", flags)
+        import glob, re
+        for path in sorted(glob.glob(os.path.join(ROOT, "scripts", "*.sh"))):
+            text = open(path).read()
+            if os.path.basename(path) in ("deploy-gcp.sh", "deploy-toolbox-gcp.sh"):   # legacy, marked; no live service
+                self.assertIn("RV-15 (2026-11-17)", text)
+                continue
+            for line in re.findall(r"^[^#\n]*gcloud builds submit.*$", text, re.M):
+                self.assertIn("${BUILD_FLAGS}", line, f"{os.path.basename(path)}: build without the build account")
+                self.assertIn('source "${REPO}/scripts/build-flags.sh"', text)
 
 
 if __name__ == "__main__":

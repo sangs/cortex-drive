@@ -52,7 +52,9 @@ timeout: '1200s'
 EOF
 
 # Build (~5 min for Next.js compile)
-gcloud builds submit \
+source "${REPO}/scripts/build-flags.sh"   # builds run as cortex-build@ (RV-15 part 3)
+# shellcheck disable=SC2086  # BUILD_FLAGS is intentionally word-split
+gcloud builds submit ${BUILD_FLAGS} \
     --config "$BCTX/cloudbuild.yaml" \
     --project="${PROJECT_ID}" \
     "$BCTX"

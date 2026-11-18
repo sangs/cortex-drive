@@ -25,7 +25,9 @@ cp "$BCTX/Dockerfile.bento" "$BCTX/Dockerfile"
 echo "Context size: $(du -sh "$BCTX" | cut -f1)"
 
 # Build
-gcloud builds submit \
+source "${REPO}/scripts/build-flags.sh"   # builds run as cortex-build@ (RV-15 part 3)
+# shellcheck disable=SC2086  # BUILD_FLAGS is intentionally word-split
+gcloud builds submit ${BUILD_FLAGS} \
     --tag "${REGISTRY}/cortex-bento:latest" \
     --project="${PROJECT_ID}" \
     "$BCTX"

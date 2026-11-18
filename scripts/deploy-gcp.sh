@@ -1,4 +1,6 @@
 #!/bin/bash
+# ⚠️ RV-15 (2026-11-17): the original installer. Names no service or build account; the default Compute account has no
+# permissions, so this script fails rather than run with Editor. Use scripts/build-deploy-*.sh.
 # =============================================================================
 # CortexDrive — Google Cloud Run Deployment Script (ORIGINAL from-scratch installer, 2026-05/06)
 # =============================================================================

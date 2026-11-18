@@ -1,3 +1,5 @@
+# ⚠️ RV-15 (2026-11-17): deploys employee-toolbox (not a live service). Names no service account; the default Compute
+# account has no permissions, so this fails rather than run with Editor. Use scripts/build-deploy-*.sh.
 export PROJECT_ID="<your-project-id>"
 
 #following 3 commands only need to be run once the first time
