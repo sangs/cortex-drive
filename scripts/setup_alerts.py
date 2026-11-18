@@ -115,7 +115,8 @@ def policy_body(cfg, p, channel_name, uptime_id):
     cond = json.loads(json.dumps(p["condition"]).replace("{{UPTIME_CHECK_ID}}", uptime_id or "<new uptime check>"))
     return {"displayName": cfg["policy_prefix"] + p["name"], "combiner": "OR", "conditions": [cond],
             "notificationChannels": [channel_name] if channel_name else [],
-            "alertStrategy": {"autoClose": cfg["auto_close"]},
+            "alertStrategy": {"autoClose": cfg["auto_close"],
+                              **({"notificationRateLimit": {"period": p["rate_limit"]}} if p.get("rate_limit") else {})},
             "documentation": {"content": f"{p['doc']}\n\nRunbook: {cfg['runbook']}. Switch off / snooze: "
                                          "scripts/setup-alerts.sh --status | --disable | --snooze.",
                               "mimeType": "text/markdown"},

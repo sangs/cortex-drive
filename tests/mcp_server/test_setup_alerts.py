@@ -38,7 +38,12 @@ class AlertConfigTest(unittest.TestCase):
     def test_policies_are_prefixed_and_reference_known_metrics(self):
         names = {m["name"] for m in self.cfg["log_metrics"]}
         for p in self.cfg["policies"]:
-            f = p["condition"]["conditionThreshold"]["filter"]
+            c = p["condition"]
+            if "conditionMatchedLog" in c:   # log-match: Cloud Monitoring requires a notification rate limit
+                self.assertTrue(p.get("rate_limit"), p["name"])
+                continue
+            f = c["conditionThreshold"]["filter"]
+            self.assertIn("resource.type=", f, f"{p['name']}: metric conditions must name a resource type")
             if "logging.googleapis.com/user/" in f:
                 self.assertIn(f.split("user/")[1].split('"')[0], names, p["name"])
         self.assertTrue(self.cfg["policy_prefix"].startswith("cortex"))
@@ -47,7 +52,7 @@ class AlertConfigTest(unittest.TestCase):
     def test_error_codes_match_the_gateway_classes(self):
         classes = json.load(open(os.path.join(ROOT, "cortex-gateway", "config", "user_errors.json")))["classes"]
         for p in self.cfg["policies"]:
-            f = p["condition"]["conditionThreshold"]["filter"]
+            f = json.dumps(p["condition"])
             for code in ("ai_unavailable", "internal", "timeout", "ai_busy"):
                 if f'"{code}"' in f:
                     self.assertIn(code, classes)
@@ -60,7 +65,7 @@ class AlertConfigTest(unittest.TestCase):
         self.assertGreaterEqual(len(self.cfg["uptime_check"]["regions"]), 3)   # Cloud Monitoring needs at least 3
 
     def test_project_is_filled_in_the_denied_filter(self):
-        f = next(m for m in self.cfg["log_metrics"] if m["name"] == "cortex_sa_denied")["filter"]
+        f = next(p for p in self.cfg["policies"] if p["name"] == "service account denied")["condition"]["conditionMatchedLog"]["filter"]
         self.assertIn(r"@cortex-drive-496915\.iam\.gserviceaccount\.com$", f)
         self.assertNotIn("{{PROJECT}}", json.dumps(self.cfg))
         with self.assertRaises(SystemExit):
@@ -123,7 +128,7 @@ class DryRunTest(unittest.TestCase):
         sh = open(os.path.join(ROOT, "scripts", "setup-alerts.sh")).read()
         self.assertIn("scripts/setup_alerts.py", sh)
         for path in ("scripts/alerts.json", "scripts/setup_alerts.py", "scripts/setup-alerts.sh"):
-            self.assertNotRegex(open(os.path.join(ROOT, path)).read(), r"[\w.]+@gmail\.com")
+            self.assertNotRegex(open(os.path.join(ROOT, path)).read(), r"[\w.]+@(gmail\.com|cortex-drive\.com)")
 
 
 if __name__ == "__main__":

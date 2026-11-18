@@ -1,5 +1,5 @@
 {
-  "_comment": "cortex-drive runtime alerts (RV-17; design documents/architecture/safe-errors-and-alerts-design-2026-11-18.md §3). Applied by scripts/setup-alerts.sh (dry run by default). Spend alerts are finops-admin's, not here. {{PROJECT}} and {{UPTIME_CHECK_ID}} are filled in by the script. Policy names start with policy_prefix so --status/--disable/--snooze/--remove find exactly these.",
+  "_comment": "cortex-drive runtime alerts (RV-17; design documents/architecture/safe-errors-and-alerts-design-2026-11-18.md §3). Applied by scripts/setup-alerts.sh (dry run by default). Spend alerts are finops-admin's, not here. {{PROJECT}} and {{UPTIME_CHECK_ID}} are filled in by the script. Policy names start with policy_prefix so --status/--disable/--snooze/--remove find exactly these. Log-match policies (conditionMatchedLog) carry rate_limit: Cloud Monitoring requires a notification rate limit for them, and a metric policy must name one resource type, which denials across services cannot.",
   "policy_prefix": "cortex: ",
   "channel_display_name": "cortex-drive owner",
   "auto_close": "86400s",
@@ -9,13 +9,9 @@
       "name": "cortex_user_errors",
       "description": "Gateway failures by class (user_error event, S2-90). Label code = ai_unavailable | ai_busy | graph_unavailable | timeout | internal.",
       "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.tag=\"USER_ERROR\" AND jsonPayload.event=\"user_error\"",
-      "labels": { "code": "EXTRACT(jsonPayload.code)" }
-    },
-    {
-      "name": "cortex_sa_denied",
-      "description": "A cortex-drive service account was denied (audit PERMISSION_DENIED), or a Cloud Run service logged permission denied. Anonymous 403s from scanners are not counted.",
-      "filter": "(protoPayload.status.code=7 AND protoPayload.authenticationInfo.principalEmail=~\"@{{PROJECT}}\\.iam\\.gserviceaccount\\.com$\") OR (resource.type=\"cloud_run_revision\" AND textPayload=~\"(?i)permission.denied\")",
-      "labels": {}
+      "labels": {
+        "code": "EXTRACT(jsonPayload.code)"
+      }
     }
   ],
   "uptime_check": {
@@ -25,48 +21,109 @@
     "period": "300s",
     "timeout": "10s",
     "content": "\"neo4j\":\"up\"",
-    "regions": ["USA", "EUROPE", "ASIA_PACIFIC"]
+    "regions": [
+      "USA",
+      "EUROPE",
+      "ASIA_PACIFIC"
+    ]
   },
   "policies": [
     {
       "name": "AI provider unavailable",
       "doc": "OpenAI refused the gateway's calls (credit used up or key revoked). Users see \"Cortex-Drive can't answer questions right now\". Check the balance: documents/paid-services-and-billing.md (OpenAI). Daily check 8.",
-      "condition": { "displayName": "ai_unavailable user errors", "conditionThreshold": {
-        "filter": "metric.type=\"logging.googleapis.com/user/cortex_user_errors\" AND resource.type=\"cloud_run_revision\" AND metric.label.code=\"ai_unavailable\"",
-        "comparison": "COMPARISON_GT", "thresholdValue": 0, "duration": "0s",
-        "aggregations": [{ "alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM" }] } }
+      "condition": {
+        "displayName": "ai_unavailable user errors",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/cortex_user_errors\" AND resource.type=\"cloud_run_revision\" AND metric.label.code=\"ai_unavailable\"",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s",
+          "aggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ]
+        }
+      }
     },
     {
       "name": "knowledge graph down",
       "doc": "/api/system-status has not reported neo4j up for 10 minutes. Users see \"The knowledge graph is temporarily unavailable\". Check the Aura instance: https://console.neo4j.io (documents/paid-services-and-billing.md).",
-      "condition": { "displayName": "system status check failing", "conditionThreshold": {
-        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"{{UPTIME_CHECK_ID}}\" AND resource.type=\"uptime_url\"",
-        "comparison": "COMPARISON_GT", "thresholdValue": 1, "duration": "600s",
-        "aggregations": [{ "alignmentPeriod": "1200s", "perSeriesAligner": "ALIGN_NEXT_OLDER", "crossSeriesReducer": "REDUCE_COUNT_FALSE", "groupByFields": ["resource.label.*"] }] } }
+      "condition": {
+        "displayName": "system status check failing",
+        "conditionThreshold": {
+          "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"{{UPTIME_CHECK_ID}}\" AND resource.type=\"uptime_url\"",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 1,
+          "duration": "600s",
+          "aggregations": [
+            {
+              "alignmentPeriod": "1200s",
+              "perSeriesAligner": "ALIGN_NEXT_OLDER",
+              "crossSeriesReducer": "REDUCE_COUNT_FALSE",
+              "groupByFields": [
+                "resource.label.*"
+              ]
+            }
+          ]
+        }
+      }
     },
     {
       "name": "service account denied",
-      "doc": "A cortex-drive service account was denied a permission (RV-15 identities). Find the line: daily check 6 in documents/operations-daily-checks.md; grants are listed in the RV-15 design notes.",
-      "condition": { "displayName": "cortex service account PERMISSION_DENIED", "conditionThreshold": {
-        "filter": "metric.type=\"logging.googleapis.com/user/cortex_sa_denied\"",
-        "comparison": "COMPARISON_GT", "thresholdValue": 0, "duration": "0s",
-        "aggregations": [{ "alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM" }] } }
+      "doc": "A cortex-drive service account was denied a permission (RV-15 identities). Find the line: daily check 6 in documents/operations-daily-checks.md; grants are listed in the RV-15 design notes. A log-match alert: at most one email per 5 minutes while denials continue.",
+      "condition": {
+        "displayName": "cortex service account PERMISSION_DENIED (log match)",
+        "conditionMatchedLog": {
+          "filter": "(protoPayload.status.code=7 AND protoPayload.authenticationInfo.principalEmail=~\"@{{PROJECT}}\\.iam\\.gserviceaccount\\.com$\") OR (resource.type=\"cloud_run_revision\" AND textPayload=~\"(?i)permission.denied\")"
+        }
+      },
+      "rate_limit": "300s"
     },
     {
       "name": "job failed",
       "doc": "A Cloud Run job execution failed (cortex-finops-push, cortex-ingest-worker or permify-migrate). Logs: gcloud run jobs executions list --job <job> --region us-central1.",
-      "condition": { "displayName": "failed job execution", "conditionThreshold": {
-        "filter": "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND metric.label.result=\"failed\"",
-        "comparison": "COMPARISON_GT", "thresholdValue": 0, "duration": "0s",
-        "aggregations": [{ "alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM", "groupByFields": ["resource.label.job_name"] }] } }
+      "condition": {
+        "displayName": "failed job execution",
+        "conditionThreshold": {
+          "filter": "metric.type=\"run.googleapis.com/job/completed_execution_count\" AND resource.type=\"cloud_run_job\" AND metric.label.result=\"failed\"",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 0,
+          "duration": "0s",
+          "aggregations": [
+            {
+              "alignmentPeriod": "300s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM",
+              "groupByFields": [
+                "resource.label.job_name"
+              ]
+            }
+          ]
+        }
+      }
     },
     {
       "name": "error spike",
       "doc": "More than 5 internal, timeout or busy failures in 10 minutes. Daily check 5 in documents/operations-daily-checks.md; roll back with documents/cloud-run-traffic-runbook.md if a release caused it. Threshold: scripts/alerts.json (RV-23).",
-      "condition": { "displayName": "internal / timeout / busy user errors", "conditionThreshold": {
-        "filter": "metric.type=\"logging.googleapis.com/user/cortex_user_errors\" AND resource.type=\"cloud_run_revision\" AND metric.label.code=one_of(\"internal\", \"timeout\", \"ai_busy\")",
-        "comparison": "COMPARISON_GT", "thresholdValue": 5, "duration": "0s",
-        "aggregations": [{ "alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM" }] } }
+      "condition": {
+        "displayName": "internal / timeout / busy user errors",
+        "conditionThreshold": {
+          "filter": "metric.type=\"logging.googleapis.com/user/cortex_user_errors\" AND resource.type=\"cloud_run_revision\" AND metric.label.code=one_of(\"internal\", \"timeout\", \"ai_busy\")",
+          "comparison": "COMPARISON_GT",
+          "thresholdValue": 5,
+          "duration": "0s",
+          "aggregations": [
+            {
+              "alignmentPeriod": "600s",
+              "perSeriesAligner": "ALIGN_SUM",
+              "crossSeriesReducer": "REDUCE_SUM"
+            }
+          ]
+        }
+      }
     }
   ]
 }
