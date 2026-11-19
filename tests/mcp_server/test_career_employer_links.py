@@ -27,7 +27,7 @@ P = "S294-TEST "   # name prefix no real node uses
 
 
 def mapping(*links):
-    return {"relationship": "CONTAINS", "employer_label": "Company", "required_tier": TEST_TENANT_ID,
+    return {"property": "employer_node_id", "employer_label": "Company", "required_tier": TEST_TENANT_ID,
             "links": [{"item": P + i, "item_labels": labels, "employer": P + e} for i, labels, e in links]}
 
 
@@ -46,8 +46,8 @@ class CareerEmployerLinksTest(unittest.TestCase):
         cleanup_test_tenant(self.driver)
         with self.driver.session() as s:
             s.run("""
-                CREATE (:Company {name: $p + 'Acme', tenant_id: $t})
-                CREATE (:Company {name: $p + 'Other Co', tenant_id: $t})
+                CREATE (:Company {name: $p + 'Acme', node_id: $p + 'acme-id', tenant_id: $t})
+                CREATE (:Company {name: $p + 'Other Co', node_id: $p + 'other-id', tenant_id: $t})
                 CREATE (:Project:Hackathon {name: $p + 'Hack', tenant_id: $t})
                 CREATE (:Publication:ThoughtLeadership {name: $p + 'Article', tenant_id: $t})
                 CREATE (:ReferenceLink {name: $p + 'Article', tenant_id: $t})
@@ -55,8 +55,13 @@ class CareerEmployerLinksTest(unittest.TestCase):
 
     def links_to(self, item):
         with self.driver.session() as s:
-            return s.run("MATCH (e:Company)-[r:CONTAINS]->(n {name: $n, tenant_id: $t}) RETURN e.name AS e, r.source AS src",
+            return s.run("MATCH (n {tenant_id: $t}) WHERE n.name = $n AND n.employer_node_id IS NOT NULL "
+                         "MATCH (e:Company {node_id: n.employer_node_id}) RETURN e.name AS e, n.employer_source AS src",
                          n=P + item, t=TEST_TENANT_ID).data()
+
+    def edge_count(self):
+        with self.driver.session() as s:
+            return s.run("MATCH (a {tenant_id: $t})-[r]-() RETURN count(r) AS c", t=TEST_TENANT_ID).single()["c"]
 
     def test_plan_apply_and_rerun(self):
         m = mapping(("Hack", ["Hackathon"], "Acme"), ("Article", ["Publication"], "Acme"))
@@ -72,6 +77,7 @@ class CareerEmployerLinksTest(unittest.TestCase):
             self.assertEqual(curate.apply_links(s, again), 0)
             tiers = s.run("MATCH (n) WHERE n.name STARTS WITH $p RETURN collect(DISTINCT n.tenant_id) AS t", p=P).single()["t"]
             self.assertEqual(tiers, [TEST_TENANT_ID], "no tier changed")
+        self.assertEqual(self.edge_count(), 0, "no relationship created: bridge search must not see employers as hubs")
 
     def test_refusals_write_nothing(self):
         with self.driver.session() as s:
@@ -91,12 +97,13 @@ class CareerEmployerLinksTest(unittest.TestCase):
                   e=P + "Other Co", n=P + "Article")
             plan = curate.plan_links(s, mapping(("Article", ["Publication"], "Acme")), TEST_TENANT_ID)
             self.assertTrue(any("different employer" in e for e in plan["errors"]), "second employer refused")
-        self.assertEqual([r["e"] for r in self.links_to("Article")], [P + "Other Co"], "nothing written on refusal")
+        self.assertEqual(self.links_to("Article"), [], "nothing written on refusal")
 
     def test_real_mapping_file_is_consistent(self):
         m = curate.load_mapping()
         self.assertEqual(m["required_tier"], "PUBLIC")
         self.assertEqual(len(m["links"]), 9)
+        self.assertEqual(m["property"], "employer_node_id")
         self.assertTrue(all(e["item_labels"] for e in m["links"]), "every entry names its labels (AP-13)")
 
 

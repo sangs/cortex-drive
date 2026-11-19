@@ -740,6 +740,10 @@ CAREER_SPAN_RELATIONSHIPS = ['CURRENTLY_BUILDING', 'HELD_ROLE', 'PARTICIPATED_IN
 EMPLOYER_LABEL = 'Company'
 EMPLOYER_CONTAINS_RELATIONSHIP = 'CONTAINS'
 EMPLOYER_AT_RELATIONSHIP = 'AT'
+# Curated employer (S2-94): a PROPERTY on the item holding the employer's node_id, not an edge. Bridge search
+# (connect_knowledge_on_demand) walks every relationship type, so an employer edge made each employer a hub that
+# "connected" everything done there (found in the 2026-11-19 gate: 14 → 41 bridge connections).
+EMPLOYER_PROPERTY = 'employer_node_id'
 # Never moved, whatever links them: private notes, ingested content, podcast content, other people.
 CAREER_PUBLIC_EXCLUDED_LABELS = [
     'Person', 'PreparatoryNote', 'Chunk', 'Episode', 'Podcast', 'Source', 'WebsiteSource', 'DocumentSource',

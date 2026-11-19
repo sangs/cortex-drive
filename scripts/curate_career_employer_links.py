@@ -4,15 +4,18 @@
 Design: documents/architecture/career-map-chronology-design-2026-11-19.md §3.1.
 Mapping (data): data/curation/career_employer_links.json, confirmed by the owner 2026-11-19.
 
-Writes `(employer:Company)-[:CONTAINS]->(item)` between EXISTING nodes of one tier (PUBLIC for the founder's career
-graph). It never creates or deletes nodes and never changes `tenant_id` (Invariant 9 / AP-14).
+Sets `item.employer_node_id = <employer's node_id>` on EXISTING nodes of one tier (PUBLIC for the founder's career
+graph). A property, not an edge: bridge search walks every relationship type, so an employer edge turned each employer
+into a hub that "connected" everything done there (2026-11-19 gate: 14 → 41 bridge connections; the edges were
+removed the same day). It never creates or deletes nodes or relationships and never changes `tenant_id` (Invariant 9 /
+AP-14).
 
 Refuses the whole run (nothing written) when any entry:
   - matches 0 or more than 1 item (by exact name AND all `item_labels`; AP-13 collision check),
   - matches 0 or more than 1 employer,
   - is outside the tier,
-  - already has a DIFFERENT employer link.
-Entries already linked to the same employer are skipped, so a re-run changes nothing (idempotent).
+  - already has a DIFFERENT employer (property or CONTAINS/AT edge).
+Entries already set to the same employer are skipped, so a re-run changes nothing (idempotent).
 
 Usage:
     .venv/bin/python scripts/curate_career_employer_links.py            # dry run: prints the plan
@@ -38,9 +41,9 @@ def load_mapping(path: str = DEFAULT_MAPPING) -> dict:
 
 def plan_links(session, mapping: dict, tier: str) -> dict:
     """Read-only. Returns {"to_link": [...], "already": [...], "errors": [...]}."""
-    from schema_guard import EMPLOYER_LABEL, EMPLOYER_CONTAINS_RELATIONSHIP, EMPLOYER_AT_RELATIONSHIP
-    if mapping.get("employer_label") != EMPLOYER_LABEL or mapping.get("relationship") != EMPLOYER_CONTAINS_RELATIONSHIP:
-        raise ValueError("mapping file disagrees with schema_guard (employer label / relationship)")
+    from schema_guard import EMPLOYER_LABEL, EMPLOYER_PROPERTY, EMPLOYER_CONTAINS_RELATIONSHIP, EMPLOYER_AT_RELATIONSHIP
+    if mapping.get("employer_label") != EMPLOYER_LABEL or mapping.get("property") != EMPLOYER_PROPERTY:
+        raise ValueError("mapping file disagrees with schema_guard (employer label / property)")
     plan = {"to_link": [], "already": [], "errors": []}
     for entry in mapping["links"]:
         items = session.run(
@@ -48,7 +51,7 @@ def plan_links(session, mapping: dict, tier: str) -> dict:
             "RETURN elementId(n) AS id, n.tenant_id AS tier",
             name=entry["item"], labels=entry["item_labels"]).data()
         employers = session.run(
-            f"MATCH (e:{EMPLOYER_LABEL} {{name: $name}}) RETURN elementId(e) AS id, e.tenant_id AS tier",
+            f"MATCH (e:{EMPLOYER_LABEL} {{name: $name}}) RETURN elementId(e) AS id, e.node_id AS node_id, e.tenant_id AS tier",
             name=entry["employer"]).data()
         label = f'{entry["item"]} → {entry["employer"]}'
         if len(items) != 1:
@@ -60,11 +63,16 @@ def plan_links(session, mapping: dict, tier: str) -> dict:
         if items[0]["tier"] != tier or employers[0]["tier"] != tier:
             plan["errors"].append(f"{label}: outside tier {tier} (item {items[0]['tier']}, employer {employers[0]['tier']})")
             continue
+        if not employers[0]["node_id"]:
+            plan["errors"].append(f"{label}: employer has no node_id")
+            continue
         current = session.run(
             f"MATCH (n) WHERE elementId(n) = $id "
+            f"OPTIONAL MATCH (e0:{EMPLOYER_LABEL}) WHERE n.{EMPLOYER_PROPERTY} IS NOT NULL AND e0.node_id = n.{EMPLOYER_PROPERTY} "
             f"OPTIONAL MATCH (e1:{EMPLOYER_LABEL})-[:{EMPLOYER_CONTAINS_RELATIONSHIP}]->(n) "
             f"OPTIONAL MATCH (n)-[:{EMPLOYER_AT_RELATIONSHIP}]->(e2:{EMPLOYER_LABEL}) "
-            f"RETURN [x IN collect(DISTINCT e1.name) + collect(DISTINCT e2.name) WHERE x IS NOT NULL] AS names",
+            f"RETURN [x IN collect(DISTINCT coalesce(e0.name, n.{EMPLOYER_PROPERTY})) + collect(DISTINCT e1.name) "
+            f"+ collect(DISTINCT e2.name) WHERE x IS NOT NULL] AS names",
             id=items[0]["id"]).single()["names"]
         others = [n for n in current if n != entry["employer"]]
         if others:
@@ -72,13 +80,13 @@ def plan_links(session, mapping: dict, tier: str) -> dict:
         elif entry["employer"] in current:
             plan["already"].append(label)
         else:
-            plan["to_link"].append({"label": label, "item_id": items[0]["id"], "employer_id": employers[0]["id"]})
+            plan["to_link"].append({"label": label, "item_id": items[0]["id"], "employer_node_id": employers[0]["node_id"]})
     return plan
 
 
 def apply_links(session, plan: dict) -> int:
-    """Writes the planned links in ONE transaction. Refuses if the plan has errors. Returns links created."""
-    from schema_guard import EMPLOYER_CONTAINS_RELATIONSHIP
+    """Sets the planned employers in ONE transaction. Refuses if the plan has errors. Returns items updated."""
+    from schema_guard import EMPLOYER_PROPERTY
     if plan["errors"]:
         raise RuntimeError("refusing to write: the plan has errors")
     if not plan["to_link"]:
@@ -88,12 +96,11 @@ def apply_links(session, plan: dict) -> int:
         created = 0
         for link in plan["to_link"]:
             rec = tx.run(
-                f"MATCH (e) WHERE elementId(e) = $eid MATCH (n) WHERE elementId(n) = $nid "
-                f"MERGE (e)-[r:{EMPLOYER_CONTAINS_RELATIONSHIP}]->(n) "
-                f"ON CREATE SET r.source = $source, r.created_at = datetime() "
-                f"RETURN r.source = $source AS ours",
-                eid=link["employer_id"], nid=link["item_id"], source=CURATION_SOURCE).single()
-            created += 1 if rec and rec["ours"] else 0
+                f"MATCH (n) WHERE elementId(n) = $nid AND n.{EMPLOYER_PROPERTY} IS NULL "
+                f"SET n.{EMPLOYER_PROPERTY} = $emp, n.employer_source = $source, n.employer_set_at = datetime() "
+                f"RETURN count(n) AS c",
+                nid=link["item_id"], emp=link["employer_node_id"], source=CURATION_SOURCE).single()
+            created += rec["c"] if rec else 0
         return created
 
     return session.execute_write(work)

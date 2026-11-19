@@ -1,6 +1,6 @@
 {
-  "_comment": "Where each career item was done (S2-94, documents/architecture/career-map-chronology-design-2026-11-19.md §3.1). Mapping confirmed by the owner on 2026-11-19. Applied by scripts/curate_career_employer_links.py as (employer)-[:CONTAINS]->(item) between EXISTING PUBLIC nodes; dry run by default. Each name must match exactly one node carrying all `item_labels` (the InfoQ title also exists as a ReferenceLink node, which is never linked). New career items get their employer link at ingestion, not through this file.",
-  "relationship": "CONTAINS",
+  "_comment": "Where each career item was done (S2-94, documents/architecture/career-map-chronology-design-2026-11-19.md §3.1). Mapping confirmed by the owner on 2026-11-19. Applied by scripts/curate_career_employer_links.py as the item property employer_node_id (not an edge: bridge search walks every relationship type and would treat employers as hubs) on EXISTING PUBLIC nodes; dry run by default. Each name must match exactly one node carrying all `item_labels` (the InfoQ title also exists as a ReferenceLink node, which is never linked). New career items get their employer link at ingestion, not through this file.",
+  "property": "employer_node_id",
   "employer_label": "Company",
   "required_tier": "PUBLIC",
   "links": [

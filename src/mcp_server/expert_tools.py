@@ -313,12 +313,15 @@ class ExpertTools:
     def _career_context_matches(self, node_var: str = "node") -> tuple:
         """Career dates and employer for each returned node (S2-94).
 
+        Employer: the curated `employer_node_id` property first (no edge, so bridge search can't use employers as
+        hubs), then an existing (Company)-[:CONTAINS]->(item) or (item)-[:AT]->(Company) edge.
+
         Returns (matches, aggregates): OPTIONAL MATCH lines to place after the node is bound, and the two
         collect() expressions (`career_spans`, `employers`) for the following WITH. The dates are returned raw
         (e.g. "06/2021", "Present"); the gateway parses and orders them (utils/career_chronology.js). Every
         matched Person / employer passes the security clause, like every other neighbour.
         """
-        from schema_guard import (CAREER_SPAN_RELATIONSHIPS, EMPLOYER_LABEL,
+        from schema_guard import (CAREER_SPAN_RELATIONSHIPS, EMPLOYER_LABEL, EMPLOYER_PROPERTY,
                                   EMPLOYER_CONTAINS_RELATIONSHIP, EMPLOYER_AT_RELATIONSHIP)
         span_types = "|".join(CAREER_SPAN_RELATIONSHIPS)
         matches = (
@@ -327,12 +330,15 @@ class ExpertTools:
             f"        OPTIONAL MATCH (emp_in:{EMPLOYER_LABEL})-[:{EMPLOYER_CONTAINS_RELATIONSHIP}]->({node_var})\n"
             f"        WHERE ({self._get_security_clause('emp_in')})\n"
             f"        OPTIONAL MATCH ({node_var})-[:{EMPLOYER_AT_RELATIONSHIP}]->(emp_at:{EMPLOYER_LABEL})\n"
-            f"        WHERE ({self._get_security_clause('emp_at')})"
+            f"        WHERE ({self._get_security_clause('emp_at')})\n"
+            f"        OPTIONAL MATCH (emp_prop:{EMPLOYER_LABEL})\n"
+            f"        WHERE {node_var}.{EMPLOYER_PROPERTY} IS NOT NULL AND emp_prop.node_id = {node_var}.{EMPLOYER_PROPERTY}\n"
+            f"          AND ({self._get_security_clause('emp_prop')})"
         )
         aggregates = (
             "collect(DISTINCT CASE WHEN cspan IS NULL THEN null ELSE "
             "{start: cspan.start, end: cspan.end, date: cspan.date, role: coalesce(cspan.title, cspan.role), rel: type(cspan)} END) AS career_spans,\n"
-            "             collect(DISTINCT coalesce(emp_in.name, emp_at.name)) AS employers"
+            "             collect(DISTINCT coalesce(emp_prop.name, emp_in.name, emp_at.name)) AS employers"
         )
         return matches, aggregates
 
