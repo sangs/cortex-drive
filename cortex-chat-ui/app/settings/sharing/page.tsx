@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
+import { readShareResult } from '@/utils/shareResult';
 import AccountMenu from '@/components/AccountMenu';
 
 type Tab = 'public-links' | 'named-shares' | 'pending-invites';
@@ -73,6 +74,9 @@ interface PendingInvite {
     expires_at: string | null;
     grant_type: 'node' | 'graph_island' | null;
     node_count: number | null;
+    /** S2-93: whether the invite email was accepted for delivery (null = not attempted since 2026-11-19). */
+    email_status?: 'sent' | 'failed' | null;
+    email_last_attempt_at?: string | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -236,12 +240,17 @@ export default function SharingSettingsPage() {
         setResendingId(invite.id);
         try {
             const headers = await authHeaders();
-            if (invite.record_type === 'share') {
-                await fetch(`${GATEWAY}/api/share/resend-invite/${invite.grant_id}`, { method: 'POST', headers });
-            } else {
-                await fetch(`${GATEWAY}/api/groups/${invite.group_id}/invitations/${invite.id}/resend`, { method: 'POST', headers });
-            }
-        } catch { /* non-fatal */ } finally { setResendingId(null); }
+            const url = invite.record_type === 'share'
+                ? `${GATEWAY}/api/share/resend-invite/${invite.grant_id}`
+                : `${GATEWAY}/api/groups/${invite.group_id}/invitations/${invite.id}/resend`;
+            const r = await readShareResult(await fetch(url, { method: 'POST', headers }));
+            // S2-93: show what really happened to the email (502 = saved, not sent).
+            const status: 'sent' | 'failed' = r.ok && r.data.emailSent !== false ? 'sent' : 'failed';
+            setPending(prev => prev.map(p => p.id === invite.id
+                ? { ...p, email_status: status, email_last_attempt_at: new Date().toISOString() } : p));
+        } catch {
+            setPending(prev => prev.map(p => p.id === invite.id ? { ...p, email_status: 'failed' } : p));
+        } finally { setResendingId(null); }
     }
 
     async function cancelInvite(invite: PendingInvite) {
@@ -682,6 +691,23 @@ function GrantCard({ grant, revokingId, confirmId, cancellingId, resendingId,
 
 // ── Invite card (Pending Invites tab) ──────────────────────────────────────────
 
+// S2-93: invite email delivery status (from the gateway's checked sender, migration 013).
+const EMAIL_STATUS_BADGE: Record<'sent' | 'failed' | 'unknown', { label: string; cls: string; title: string }> = {
+    sent:    { label: 'email sent',   cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', title: 'The email provider accepted the invite email.' },
+    failed:  { label: 'email failed', cls: 'bg-red-50 text-red-700 border-red-200',             title: 'The invite is saved, but the email could not be sent. Use Resend.' },
+    unknown: { label: 'email: not recorded', cls: 'bg-slate-50 text-slate-500 border-slate-200', title: 'Sent before delivery status was recorded (2026-11-19). Use Resend to be sure.' },
+};
+
+function EmailStatusBadge({ status }: { status: 'sent' | 'failed' | null }) {
+    const b = EMAIL_STATUS_BADGE[status ?? 'unknown'];
+    return (
+        <span title={b.title} data-testid="email-status"
+            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${b.cls}`}>
+            {b.label}
+        </span>
+    );
+}
+
 function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, onConfirm, onCancel, isOwner }: {
     invite: PendingInvite;
     resendingId: string | null; cancellingId: string | null; confirmId: string | null;
@@ -710,6 +736,7 @@ function InviteCard({ invite, resendingId, cancellingId, confirmId, onResend, on
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-50 text-amber-700 border-amber-200">
                             pending
                         </span>
+                        <EmailStatusBadge status={invite.email_status ?? null} />
                         {isGroup ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-emerald-50 text-emerald-700 border-emerald-200">
                                 <Users className="w-2.5 h-2.5" />Group

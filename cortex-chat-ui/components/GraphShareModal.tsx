@@ -7,6 +7,7 @@ import { X, UserPlus, Building2, Check, Loader2, Share2, Link2, Copy } from 'luc
 import { useAuth } from '@clerk/nextjs';
 
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
+import { readShareResult, inviteMessage, needsGrant, PUBLIC_ONLY_TEXT } from '@/utils/shareResult';
 
 type GraphTab = 'user' | 'group' | 'link';
 
@@ -35,6 +36,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     const [userExpiry, setUserExpiry] = useState(0);
     const [userSharing, setUserSharing] = useState(false);
     const [userSuccess, setUserSuccess] = useState('');
+    const [userError, setUserError] = useState('');
 
     // --- Group tab state ---
     const [groups, setGroups] = useState<{ group_id: string; name: string; member_count: number }[]>([]);
@@ -44,6 +46,9 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
     const [groupExpiry, setGroupExpiry] = useState(0);
     const [groupSharing, setGroupSharing] = useState(false);
     const [groupSuccess, setGroupSuccess] = useState('');
+    const [groupError, setGroupError] = useState('');
+    // S2-93: does anything in the selection need a grant? 'public-only' → nothing to share (Invariant 9).
+    const [shareCheck, setShareCheck] = useState<'checking' | 'needs-grant' | 'public-only' | 'unknown'>('checking');
 
     // --- Public Link tab state ---
     const [linkTitle, setLinkTitle] = useState('');
@@ -88,9 +93,29 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
         if (tab === 'group') loadGroups();
     }, [open, tab, loadGroups]);
 
+    // Same check the link preview uses: nodes needing a grant (roots). Checked before any invite is offered.
+    useEffect(() => {
+        if (!open || nodeIds.length === 0) return;
+        let cancelled = false;
+        setShareCheck('checking');
+        (async () => {
+            try {
+                const headers = await authHeaders();
+                const r = await readShareResult(await fetch(`${GATEWAY}/api/share/graph-link/preview`, {
+                    method: 'POST', headers, body: JSON.stringify({ nodeIds }) }));
+                if (cancelled) return;
+                if (r.ok) setShareCheck(needsGrant(r.data) ? 'needs-grant' : 'public-only');
+                else setShareCheck(r.status === 409 ? 'public-only' : 'unknown');
+            } catch { if (!cancelled) setShareCheck('unknown'); }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, nodeIds.join('|'), authHeaders]);
+    const publicOnly = shareCheck === 'public-only';
+
     useEffect(() => {
         setEmail(''); setResolvedUser(null); setResolveError('');
-        setUserSuccess(''); setGroupSuccess('');
+        setUserSuccess(''); setGroupSuccess(''); setUserError(''); setGroupError('');
         setGeneratedUrl(''); setLinkCopied(false); setLinkError('');
     }, [tab]);
 
@@ -114,14 +139,16 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const body: any = { nodeIds, targetSub: resolvedUser.sub };
             if (userExpiry > 0) body.expiresAt = new Date(Date.now() + userExpiry * 86400000).toISOString();
-            const resp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
-            const data = await resp.json();
+            setUserSuccess(''); setUserError('');
+            const r = await readShareResult(await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) }));
+            if (!r.ok) { setUserError(r.error || 'The share did not go through.'); return; }
+            const data = r.data;
             const msg = data.reused
                 ? `${resolvedUser.name} added to existing grant (${data.totalNodes} nodes).`
                 : `Graph shared with ${resolvedUser.name}. ${data.totalNodes} nodes shared.`;
             setUserSuccess(msg);
             setEmail(''); setResolvedUser(null);
-        } catch { /* non-fatal */ } finally { setUserSharing(false); }
+        } catch { setUserError('Could not reach the server. Try again.'); } finally { setUserSharing(false); }
     }
 
     async function sendInvite() {
@@ -131,14 +158,13 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const body: any = { nodeIds, pendingEmail: email };
             if (userExpiry > 0) body.expiresAt = new Date(Date.now() + userExpiry * 86400000).toISOString();
-            const invResp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
-            const invData = await invResp.json().catch(() => ({}));
-            const invMsg = invData.reused
-                ? `Invite updated on existing grant for ${email}.`
-                : `Invite sent to ${email}. They'll get access when they sign up.`;
-            setUserSuccess(invMsg);
+            setUserSuccess(''); setUserError('');
+            const r = await readShareResult(await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) }));
+            if (!r.ok) { setUserError(r.error || 'The invite did not go through.'); return; }
+            const m = inviteMessage(email, r.data);
+            if (m.ok) setUserSuccess(m.text); else setUserError(m.text);
             setEmail(''); setResolveError('');
-        } catch { /* non-fatal */ } finally { setUserSharing(false); }
+        } catch { setUserError('Could not reach the server. Try again.'); } finally { setUserSharing(false); }
     }
 
     async function shareWithGroup() {
@@ -148,14 +174,16 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
             const headers = await authHeaders();
             const body: any = { nodeIds, groupId: selectedGroupId };
             if (groupExpiry > 0) body.expiresAt = new Date(Date.now() + groupExpiry * 86400000).toISOString();
-            const gResp = await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) });
-            const gData = await gResp.json().catch(() => ({}));
+            setGroupSuccess(''); setGroupError('');
+            const r = await readShareResult(await fetch(`${GATEWAY}/api/share/graph-island`, { method: 'POST', headers, body: JSON.stringify(body) }));
+            if (!r.ok) { setGroupError(r.error || 'The share did not go through.'); return; }
+            const gData = r.data;
             const g = groups.find(g => g.group_id === selectedGroupId);
             const gMsg = gData.reused
                 ? `Group "${g?.name}" added to existing grant.`
                 : `Graph shared with group "${g?.name}". ${nodeIds.length} nodes shared.`;
             setGroupSuccess(gMsg);
-        } catch { /* non-fatal */ } finally { setGroupSharing(false); }
+        } catch { setGroupError('Could not reach the server. Try again.'); } finally { setGroupSharing(false); }
     }
 
     // Live link (unified shares phase 1, 2026-10-29): the server picks the roots and stores no graph data.
@@ -256,7 +284,10 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                     </div>
 
                     {/* ── USER TAB ── */}
-                    {tab === 'user' && (
+                    {tab === 'user' && publicOnly && (
+                        <p role="status" className="text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl p-3 leading-snug">{PUBLIC_ONLY_TEXT}</p>
+                    )}
+                    {tab === 'user' && !publicOnly && (
                         <div className="space-y-4">
                             <div className="flex gap-2">
                                 <input
@@ -274,7 +305,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                             {resolveError === 'error' && <p className="text-xs text-red-400">Could not reach server — try again.</p>}
 
                             {/* No account found — offer invite instead of failing */}
-                            {resolveError === 'not_found' && (
+                            {resolveError === 'not_found' && shareCheck === 'needs-grant' && (
                                 <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-2">
                                     <p className="text-[11px] font-bold text-amber-400">No Cortex-Drive account found</p>
                                     <p className="text-[10px] text-slate-400 leading-snug">Send an invite? They'll get access automatically the moment they sign up — no action needed on your end.</p>
@@ -310,6 +341,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                     <Check className="w-3.5 h-3.5" />{userSuccess}
                                 </p>
                             )}
+                            {userError && <p role="alert" className="text-xs text-red-400 font-medium">{userError}</p>}
 
                             {!resolveError && (
                                 <>
@@ -325,7 +357,10 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                     )}
 
                     {/* ── GROUP TAB ── */}
-                    {tab === 'group' && (
+                    {tab === 'group' && publicOnly && (
+                        <p role="status" className="text-xs text-slate-300 bg-white/5 border border-white/10 rounded-xl p-3 leading-snug">{PUBLIC_ONLY_TEXT}</p>
+                    )}
+                    {tab === 'group' && !publicOnly && (
                         <div className="space-y-4">
                             {groupsLoading ? (
                                 <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-500 animate-spin" /></div>
@@ -366,6 +401,7 @@ export default function GraphShareModal({ graphData, open, onClose }: GraphShare
                                             <Check className="w-3.5 h-3.5" />{groupSuccess}
                                         </p>
                                     )}
+                                    {groupError && <p role="alert" className="text-xs text-red-400 font-medium">{groupError}</p>}
 
                                     <button onClick={shareWithGroup} disabled={!selectedGroupId || groupSharing || nodeIds.length === 0}
                                         className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold transition-all disabled:opacity-40">

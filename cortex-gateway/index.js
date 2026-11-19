@@ -16,6 +16,7 @@ const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/d
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
 const { sendSafeError, GraphUnavailableError, isFatalToolError, isGraphUnavailableResult } = require('./utils/user_errors');   // S2-90
 const { handleClerkSessionEvent } = require('./utils/clerk_session_events');   // S2-92 sign-in/sign-out audit
+const { createInviteDelivery, deliveryFields } = require('./utils/invite_delivery');   // S2-93 checked invite emails
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
 const { createOpenAIPause, CONFIG: PAUSE_CONFIG } = require('./utils/openai_pause');   // owner's manual pause of OpenAI spend (release 5)
@@ -1239,93 +1240,10 @@ async function activatePendingGrants(email, userSub) {
     return invites.length;
 }
 
-/**
- * Send a Resend transactional email notifying a pending recipient they were shared with.
- * No-op if RESEND_API_KEY is not configured — safe to call at any time.
- */
-// Provisions a new invited user end-to-end without depending on Clerk's sign-up flow:
-// 1. Creates the Clerk account programmatically (bypasses all sign-up restrictions)
-// 2. Does NOT add them to the Clerk organization (S2-47: external collaborator, not a member)
-// 3. Activates pending CortexDrive grants directly (doesn't wait for webhook)
-// 4. Issues a sign-in token (single-use magic link, no password required)
-// 5. Delivers via Resend — user clicks → signs in → lands on dashboard with full access
-// If the user already has a Clerk account, skips creation and just sends the sign-in link.
-async function sendClerkOrgInvitation(toEmail, inviterName = 'A Cortex-Drive member') {
-    const appUrl = process.env.APP_URL || 'https://app.cortex-drive.com';
-    try {
-        let userId;
-        const existing = await clerkClient.users.getUserList({ emailAddress: [toEmail] });
-        if (existing.data.length > 0) {
-            userId = existing.data[0].id;
-            console.log(`[clerk/invite] ${toEmail} already has Clerk account ${userId} — sending sign-in link`);
-        } else {
-            // Create Clerk account directly — bypasses all sign-up mode restrictions.
-            // Random password is set but never used — the user signs in via the token link.
-            // Derive a display name from the email local-part so the UI shows a name instead
-            // of the "Agent Identity" fallback (user?.fullName || "Agent Identity" in dashboard).
-            const randomPassword = require('crypto').randomBytes(32).toString('hex');
-            const emailLocalPart = toEmail.split('@')[0];
-            const derivedFirstName = emailLocalPart
-                .replace(/[._-]+/g, ' ')
-                .replace(/\b\w/g, c => c.toUpperCase());
-            const newUser = await clerkClient.users.createUser({
-                emailAddress:        [toEmail],
-                password:            randomPassword,
-                skipPasswordChecks:  true,
-                firstName:           derivedFirstName,
-            });
-            userId = newUser.id;
-            console.log(`[clerk/invite] Created Clerk account for ${toEmail}: ${userId}`);
-
-            // Not added to the organization (S2-47, 2026-10-26): people you share with are external
-            // collaborators. They see only what is shared with them (Permify) plus Public content.
-
-            // Activate pending grants directly in case the user.created webhook fires
-            // after we send the email and the user signs in before the webhook arrives
-            activatePendingGrants(toEmail, userId).catch(e =>
-                console.error('[clerk/invite] activatePendingGrants:', e.message)
-            );
-        }
-
-        // Issue a single-use sign-in token — user clicks the link to sign in without
-        // a password, regardless of Clerk's sign-up or authentication restrictions
-        const signInToken = await clerkClient.signInTokens.createSignInToken({
-            userId,
-            expiresInSeconds: 60 * 60 * 24 * 7, // 7 days
-        });
-        const signInUrl = `${appUrl}/sign-in?__clerk_ticket=${signInToken.token}`;
-
-        if (process.env.RESEND_API_KEY) {
-            await fetch('https://api.resend.com/emails', {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    from: 'Cortex-Drive <noreply@cortex-drive.com>',
-                    to:   [toEmail],
-                    subject: `${inviterName} invited you to Cortex-Drive`,
-                    html: `
-                        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#080a0f;color:#e2e8f0;border-radius:16px">
-                            <h2 style="color:#fff;margin:0 0 16px">${inviterName} invited you to Cortex-Drive</h2>
-                            <p style="color:#94a3b8;margin:0 0 8px">You've been given access to a shared knowledge graph on Cortex-Drive.</p>
-                            <p style="color:#94a3b8;margin:0 0 24px">Click below to sign in — your account has been created and access will be granted automatically.</p>
-                            <a href="${signInUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">Sign in to Cortex-Drive →</a>
-                            <p style="color:#475569;font-size:12px;margin-top:32px">This link expires in 7 days. If you didn't expect this, you can ignore this email.</p>
-                        </div>
-                    `,
-                }),
-            });
-            console.log(`[clerk/invite] Resend sign-in link sent to ${toEmail}`);
-        } else {
-            console.warn(`[clerk/invite] RESEND_API_KEY not set — account created but email not sent for ${toEmail}`);
-        }
-    } catch (err) {
-        const detail = err.errors ? JSON.stringify(err.errors) : err.message;
-        console.error('[clerk/invite]', detail); // non-fatal — pull model is the fallback
-    }
-}
+// Invite delivery (S2-93): account + sign-in token (unchanged until S2-96), email through the one checked sender
+// (utils/notify_email.js), result stored on the invitation and returned as { emailSent }. utils/invite_delivery.js.
+const inviteDelivery = createInviteDelivery({ clerkClient, db, activatePendingGrants });
+const INVITE_EMAIL_FAILED_ERROR = 'The invite is saved, but the email could not be sent. Try again later.';
 
 // ─── Clerk Allowlist Helpers ───────────────────────────────────────────────────
 // Stubbed out: Clerk allowlist API requires a paid plan (returns 402 Payment Required
@@ -1744,14 +1662,10 @@ app.post('/api/share/user', authMiddleware, shareAuthz.requireNodeShare(req => r
                  DO UPDATE SET invited_at = now(), expires_at = $5`,
                 [tenantId, grantId, normalizedEmail, issuedBy, expiresAt || null]
             );
-            let sharerName = issuedBy;
-            try {
-                const issuer = await clerkClient.users.getUser(issuerSub);
-                sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
-                    || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
-            } catch { /* non-fatal */ }
-            await sendClerkOrgInvitation(normalizedEmail, sharerName);
-            return res.json({ pending: true, grantId, reused });
+            const sharerName = await inviteDelivery.inviterDisplayName(issuerSub, issuedBy);
+            const delivery = await inviteDelivery.deliverInvite({
+                email: normalizedEmail, inviterName: sharerName, invitationType: 'share', resourceId: grantId });
+            return res.json({ pending: true, grantId, reused, ...deliveryFields(delivery) });
         }
 
         await permify.shareNodeWithUser(rootNodeId, targetSub, expiresAt || null);
@@ -2190,18 +2104,13 @@ app.post('/api/groups/:id/invite', authMiddleware, shareAuthz.requireGroupCreato
             [orgId, id, normalizedEmail, addedBy]
         );
 
-        // Resolve inviter display name for email
-        let inviterName = addedBy;
-        try {
-            const issuer = await clerkClient.users.getUser(issuerSub);
-            inviterName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
-                || issuer.emailAddresses?.[0]?.emailAddress || addedBy;
-        } catch { /* non-fatal */ }
-
-        await sendClerkOrgInvitation(normalizedEmail, inviterName);
+        const inviterName = await inviteDelivery.inviterDisplayName(issuerSub, addedBy);
+        const delivery = await inviteDelivery.deliverInvite({
+            email: normalizedEmail, inviterName, invitationType: 'group', resourceId: id });
 
         res.status(201).json({
             invited: true,
+            ...deliveryFields(delivery),
             invitation: {
                 invitation_id: inv.invitation_id,
                 invited_email: normalizedEmail,
@@ -2254,15 +2163,11 @@ app.post('/api/groups/:id/invitations/:inv_id/resend', authMiddleware, shareAuth
         );
         if (!inv) return res.status(404).json({ error: 'Invitation not found' });
 
-        let inviterName = issuerSub;
-        try {
-            const issuer = await clerkClient.users.getUser(issuerSub);
-            inviterName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
-                || issuer.emailAddresses?.[0]?.emailAddress || issuerSub;
-        } catch { /* non-fatal */ }
-
-        await sendClerkOrgInvitation(inv.pending_email, inviterName);
-        res.json({ ok: true });
+        const inviterName = await inviteDelivery.inviterDisplayName(issuerSub, issuerSub);
+        const delivery = await inviteDelivery.deliverInvite({
+            email: inv.pending_email, inviterName, invitationType: 'group', resourceId: id });
+        if (!delivery.emailSent) return res.status(502).json({ error: INVITE_EMAIL_FAILED_ERROR, ...deliveryFields(delivery) });
+        res.json({ ok: true, ...deliveryFields(delivery) });
     } catch (err) {
         console.error('[POST /api/groups/:id/invitations/:inv_id/resend]', err.message);
         sendSafeError(req, res, err);
@@ -2326,14 +2231,10 @@ app.post('/api/share/graph-island', authMiddleware, shareAuthz.requireNodeShare(
                  DO UPDATE SET invited_at = now(), expires_at = $5`,
                 [tenantId, grantId, normalizedEmail, issuedBy, expiresAt || null]
             );
-            let sharerName = issuedBy;
-            try {
-                const issuer = await clerkClient.users.getUser(issuerSub);
-                sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
-                    || issuer.emailAddresses?.[0]?.emailAddress || issuedBy;
-            } catch { /* non-fatal */ }
-            await sendClerkOrgInvitation(normalizedEmail, sharerName);
-            return res.json({ pending: true, grantId, totalNodes: nodeIds.length, reused });
+            const sharerName = await inviteDelivery.inviterDisplayName(issuerSub, issuedBy);
+            const delivery = await inviteDelivery.deliverInvite({
+                email: normalizedEmail, inviterName: sharerName, invitationType: 'share', resourceId: grantId });
+            return res.json({ pending: true, grantId, totalNodes: nodeIds.length, reused, ...deliveryFields(delivery) });
         }
 
         // Write Permify tuples for the new audience member
@@ -2578,7 +2479,9 @@ app.get('/api/share/pending', authMiddleware, async (req, res) => {
                     invited_at             AS issued_at,
                     expires_at,
                     grant_type,
-                    node_count
+                    node_count,
+                    email_status,
+                    email_last_attempt_at
              FROM pending_invites
              WHERE invited_by = $1
              ORDER BY invited_at DESC`,
@@ -2609,15 +2512,11 @@ app.post('/api/share/resend-invite/:grant_id', authMiddleware, shareAuthz.requir
         if (!rows.length) return res.status(404).json({ error: 'Pending invitation not found' });
         const { invited_email, grant_type, child_node_ids } = rows[0];
 
-        let sharerName = issuerSub;
-        try {
-            const issuer = await clerkClient.users.getUser(issuerSub);
-            sharerName = `${issuer.firstName || ''} ${issuer.lastName || ''}`.trim()
-                || issuer.emailAddresses?.[0]?.emailAddress || issuerSub;
-        } catch { /* non-fatal */ }
-
-        await sendClerkOrgInvitation(invited_email, sharerName);
-        res.json({ ok: true });
+        const sharerName = await inviteDelivery.inviterDisplayName(issuerSub, issuerSub);
+        const delivery = await inviteDelivery.deliverInvite({
+            email: invited_email, inviterName: sharerName, invitationType: 'share', resourceId: grant_id });
+        if (!delivery.emailSent) return res.status(502).json({ error: INVITE_EMAIL_FAILED_ERROR, ...deliveryFields(delivery) });
+        res.json({ ok: true, ...deliveryFields(delivery) });
     } catch (err) {
         console.error('[POST /api/share/resend-invite]', err.message);
         sendSafeError(req, res, err);

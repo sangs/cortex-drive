@@ -42,6 +42,16 @@
       "tag": "AUTH",
       "severity": "INFO",
       "fields": ["clerk_event", "user_id", "session_id", "status"]
+    },
+    "notify.email": {
+      "tag": "NOTIFY",
+      "severity": "INFO",
+      "fields": ["kind", "sent", "status", "reason"]
+    },
+    "invite.delivery": {
+      "tag": "NOTIFY",
+      "severity": "INFO",
+      "fields": ["invitation_type", "email_sent", "reason", "account"]
     }
   }
 }

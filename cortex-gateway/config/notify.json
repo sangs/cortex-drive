@@ -1,0 +1,9 @@
+{
+  "_comment": "Outbound email (S2-93, documents/architecture/share-results-and-invite-delivery-design-2026-11-19.md §3.2). Read only by utils/notify_email.js, the one sender every email goes through. The API key is the RESEND_API_KEY secret, never here. No retry: a repeated POST could send the same email twice.",
+  "provider": "resend",
+  "endpoint": "https://api.resend.com/emails",
+  "from": "Cortex-Drive <noreply@cortex-drive.com>",
+  "timeout_ms": 10000,
+  "app_url_default": "https://app.cortex-drive.com",
+  "invite_token_ttl_seconds": 604800
+}
