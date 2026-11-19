@@ -108,7 +108,12 @@ else
     echo "✓ No env var drift — every live plain env var is accounted for."
 fi
 
-gcloud run deploy cortex-ui \
+# Candidate deploy: CANDIDATE_TAG=<tag> → no traffic, tag URL only (shared with gateway / MCP / Bento).
+# Note: Clerk's production instance only accepts the app domain, so signed-in checks happen after promotion.
+source "${REPO}/scripts/deploy-candidate.sh"
+
+# shellcheck disable=SC2086  # CANDIDATE_FLAGS is intentionally word-split
+gcloud run deploy cortex-ui ${CANDIDATE_FLAGS} \
     --image "${REGISTRY}/cortex-ui:latest" \
     --service-account "${UI_SA:?run: source scripts/cloud-env.sh}" \
     --region "${REGION}" \
