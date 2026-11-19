@@ -1,0 +1,1139 @@
+{
+ "_comment": "PUBLIC career nodes as search_enterprise_graph returned them on 2026-11-19 (before the S2-94 employer links). Used by tests/verify_career_chronology.js.",
+ "nodes": [
+  {
+   "node_id": "87ecec17-df1d-4b84-baf6-1c8ea576abc0",
+   "name": "Sangeetha Ramadurai",
+   "type": "Person",
+   "labels": [
+    "Person",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "6f5774e5-6749-43d8-b2e2-05347bd16659",
+   "name": "Global Hackathons @ JPMorgan Chase",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Hackathon",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "PARTICIPATED_IN",
+     "role": "Innovation Lead",
+     "start": "07/2025"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2025",
+   "year": "2025",
+   "description": "Innovation Leadership: Led Global Hackathon projects delivering MCP-based AI solutions, including MongoDB and Neo4j MCP clients.",
+   "links": []
+  },
+  {
+   "node_id": "71d3da73-0999-4d6e-a56b-967fd4f4fc51",
+   "name": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI",
+   "type": "ThoughtLeadership",
+   "labels": [
+    "Publication",
+    "ThoughtLeadership",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2026",
+     "rel": "AUTHORED",
+     "role": null,
+     "start": "11/2025"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2026",
+   "year": null,
+   "description": "Thought Leadership: Co-authored expert article in InfoQ e-magazine, defining mandatory architectural shifts (Governance, Explainability) for AI platform engineering.",
+   "links": [
+    "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+   ]
+  },
+  {
+   "node_id": "7aaec524-d9fb-48e3-a06d-3e243bf91f79",
+   "name": "[2026] InfoQ Certified Architect",
+   "type": "Certification",
+   "labels": [
+    "Certification",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "CERTIFIED_BY",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": "2026",
+   "description": "Co-authored expert article in InfoQ e-magazine, Architectural Shifts for Platform Engineers in the Age of AI, defining mandatory architectural shifts for AI platform engineering.",
+   "links": [
+    "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+   ]
+  },
+  {
+   "node_id": "0892113f-9e16-49f3-9adb-48b1e0110f61",
+   "name": "Cortex-Drive",
+   "type": "Startup",
+   "labels": [
+    "Project",
+    "Startup",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "Present",
+     "rel": "HELD_ROLE",
+     "role": "Founder & Builder",
+     "start": "08/2025"
+    },
+    {
+     "date": null,
+     "end": "Present",
+     "rel": "CURRENTLY_BUILDING",
+     "role": "Founder & Lead Engineer",
+     "start": "08/2025"
+    }
+   ],
+   "employer": "Independent Ventures",
+   "isPresent": true,
+   "endYear": "Present",
+   "year": null,
+   "description": "Cortex-Drive is the living memory for your AI and your Enterprise. It solves the 'Context Amnesia' problem inherent in modern LLMs by providing a stable, traceable source of truth. It transforms AI from a stateless chatbot into a deeply informed collaborator that remembers historical preferences, understands the 'Why' behind your institutional intent, and provides the 'Long-Term Memory' required for mission-critical enterprise workflows.",
+   "links": [
+    "https://github.com/sangs/cortex-drive"
+   ]
+  },
+  {
+   "node_id": "7ed8895d-e6fc-4795-a892-aa7df3853008",
+   "name": "Simulation systems development and evaluation (Macmet)",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "04/1999",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "08/1997"
+    }
+   ],
+   "employer": "Macmet India Pvt. Ltd.",
+   "isPresent": false,
+   "endYear": "1999",
+   "year": null,
+   "description": "Simulation Engineering: Developed and evaluated industrial simulation systems as an early-career software engineer, building core foundations in systems development, evaluation methodologies, and engineering software design.",
+   "links": []
+  },
+  {
+   "node_id": "56f93d7e-d370-43da-b3f3-946ef6b1870e",
+   "name": "Capital Attribution & Market Risk Data Platform",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "12/2009",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2007"
+    }
+   ],
+   "employer": "GOLDMAN SACHS & CO.",
+   "isPresent": false,
+   "endYear": "2009",
+   "year": null,
+   "description": "Market Risk Platform: Implemented capital attribution logic and redesigned market risk data workflows in DB2, improving accuracy and enabling better alignment with evolving risk reporting structures at Goldman Sachs.",
+   "links": []
+  },
+  {
+   "node_id": "d8406ea9-4d88-4a60-b6d7-b9d885814989",
+   "name": "Radiology Imaging Platform Integration",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2006",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "05/1999"
+    }
+   ],
+   "employer": "GE Healthcare",
+   "isPresent": false,
+   "endYear": "2006",
+   "year": null,
+   "description": "PACS Integration: Implemented a universal medical application interface enabling radiologists to access 3D clinical applications directly from PACS systems, demonstrated at RSNA conferences and adopted across GE Healthcare deployments.",
+   "links": []
+  },
+  {
+   "node_id": "90deb9e3-cc64-40c0-ba2a-68c8d4206724",
+   "name": "Image Management & Distributed Event Processing System",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2006",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "05/1999"
+    }
+   ],
+   "employer": "GE Healthcare",
+   "isPresent": false,
+   "endYear": "2006",
+   "year": null,
+   "description": "Distributed Imaging Workflows: Designed patient data processing workflows and prototyped distributed event communication using CORBA/ACE, improving reliability and scalability of large-scale medical image management at GE Healthcare.",
+   "links": []
+  },
+  {
+   "node_id": "38c3d01a-e69c-4e43-a727-89bfcb70d6be",
+   "name": "Enterprise Access Control, Search, and Distributed Infrastructure",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "02/2021",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "02/2013"
+    }
+   ],
+   "employer": "Mezocliq LLC",
+   "isPresent": false,
+   "endYear": "2021",
+   "year": null,
+   "description": "Access & Search Infrastructure: Architected Cassandra-based fine-grained privilege model and Elasticsearch full-text search across analytics platforms, with Hazelcast distributed caching for sub-second performance.",
+   "links": []
+  },
+  {
+   "node_id": "e596be7f-1936-431c-ada6-fd53527fd418",
+   "name": "Executive Workflow Management Platform (Ten Thousand Women)",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "12/2009",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2007"
+    }
+   ],
+   "employer": "GOLDMAN SACHS & CO.",
+   "isPresent": false,
+   "endYear": "2009",
+   "year": null,
+   "description": "Executive Workflow Platform: Led J2EE/Struts/Hibernate development of a multi-stage approval workflow system for Goldman Sachs' global Ten Thousand Women initiative, improving operational efficiency for administrators worldwide.",
+   "links": []
+  },
+  {
+   "node_id": "d4cd750f-83d7-4176-a6e7-0e5d12a0bb6b",
+   "name": "Cloud-Native Platform Orchestration & Workflow System",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "02/2021",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "02/2013"
+    }
+   ],
+   "employer": "Mezocliq LLC",
+   "isPresent": false,
+   "endYear": "2021",
+   "year": null,
+   "description": "Platform Orchestration: Designed Quarkus-based microservices architecture for UI orchestration and multi-stage approval workflows, with Docker/Kubernetes containerization and full CI/CD pipelines at Mezocliq.",
+   "links": []
+  },
+  {
+   "node_id": "d05b6adf-8034-4546-9d2b-7258fbf5c005",
+   "name": "Open-Source AI Agents Contribution @ JPMC",
+   "type": "ThoughtLeadership",
+   "labels": [
+    "Project",
+    "ThoughtLeadership",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "05/2025"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2025",
+   "year": null,
+   "description": "Thought Leadership: Contributed to Microsoft AutoGen-based AI Agent frameworks at JPMC, fostering knowledge sharing about multi-agent patterns.",
+   "links": []
+  },
+  {
+   "node_id": "9497d7e3-7243-401b-9b9f-63fa92dd4337",
+   "name": "Humanless Autocode at Scale for SRE @ JPMorgan Chase",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Hackathon",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "03/2025",
+     "rel": "PARTICIPATED_IN",
+     "role": "Project Lead",
+     "start": "02/2025"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2025",
+   "year": "2025",
+   "description": "Innovation Leadership: Automated, context-aware AI code review process using Sourcegraph's Cody, tailored for enterprise guardrails.",
+   "links": []
+  },
+  {
+   "node_id": "fb202c0f-ed79-4420-a4ee-bbfe8377c094",
+   "name": "Volarisation Engine @ IBM Dev Day 2026",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Hackathon",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2026",
+     "rel": "PARTICIPATED_IN",
+     "role": "Lead Developer",
+     "start": "01/2026"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2026",
+   "year": "2026",
+   "description": "Innovation Leadership: Explainable, agentic AI decision-support system built with IBM Watsonx Orchestrate to accelerate life-sciences patent research.",
+   "links": [
+    "https://lnkd.in/dcSmQS4n",
+    "https://sites.google.com/view/valorisationengine/valorisation",
+    "https://drive.proton.me/urls/NYB1KQ7QNC#HueGJ6Nq7AAl"
+   ]
+  },
+  {
+   "node_id": "0b200346-c697-4664-a390-930f69eb0dcd",
+   "name": "Gain/Loss Cloud Native Microservice",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2024",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2021"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2024",
+   "year": null,
+   "description": "Cost Modernization: Designed and implemented a greenfield, cloud-native Gain/Loss microservice on AWS EKS, delivering $338k in annual cost savings and removing vendor dependency.",
+   "links": []
+  },
+  {
+   "node_id": "60e080d9-d54f-4803-bc9f-3f4c5568d228",
+   "name": "Start of Day Open Short Orders Microservice",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2024",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2021"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2024",
+   "year": null,
+   "description": "Cloud Transformation: Modernized start-of-day business processing by migrating legacy vendor products to a scalable, cloud-native microservice architecture.",
+   "links": []
+  },
+  {
+   "node_id": "ffc91b37-15aa-4ccb-a135-33a01314d100",
+   "name": "Corporate Action Report Automation",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2024",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2021"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2024",
+   "year": null,
+   "description": "Corporate Action Automation: Eliminated manual report delays by implementing an automation microservice integrated with upstream data sources, improving stakeholder delivery consistency.",
+   "links": []
+  },
+  {
+   "node_id": "f6d4acf4-1d4c-4199-85bb-6f95473d8544",
+   "name": "Settlement Setup Instruction Verification System",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2024",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "06/2021"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2024",
+   "year": null,
+   "description": "Settlement Verification: Led brownfield migration off Sybase dependency, maintaining settlement instruction verification integrity without disruption to order-raising workflows.",
+   "links": []
+  },
+  {
+   "node_id": "af4be31e-283b-46bc-8909-f8db3884a590",
+   "name": "Ignite Social Learning Community @ JPMC",
+   "type": "ThoughtLeadership",
+   "labels": [
+    "ThoughtLeadership",
+    "Community",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "LED",
+     "role": "Core Team Member",
+     "start": "06/2021"
+    },
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "FEATURE_GUEST",
+     "role": "Lead & Featured Guest",
+     "start": "06/2021"
+    }
+   ],
+   "employer": null,
+   "isPresent": false,
+   "endYear": "2025",
+   "year": null,
+   "description": "Innovation Leadership: Featured as a Lead and Guest Interviewee for the Ignite Cloud community, driving organic network growth and showcasing the impact of social learning in enterprise tech.",
+   "links": [
+    "https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"
+   ]
+  },
+  {
+   "node_id": "16050251-9570-47cc-a121-82a6443db972",
+   "name": "[2024] MIT: Applied Data Science",
+   "type": "ProfessionalEducation",
+   "labels": [
+    "ProfessionalEducation"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "STUDIED_AT",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": "2024",
+   "description": "Applied Data Science Program covering AI & ML / MIT Professional Education.",
+   "links": []
+  },
+  {
+   "node_id": "bec2c109-865e-4d8f-83c2-5948fc5c6e76",
+   "name": "Metadata Agent Architecture",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "02/2024"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2025",
+   "year": "2025",
+   "description": "Metadata Discovery & RAG Agent: Architected AWS-based AI solution using Lambda, Bedrock, and PG Vector to reduce data discovery time from hours to seconds.",
+   "links": []
+  },
+  {
+   "node_id": "1b26d149-0c38-42d9-affc-fea1e2e84db4",
+   "name": "Ignite Community Leadership",
+   "type": "SocialLearning",
+   "labels": [
+    "SocialLearning",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "PARTICIPATED_IN",
+     "role": "Core Team Member",
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "Core team member of Ignite community in New York Metro, working with 9 active communities and 18 community leads.",
+   "links": []
+  },
+  {
+   "node_id": "e5114522-12ad-4478-8f09-c14648a43982",
+   "name": "Instrument Data on DataMesh",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "02/2024"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2025",
+   "year": "2025",
+   "description": "DataMesh Publishing: Standardized enterprise reference data for AWM by building automated publishing pipelines across the JPMC DataMesh using AWS Glue/Step Functions.",
+   "links": []
+  },
+  {
+   "node_id": "3558073e-399d-4823-b4cd-79ca6194632f",
+   "name": "Infrastructure for Instrument Data on DataMesh",
+   "type": "Project",
+   "labels": [
+    "Project",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "CONTRIBUTED_TO",
+     "role": null,
+     "start": "02/2024"
+    }
+   ],
+   "employer": "JPMorgan Chase",
+   "isPresent": false,
+   "endYear": "2025",
+   "year": "2025",
+   "description": "DataMesh Infrastructure: Resolved critical architecture blockers by collaborating on enterprise-approved Terraform modules for Lake Formation and S3 Access Points.",
+   "links": []
+  },
+  {
+   "node_id": "0af8856a-9996-42cc-9e62-fc9f89cbe956",
+   "name": "Education & Continuous Learning",
+   "type": "Category",
+   "labels": [
+    "Category"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "ae0b5a31-3bec-4882-8262-695a320efa73",
+   "name": "Hackathons",
+   "type": "Category",
+   "labels": [
+    "Category"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "5ea6fdfd-ff3c-41b8-98c0-d825ca4dfb40",
+   "name": "Open Source & Independent Ventures",
+   "type": "Category",
+   "labels": [
+    "Category"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "80b2e5a3-23aa-4e38-9987-7eaa05171011",
+   "name": "Professional Experience",
+   "type": "Category",
+   "labels": [
+    "Category"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "401cd8cb-596c-4c80-b939-b01ca80b1b1b",
+   "name": "Quarkus",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "8b8ccbfe-6b08-45fd-812b-0a34a706b4cb",
+   "name": "Kafka",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "27d91550-d87c-4eeb-aabb-c616f8c6558e",
+   "name": "GOLDMAN SACHS & CO.",
+   "type": "Company",
+   "labels": [
+    "Company",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "12/2009",
+     "rel": "HELD_ROLE",
+     "role": "Sr. Software Engineer, Consultant",
+     "start": "06/2007"
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "1a6af62a-771c-4172-9351-29cd940fe56d",
+   "name": "Thrift",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "71cead71-0826-49d9-9e74-af58daac0177",
+   "name": "Cassandra",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "f611eefe-9a97-4db4-a831-6b190ee7f675",
+   "name": "Elastic Search",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "0984b162-a964-4636-8441-e06aa5ffd6ca",
+   "name": "Java",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "519ecf93-b79e-4e96-aa8c-860f9ee63e42",
+   "name": "Python",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "81902f59-bb0c-425a-87a3-2ac9f1aa2a48",
+   "name": "AWS",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "3bb1cb27-c8cd-4c39-9bd0-a5efbdb730c5",
+   "name": "Thought Leadership & Community",
+   "type": "Category",
+   "labels": [
+    "Category"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "bb24f0a1-fda3-4310-adc9-01266c638195",
+   "name": "Macmet India Pvt. Ltd.",
+   "type": "Company",
+   "labels": [
+    "Company",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "04/1999",
+     "rel": "HELD_ROLE",
+     "role": "Software Engineer",
+     "start": "08/1997"
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "82b682cb-9a92-44eb-bf40-96e258ea4fff",
+   "name": "Mezocliq LLC",
+   "type": "Company",
+   "labels": [
+    "Company",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "02/2021",
+     "rel": "HELD_ROLE",
+     "role": "Sr. Software Engineer (Mezocliq)",
+     "start": "02/2013"
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "42833354-593e-4c56-9781-cfaa0a0024ac",
+   "name": "Smallrye Mutiny",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "0f1db8a5-4fcf-4e8c-8868-bb2a37ff91bf",
+   "name": "gRPC",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "37445861-e193-4c42-a832-20e684972ea0",
+   "name": "Protocol Buffers",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "a663315c-6b9e-465b-ae07-fdbe75abfd75",
+   "name": "JSON",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "38d97ae1-9369-4ce9-ac6f-9a90cc0e4436",
+   "name": "Architectural Shifts for Platform Engineers in the Age of AI",
+   "type": "ThoughtLeadership",
+   "labels": [
+    "Publication",
+    "ThoughtLeadership",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "CO_AUTHORED",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": [
+    "https://www.infoq.com/minibooks/architecture-age-ai-opportunity/"
+   ]
+  },
+  {
+   "node_id": "775c2fe1-2d9c-4846-8415-2da0ee73e1ba",
+   "name": "[2011] Master's Degree in Computer Science",
+   "type": "Degree",
+   "labels": [
+    "Degree"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "GRADUATED_FROM",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": "2011",
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "1b276b5e-7e80-4b36-8351-c9788cd39b0f",
+   "name": "[1997] Bachelor's Degree (B.E.) in Electronics and Communication",
+   "type": "Degree",
+   "labels": [
+    "Degree"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "GRADUATED_FROM",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": "1997",
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "a4d874fe-28be-4cd2-9819-e0ac4eba7a60",
+   "name": "Docker/Kubernetes",
+   "type": "Skill",
+   "labels": [
+    "Skill",
+    "Embeddable"
+   ],
+   "career_spans": [],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "1eb1d92a-c531-4d5b-8a81-a437745531d7",
+   "name": "GE Healthcare",
+   "type": "Company",
+   "labels": [
+    "Company",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "01/2006",
+     "rel": "HELD_ROLE",
+     "role": "IT Systems Specialist",
+     "start": "05/1999"
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  },
+  {
+   "node_id": "59292307-c0f2-4bb9-a8ee-c6cc3d395817",
+   "name": "Ignite takes New York City by storm",
+   "type": "ThoughtLeadership",
+   "labels": [
+    "Publication",
+    "ThoughtLeadership",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": null,
+     "rel": "AUTHORED",
+     "role": null,
+     "start": null
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": [
+    "https://www.jpmorganchase.com/about/technology/blog/ignite-takes-new-york-city-by-storm"
+   ]
+  },
+  {
+   "node_id": "86d7493f-7687-42cf-9d24-3babc5b8b1d7",
+   "name": "JPMorgan Chase",
+   "type": "Company",
+   "labels": [
+    "Company",
+    "Embeddable"
+   ],
+   "career_spans": [
+    {
+     "date": null,
+     "end": "07/2025",
+     "rel": "HELD_ROLE",
+     "role": "Lead Software Engineer, VP",
+     "start": "02/2024"
+    },
+    {
+     "date": null,
+     "end": "01/2024",
+     "rel": "HELD_ROLE",
+     "role": "Sr. Software Engineer (JPMC)",
+     "start": "06/2021"
+    }
+   ],
+   "employer": null,
+   "isPresent": null,
+   "endYear": null,
+   "year": null,
+   "description": "",
+   "links": []
+  }
+ ]
+}

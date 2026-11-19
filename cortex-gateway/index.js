@@ -17,6 +17,7 @@ const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured e
 const { sendSafeError, GraphUnavailableError, isFatalToolError, isGraphUnavailableResult } = require('./utils/user_errors');   // S2-90
 const { handleClerkSessionEvent } = require('./utils/clerk_session_events');   // S2-92 sign-in/sign-out audit
 const { createInviteDelivery, deliveryFields } = require('./utils/invite_delivery');   // S2-93 checked invite emails
+const careerChronology = require('./utils/career_chronology');   // S2-94 career map newest first, by employer
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
 const { createOpenAIPause, CONFIG: PAUSE_CONFIG } = require('./utils/openai_pause');   // owner's manual pause of OpenAI spend (release 5)
@@ -212,63 +213,11 @@ function auditResponseCitations(content, nodeNames) {
     return content.replace(/<citations>[\s\S]*?<\/citations>/i, newBlock);
 }
 
-// Node types eligible to appear in a Q2 (career map) chat response.
-// Excludes structural nodes (Category, Person, Year, Technology, Skill) and
-// granular project-breakdown types that add noise rather than career narrative.
-const CAREER_CHAT_NODE_TYPES = new Set([
-    'Project', 'Role', 'Company', 'Startup', 'Hackathon',
-    'ThoughtLeadership', 'Certification', 'Degree',
-    'Institution', 'ProfessionalEducation', 'Publication'
-]);
-
 // Types that receive writer prose (focused single-item narrative exists).
 // Startup is included because Cortex-Drive resolves to type 'Startup' (Startup:Project → 'Startup').
 function isWriterEligible(n) {
     if (['Project', 'Startup', 'ThoughtLeadership', 'Publication'].includes(n.type)) return true;
     return false;
-}
-
-// Timeline string for a node.
-function nodeTimeline(n) {
-    return n.displayDate ||
-        (n.startYear && n.endYear ? `${n.startYear}–${n.endYear}` :
-         n.startYear ? n.startYear : n.endYear ? n.endYear : '');
-}
-
-// All URL links for a node — returns only http/https items to avoid article titles
-// stored as link entries in Neo4j appearing as duplicate text lines.
-function nodeLinks(n) {
-    const isUrl = l => l && (l.startsWith('http://') || l.startsWith('https://'));
-    const allLinks = Array.isArray(n.links) && n.links.length > 0 ? n.links : (n.url ? [n.url] : []);
-    return allLinks.filter(isUrl);
-}
-
-// Splits contentNodes into the Q2 display sections.
-// Cortex-Drive resolves to type 'Startup' (Startup:Project → 'Startup' in type CASE).
-// isCurrentProject covers both pure Project nodes and Startup nodes that are active ventures.
-function groupNodesForQ2(contentNodes) {
-    const isCurrentProject = n =>
-        (n.type === 'Project' || n.type === 'Startup') &&
-        (n.isPresent === true || n.isPresent === 'true' || n.endDate === 'Present' || n.endYear === 'Present' || n.displayDate?.includes('Present'));
-
-    // currentlyBuilding: active ventures/projects — shown at the top of Career Timeline
-    const currentlyBuilding = contentNodes.filter(isCurrentProject);
-    const currentNames = new Set(currentlyBuilding.map(n => n.name));
-
-    // companies: past employers — shown below currently-building entries in Career Timeline
-    const companies = contentNodes.filter(n => n.type === 'Company' && !currentNames.has(n.name));
-
-    // projects: all Project nodes + currently-building Startup nodes (for description in What She Built)
-    const projects = contentNodes.filter(n =>
-        n.type === 'Project' ||
-        (n.type === 'Startup' && (n.isPresent === true || n.isPresent === 'true' || n.endDate === 'Present' || n.endYear === 'Present'))
-    );
-
-    const thoughtLeadership = contentNodes.filter(n => n.type === 'ThoughtLeadership' || n.type === 'Publication');
-    const hackathons   = contentNodes.filter(n => n.type === 'Hackathon');
-    const education    = contentNodes.filter(n => ['Degree', 'Certification', 'ProfessionalEducation', 'Institution'].includes(n.type));
-
-    return { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education };
 }
 
 /**
@@ -285,75 +234,13 @@ function sanitizeNarrative(text) {
 }
 
 /**
- * Option B — section-based Q2 career map (no writer calls, uses node description only).
- * Used as fallback when Option A writer calls fail, and as the static buildLlmToolContent
- * ranked summary sent to the LLM. Sections: Career Timeline / What She Built /
- * Thought Leadership / Hackathons / Education.
- * Currently-building ventures appear at the top of Career Timeline (not a separate section).
+ * Option B — career map with no writer calls (node descriptions only). Fallback when Option A's writer calls fail.
+ * Order, sections and employer nesting come from utils/career_chronology.js (S2-94): newest first, each employer's
+ * work listed under it and in its own section. Until 2026-11-19 this kept the order Neo4j returned.
  */
 function buildCareerMapResponse(rankedNodes) {
-    const contentNodes = rankedNodes.filter(n => CAREER_CHAT_NODE_TYPES.has(n.type));
-    if (contentNodes.length === 0) return null;
-
-    const { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education } = groupNodesForQ2(contentNodes);
-    const lines = ['## Institutional Memory Map'];
-
-    // Career Timeline: active ventures at top, then past employers chronologically.
-    if (currentlyBuilding.length > 0 || companies.length > 0) {
-        lines.push('', '---', '', '### Career Timeline');
-        currentlyBuilding.forEach(n => {
-            const tl = nodeTimeline(n);
-            const role = n.role ? ` · ${n.role}` : '';
-            lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
-            lines.push('');
-        });
-        companies.forEach(n => {
-            const tl = nodeTimeline(n);
-            const role = n.role ? ` · ${n.role}` : '';
-            lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
-            lines.push('');
-        });
-    }
-
-    if (projects.length > 0) {
-        lines.push('', '---', '', '### What She Built');
-        projects.forEach((n, i) => {
-            const tl = nodeTimeline(n);
-            lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
-            if (i < 3 && n.description?.length > 10) { lines.push(''); lines.push(n.description); }
-            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
-            lines.push('');
-        });
-    }
-
-    if (thoughtLeadership.length > 0) {
-        lines.push('', '---', '', '### Thought Leadership & Publications');
-        thoughtLeadership.forEach(n => {
-            const tl = nodeTimeline(n);
-            lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
-            if (n.description?.length > 10) { lines.push(''); lines.push(n.description); }
-            nodeLinks(n).forEach(url => lines.push(`- ${url}`));
-            lines.push('');
-        });
-    }
-
-    if (hackathons.length > 0) {
-        lines.push('', '---', '', '### Hackathons & Contributions');
-        hackathons.forEach(n => {
-            const tl = nodeTimeline(n);
-            lines.push(`- **${n.name}**${tl ? ` [${tl}]` : ''}`);
-        });
-    }
-
-    if (education.length > 0) {
-        lines.push('', '---', '', '### Education & Certifications');
-        education.forEach(n => {
-            const yr = n.year || n.endYear || n.startYear || '';
-            lines.push(`- ${yr ? `[${yr}] ` : ''}**${n.name}**`);
-        });
-    }
-
-    return lines.join('\n');
+    const model = careerChronology.buildCareerModel(rankedNodes || []);
+    return careerChronology.hasCareerContent(model) ? careerChronology.renderCareerMap(model) : null;
 }
 
 /**
@@ -3758,12 +3645,9 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
                                 if (toolArgs.keyword) targetedCareerKeywords.push(toolArgs.keyword);
                             }
                             if (isQ2Tool && isBroadCareerKeyword && domainSignal === 'career' && parsed.nodes) {
-                                const seenK = new Map();
-                                parsed.nodes.forEach(n => {
-                                    const key = `${n.name}::${n.type}`;
-                                    if (!seenK.has(key) || (!seenK.get(key).description && n.description)) seenK.set(key, n);
-                                });
-                                q2RankedNodes = Array.from(seenK.values()).sort((a, b) => (b.temporal_boost || 0) - (a.temporal_boost || 0));
+                                // S2-94: keep every career node from this turn's career tool calls; the chronology module
+                                // merges repeats and orders by date (these nodes carry no relevance score to sort by).
+                                q2RankedNodes = careerChronology.mergeNodes([...(q2RankedNodes || []), ...parsed.nodes]);
                             }
                         } catch (e) { /* non-graph tool result, skip */ }
 
@@ -3897,16 +3781,13 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
                 // Falls back to Option B (buildCareerMapResponse) if writer calls fail.
                 let finalAnswer = assistantMessage.content;
                 if (domainSignal === 'career' && q2RankedNodes && q2RankedNodes.length > 0) {
-                    const contentNodes = q2RankedNodes.filter(n => CAREER_CHAT_NODE_TYPES.has(n.type));
-                    if (contentNodes.length > 0) {
+                    const model = careerChronology.buildCareerModel(q2RankedNodes);
+                    if (careerChronology.hasCareerContent(model)) {
                         try {
-                            const { currentlyBuilding, companies, projects, thoughtLeadership, hackathons, education } = groupNodesForQ2(contentNodes);
-
-                            // Writer targets: all currently-building items + top-1 past project (capped at 3).
-                            const writerTargets = [
-                                ...currentlyBuilding,
-                                ...(projects.length > 0 ? [projects[0]] : [])
-                            ].filter(isWriterEligible).slice(0, 3);
+                            // Writer targets: current projects + the newest past project (capped at 3).
+                            const pastProject = (model.sections.projects || []).find(n => !n.span.current);
+                            const writerTargets = [...model.current, ...(pastProject ? [pastProject] : [])]
+                                .filter(isWriterEligible).slice(0, 3);
 
                             // Pre-fetch PreparatoryNote narratives in parallel, then run writer calls.
                             const enriched = await Promise.all(writerTargets.map(async n => {
@@ -3914,82 +3795,17 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
                                 return bentoNarrative ? { ...n, text: bentoNarrative } : n;
                             }));
                             const writerResults = await Promise.all(enriched.map(n => buildQ2WriterCall(n, openai)));
-                            const writerMap = new Map(enriched.map((n, i) => [n.name, writerResults[i]]));
-                            console.log('[QUERY] Q2 Option A writer calls completed:', writerTargets.length, 'items total:', contentNodes.length);
+                            const proseByName = new Map();
+                            enriched.forEach((n, i) => {
+                                const rawNarrative = sanitizeNarrative(n.text);
+                                // Guard: reject narratives with ### headers (structured docs) so headings don't leak into prose.
+                                const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
+                                const prose = writerResults[i] || safeNarrative;
+                                if (prose) proseByName.set(n.name, prose);
+                            });
+                            console.log('[QUERY] Q2 Option A writer calls completed:', writerTargets.length, 'employers:', model.employers.length);
 
-                            const lines = ['## Institutional Memory Map'];
-
-                            // --- Career Timeline: active ventures first, then past employers ---
-                            if (currentlyBuilding.length > 0 || companies.length > 0) {
-                                lines.push('', '---', '', '### Career Timeline');
-                                currentlyBuilding.forEach(n => {
-                                    const tl = nodeTimeline(n);
-                                    const role = n.role ? ` · ${n.role}` : '';
-                                    lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
-                                    lines.push('');
-                                });
-                                companies.forEach(n => {
-                                    const tl = nodeTimeline(n);
-                                    const role = n.role ? ` · ${n.role}` : '';
-                                    lines.push(`#### ${n.name}${role}${tl ? ` [${tl}]` : ''}`);
-                                    lines.push('');
-                                });
-                            }
-
-                            // --- What She Built ---
-                            if (projects.length > 0) {
-                                lines.push('', '---', '', '### What She Built');
-                                projects.forEach((n, i) => {
-                                    const tl = nodeTimeline(n);
-                                    lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
-                                    if (i === 0) {
-                                        const enrichedNode = enriched.find(e => e.name === n.name) || n;
-                                        const rawNarrative = sanitizeNarrative(enrichedNode.text);
-                                        // Guard: reject bento narratives that contain ### headers (structured docs)
-                                        // to prevent section headings from leaking into prose output.
-                                        const safeNarrative = rawNarrative && !rawNarrative.includes('###') ? rawNarrative : null;
-                                        const prose = writerMap.get(n.name) || safeNarrative || '';
-                                        const desc = prose || (n.description?.length > 10 ? n.description : '');
-                                        if (desc) { lines.push(''); lines.push(desc); }
-                                    } else if (n.description?.length > 10) {
-                                        lines.push(''); lines.push(n.description);
-                                    }
-                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
-                                    lines.push('');
-                                });
-                            }
-
-                            // --- Thought Leadership & Publications ---
-                            if (thoughtLeadership.length > 0) {
-                                lines.push('', '---', '', '### Thought Leadership & Publications');
-                                thoughtLeadership.forEach(n => {
-                                    const tl = nodeTimeline(n);
-                                    lines.push(`#### ${n.name}${tl ? ` [${tl}]` : ''}`);
-                                    if (n.description?.length > 10) { lines.push(''); lines.push(n.description); }
-                                    nodeLinks(n).forEach(url => lines.push(`- ${url}`));
-                                    lines.push('');
-                                });
-                            }
-
-                            // --- Hackathons & Contributions ---
-                            if (hackathons.length > 0) {
-                                lines.push('', '---', '', '### Hackathons & Contributions');
-                                hackathons.forEach(n => {
-                                    const tl = nodeTimeline(n);
-                                    lines.push(`- **${n.name}**${tl ? ` [${tl}]` : ''}`);
-                                });
-                            }
-
-                            // --- Education & Certifications ---
-                            if (education.length > 0) {
-                                lines.push('', '---', '', '### Education & Certifications');
-                                education.forEach(n => {
-                                    const yr = n.year || n.endYear || n.startYear || '';
-                                    lines.push(`- ${yr ? `[${yr}] ` : ''}**${n.name}**`);
-                                });
-                            }
-
-                            finalAnswer = lines.join('\n');
+                            finalAnswer = careerChronology.renderCareerMap(model, { proseFor: n => proseByName.get(n.name) || null });
                         } catch (e) {
                             console.warn('[QUERY] Q2 Option A failed, falling back to Option B:', e.message);
                             const fallback = buildCareerMapResponse(q2RankedNodes);

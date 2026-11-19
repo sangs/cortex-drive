@@ -1,0 +1,15 @@
+{
+  "_comment": "Career map sections (S2-94, documents/architecture/career-map-chronology-design-2026-11-19.md §3.3). Read only by utils/career_chronology.js. A node goes to the FIRST section whose labels it carries (so a Project+Hackathon is a hackathon, a Project+ThoughtLeadership is thought leadership). Employers are nodes with `employer_label`; items under an employer come from the node's `employer` field (MCP: (Company)-[:CONTAINS]->(item) or (item)-[:AT]->(Company)). Every list is newest first. Adding a label is a data change here, not code.",
+  "employer_label": "Company",
+  "nest_under_employer": ["projects", "thoughtLeadership", "hackathons"],
+  "sections": [
+    { "key": "hackathons",        "heading": "Hackathons & Contributions",          "labels": ["Hackathon"] },
+    { "key": "thoughtLeadership", "heading": "Thought Leadership & Publications",   "labels": ["ThoughtLeadership", "Publication", "SocialLearning"] },
+    { "key": "projects",          "heading": "What She Built",                      "labels": ["Project", "Startup"] },
+    { "key": "education",         "heading": "Education & Certifications",          "labels": ["Degree", "Certification", "ProfessionalEducation", "Institution"] }
+  ],
+  "render_order": ["projects", "thoughtLeadership", "hackathons", "education"],
+  "timeline_heading": "Career Timeline",
+  "map_heading": "Institutional Memory Map",
+  "present_label": "Present"
+}

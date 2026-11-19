@@ -1,0 +1,17 @@
+{
+  "_comment": "Where each career item was done (S2-94, documents/architecture/career-map-chronology-design-2026-11-19.md §3.1). Mapping confirmed by the owner on 2026-11-19. Applied by scripts/curate_career_employer_links.py as (employer)-[:CONTAINS]->(item) between EXISTING PUBLIC nodes; dry run by default. Each name must match exactly one node carrying all `item_labels` (the InfoQ title also exists as a ReferenceLink node, which is never linked). New career items get their employer link at ingestion, not through this file.",
+  "relationship": "CONTAINS",
+  "employer_label": "Company",
+  "required_tier": "PUBLIC",
+  "links": [
+    { "item": "Global Hackathons @ JPMorgan Chase", "item_labels": ["Hackathon"], "employer": "JPMorgan Chase" },
+    { "item": "Humanless Autocode at Scale for SRE @ JPMorgan Chase", "item_labels": ["Hackathon"], "employer": "JPMorgan Chase" },
+    { "item": "Open-Source AI Agents Contribution @ JPMC", "item_labels": ["ThoughtLeadership"], "employer": "JPMorgan Chase" },
+    { "item": "Ignite Social Learning Community @ JPMC", "item_labels": ["ThoughtLeadership"], "employer": "JPMorgan Chase" },
+    { "item": "Ignite Community Leadership", "item_labels": ["SocialLearning"], "employer": "JPMorgan Chase" },
+    { "item": "Ignite takes New York City by storm", "item_labels": ["Publication"], "employer": "JPMorgan Chase" },
+    { "item": "Volarisation Engine @ IBM Dev Day 2026", "item_labels": ["Hackathon"], "employer": "Independent Ventures" },
+    { "item": "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI", "item_labels": ["Publication"], "employer": "Independent Ventures" },
+    { "item": "Architectural Shifts for Platform Engineers in the Age of AI", "item_labels": ["Publication"], "employer": "Independent Ventures" }
+  ]
+}

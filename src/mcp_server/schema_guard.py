@@ -730,6 +730,16 @@ CAREER_PUBLIC_FROM_PERSON_RELATIONSHIPS = [
 ]
 # One further hop from those career nodes (section Category → items, Company ↔ Project, reference links).
 CAREER_PUBLIC_DETAIL_RELATIONSHIPS = ['CONTAINS', 'AT', 'HAS_REFERENCE', 'AWARDED_FOR']
+
+# Career map dates and employer (S2-94, documents/architecture/career-map-chronology-design-2026-11-19.md).
+# A career item's dates live on the Person → item relationship (`start` / `end` / `date`, e.g. "06/2021", "Present").
+CAREER_SPAN_RELATIONSHIPS = ['CURRENTLY_BUILDING', 'HELD_ROLE', 'PARTICIPATED_IN', 'AUTHORED', 'CO_AUTHORED',
+                             'CERTIFIED_BY', 'STUDIED_AT', 'GRADUATED_FROM', 'CONTRIBUTED_TO', 'FEATURE_GUEST',
+                             'BUILT_DURING', 'LED']
+# Where an item was done: (employer)-[:CONTAINS]->(item) or (item)-[:AT]->(employer).
+EMPLOYER_LABEL = 'Company'
+EMPLOYER_CONTAINS_RELATIONSHIP = 'CONTAINS'
+EMPLOYER_AT_RELATIONSHIP = 'AT'
 # Never moved, whatever links them: private notes, ingested content, podcast content, other people.
 CAREER_PUBLIC_EXCLUDED_LABELS = [
     'Person', 'PreparatoryNote', 'Chunk', 'Episode', 'Podcast', 'Source', 'WebsiteSource', 'DocumentSource',

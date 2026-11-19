@@ -200,7 +200,7 @@ class ExpertTools:
         // guarantee an irrelevant node wouldn't still win one of the surviving slots — confirmed
         // live: "Federated Knowledge Silos" still appeared for a query about "AI ethics and
         // governance" even after the 62-node explosion was cut to 33. $keywords is already a
-        // bound parameter (used above and in _fragment_ranking_and_return's range_boost) — no
+        // bound parameter (used above) — no
         // new parameter. Same principle as the existing content-bearing-neighbor ordering in
         // _fragment_neighbor_aggregation just below.
         WITH anchor, expandedNode, parentEpisode,
@@ -310,104 +310,31 @@ class ExpertTools:
         """
         return query.replace("{sec_note}", self._get_security_clause("note"))
 
-    def _fragment_ranking_and_return(self) -> str:
-        return """
-        WITH node, narratives, fused_links, relationships, technologies, relDates, expanded_ids,
-             CASE 
-                WHEN $embedding IS NOT NULL AND node.embedding IS NOT NULL 
-                THEN vector.similarity.cosine($embedding, node.embedding)
-                ELSE 0.0 
-             END AS semantic_score
+    def _career_context_matches(self, node_var: str = "node") -> tuple:
+        """Career dates and employer for each returned node (S2-94).
 
-        WITH node, narratives, fused_links, relationships, technologies, relDates, expanded_ids, semantic_score,
-             (CASE 
-                WHEN size(relDates) = 0 THEN {rel_start: null, rel_end: null, rel_date: null}
-                ELSE apoc.coll.sortMaps([rd IN relDates WHERE rd IS NOT NULL], "^rel_end")[size([rd IN relDates WHERE rd IS NOT NULL])-1]
-             END) AS bestDate
-
-        WITH node, narratives, fused_links, technologies, bestDate, semantic_score, expanded_ids,
-             (CASE 
-                WHEN node.name CONTAINS "1997" OR node.name CONTAINS "NIT Bhopal" THEN 500
-                WHEN node.name CONTAINS "JPMC" OR node.name CONTAINS "2025" THEN 200
-                WHEN 'ExternalSilo' IN labels(node) AND any(w IN $keywords WHERE w IN ['silo', 'silos', 'external', 'lakehouse', 'iceberg', 'data', 'sentiment']) THEN 2000
-                ELSE 0 
-             END) AS range_boost,
-             (size(narratives) > 0 OR size(technologies) > 0 OR size(fused_links) > 0) AS is_bento_eligible
-
-        RETURN DISTINCT
-            node { 
-                name: node.name,
-                title: node.title,
-                description: node.description,
-                text: node.text,
-                url: node.url,
-                link: node.link,
-                number: node.number,
-                aired_date: node.aired_date,
-                published_date: node.published_date,
-                year: node.year,
-                startDate: node.startDate,
-                endDate: node.endDate,
-                displayDate: CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.displayDate END,
-                startYear:   CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.startYear END,
-                endYear:     CASE WHEN 'Episode' IN labels(node) THEN null ELSE node.endYear END,
-                isPresent: coalesce(node.isPresent, bestDate.rel_end = 'Present', node.endDate = 'Present', false),
-                role: coalesce(bestDate.rel_title, node.role),
-                labels: labels(node),
-                display_name: coalesce(node.name, node.title, node.text, node.url, labels(node)[0]),
-                type: CASE
-                    WHEN 'Category' IN labels(node) THEN 'Category'
-                    WHEN 'Role' IN labels(node) THEN 'Role'
-                    WHEN 'Hackathon' IN labels(node) THEN 'Hackathon'
-                    WHEN 'ThoughtLeadership' IN labels(node) THEN 'ThoughtLeadership'
-                    WHEN 'Startup' IN labels(node) AND 'Project' IN labels(node) THEN 'Startup'
-                    WHEN 'Startup' IN labels(node) THEN 'Startup'
-                    WHEN 'Company' IN labels(node) THEN 'Company'
-                    WHEN 'Degree' IN labels(node) THEN 'Degree'
-                    WHEN 'ProfessionalEducation' IN labels(node) THEN 'ProfessionalEducation'
-                    WHEN 'Certification' IN labels(node) THEN 'Certification'
-                    WHEN 'Project' IN labels(node) THEN 'Project'
-                    WHEN 'Episode' IN labels(node) THEN 'Episode'
-                    WHEN 'Technology' IN labels(node) THEN 'Technology'
-                    WHEN 'Topic' IN labels(node) THEN 'Topic'
-                    ELSE labels(node)[0]
-                END,
-                is_bento_eligible: is_bento_eligible,
-                is_expandable: EXISTS { (node)-[]-(n2) WHERE NOT labels(n2)[0] IN ['ReferenceLink', 'Chunk'] },
-                temporal_boost: (CASE
-                    WHEN bestDate.rel_end = 'Present' OR node.endDate = 'Present' THEN 150 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    WHEN bestDate.rel_end IS NOT NULL OR node.endDate IS NOT NULL THEN 100 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    WHEN bestDate.rel_start IS NOT NULL OR node.startDate IS NOT NULL THEN 50 + (CASE WHEN node:Project THEN 10 ELSE 0 END)
-                    WHEN node:Episode THEN 300
-                    ELSE 0
-                END) + (CASE WHEN node.isPresent = true THEN 100 ELSE 0 END) + range_boost + toInteger((semantic_score * 100)) + (CASE WHEN elementId(node) IN expanded_ids THEN 1000 ELSE 0 END),
-
-                year: coalesce(
-                    (CASE WHEN node:Project AND bestDate.rel_end = 'Present' THEN '2026'
-                          WHEN node:Project AND bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4)
-                          ELSE null END),
-                    toString(node.year),
-                    toString(node.aired_date),
-                    (CASE WHEN bestDate.rel_end = 'Present' THEN '2026' WHEN bestDate.rel_end IS NOT NULL THEN right(toString(bestDate.rel_end), 4) ELSE null END),
-                    (CASE WHEN node.endDate = 'Present' THEN '2026' WHEN node.endDate IS NOT NULL THEN right(toString(node.endDate), 4) ELSE null END),
-                    right(toString(bestDate.rel_start), 4),
-                    right(toString(node.startDate), 4),
-                    right(toString(bestDate.rel_date), 4),
-                    right(toString(node.date), 4),
-                    left(toString(node.published_at), 4),
-                    null
-                ),
-                relationships: [rel IN relationships WHERE rel.name <> "Unknown"], 
-                technologies: [t IN technologies WHERE t IS NOT NULL], 
-                links: [l IN fused_links WHERE l IS NOT NULL AND l <> ""],
-                text: apoc.text.join(narratives, "\n---\n"),
-                start_time: node.startTime,
-                end_time: node.endTime,
-                aired_date: node.aired_date
-            } AS details
-        ORDER BY details.temporal_boost DESC
-        LIMIT 40
+        Returns (matches, aggregates): OPTIONAL MATCH lines to place after the node is bound, and the two
+        collect() expressions (`career_spans`, `employers`) for the following WITH. The dates are returned raw
+        (e.g. "06/2021", "Present"); the gateway parses and orders them (utils/career_chronology.js). Every
+        matched Person / employer passes the security clause, like every other neighbour.
         """
+        from schema_guard import (CAREER_SPAN_RELATIONSHIPS, EMPLOYER_LABEL,
+                                  EMPLOYER_CONTAINS_RELATIONSHIP, EMPLOYER_AT_RELATIONSHIP)
+        span_types = "|".join(CAREER_SPAN_RELATIONSHIPS)
+        matches = (
+            f"OPTIONAL MATCH (cspan_p:Person)-[cspan:{span_types}]-({node_var})\n"
+            f"        WHERE ({self._get_security_clause('cspan_p')})\n"
+            f"        OPTIONAL MATCH (emp_in:{EMPLOYER_LABEL})-[:{EMPLOYER_CONTAINS_RELATIONSHIP}]->({node_var})\n"
+            f"        WHERE ({self._get_security_clause('emp_in')})\n"
+            f"        OPTIONAL MATCH ({node_var})-[:{EMPLOYER_AT_RELATIONSHIP}]->(emp_at:{EMPLOYER_LABEL})\n"
+            f"        WHERE ({self._get_security_clause('emp_at')})"
+        )
+        aggregates = (
+            "collect(DISTINCT CASE WHEN cspan IS NULL THEN null ELSE "
+            "{start: cspan.start, end: cspan.end, date: cspan.date, role: coalesce(cspan.title, cspan.role), rel: type(cspan)} END) AS career_spans,\n"
+            "             collect(DISTINCT coalesce(emp_in.name, emp_at.name)) AS employers"
+        )
+        return matches, aggregates
 
     def _sanitize_narrative(self, text: str) -> str:
         """
@@ -1807,6 +1734,7 @@ class ExpertTools:
             _authorized = get_authorized_labels(domain_intent) or []
             match_label_string = "|".join(_authorized) if _authorized else discovery_labels
 
+        career_matches, career_aggs = self._career_context_matches("node")   # S2-94 dates + employer
         query = f"""
         {self._fragment_taxonomy_expansion()}
 
@@ -1839,11 +1767,13 @@ class ExpertTools:
         OPTIONAL MATCH (node)-[:USES_TOOL]->(tech:Technology)
         OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
         WHERE ({self._get_security_clause("note")})
+        {career_matches}
 
         WITH node, allNodes, allRels,
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
              collect(DISTINCT tech.name) AS cluster_tech_urls,
-             collect(DISTINCT note.text) AS notes
+             collect(DISTINCT note.text) AS notes,
+             {career_aggs}
 
         WITH allNodes, allRels,
              collect(DISTINCT {{
@@ -1871,6 +1801,10 @@ class ExpertTools:
                 isPresent: node.isPresent,
                 endDate: node.endDate,
                 endYear: node.endYear,
+                year: node.year,
+                labels: labels(node),
+                career_spans: career_spans,
+                employer: head(employers),
                 candidacy_source: CASE
                     WHEN elementId(node) IN $semantic_seed_ids AND NOT (
                         toLower(node.name) CONTAINS toLower($keyword)
@@ -2245,13 +2179,15 @@ class ExpertTools:
 
         OPTIONAL MATCH (node)-[:HAS_NOTE]->(note:Note)
         WHERE ({sec_note})
+        {career_matches}
 
         WITH node, rel, roleRel,
              collect(DISTINCT coalesce(ref.url, ref.link, ref.neighborUrl)) AS cluster_ref_urls,
              collect(DISTINCT tech.name) AS cluster_tech_urls,
-             collect(DISTINCT note.text) AS notes
+             collect(DISTINCT note.text) AS notes,
+             {career_aggs}
 
-        WITH node, rel, roleRel, cluster_tech_urls, notes,
+        WITH node, rel, roleRel, cluster_tech_urls, notes, career_spans, employers,
              apoc.coll.toSet(coalesce(node.links, []) + cluster_ref_urls + [node.url, node.link]) AS fused_links
 
         WITH
@@ -2297,6 +2233,9 @@ class ExpertTools:
                 endYear: coalesce(node.endYear, right(roleRel.end, 4), toString(node.year)),
                 isPresent: coalesce(node.isPresent, roleRel.end = "Present", false),
                 role: roleRel.role,
+                labels: labels(node),
+                career_spans: career_spans,
+                employer: head(employers),
                 year: coalesce(
                     toString(node.year),
                     right(roleRel.end, 4),
@@ -2327,6 +2266,8 @@ class ExpertTools:
         LIMIT 1
         """
         query = query.replace("{safe_depth}", str(safe_depth)).replace("{bridge_labels}", bridge_labels).replace("{backbone_filter}", backbone_filter).replace("{domain_filter}", domain_filter).replace("{traversal_whitelist}", traversal_whitelist)
+        career_matches, career_aggs = self._career_context_matches("node")   # S2-94 dates + employer
+        query = query.replace("{career_matches}", career_matches).replace("{career_aggs}", career_aggs)
         query = query.replace("{sec_n}", self._get_security_clause("n")).replace("{sec_m}", self._get_security_clause("m")).replace("{sec_p}", self._get_security_clause("p")).replace("{sec_note}", self._get_security_clause("note"))
         try:
             from domain_registry import get_backbone_labels
