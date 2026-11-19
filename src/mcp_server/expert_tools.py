@@ -1802,7 +1802,7 @@ class ExpertTools:
                 endDate: node.endDate,
                 endYear: node.endYear,
                 year: node.year,
-                labels: labels(node),
+                node_labels: labels(node),   // S2-94. Not `labels`: that key switches on the visual bouncer below
                 career_spans: career_spans,
                 employer: head(employers),
                 candidacy_source: CASE
@@ -2233,7 +2233,7 @@ class ExpertTools:
                 endYear: coalesce(node.endYear, right(roleRel.end, 4), toString(node.year)),
                 isPresent: coalesce(node.isPresent, roleRel.end = "Present", false),
                 role: roleRel.role,
-                labels: labels(node),
+                node_labels: labels(node),   // S2-94. Not `labels`: that key switches on the visual bouncer below
                 career_spans: career_spans,
                 employer: head(employers),
                 year: coalesce(

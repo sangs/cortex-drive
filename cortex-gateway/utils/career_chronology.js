@@ -79,8 +79,10 @@ function formatSpan(span) {
     return ey || sy;
 }
 
+// MCP sends `node_labels` (S2-94; `labels` would trigger its visual bouncer); `labels` is read too.
 function labelsOf(n) {
-    return Array.isArray(n.labels) && n.labels.length ? n.labels : (n.type ? [n.type] : []);
+    for (const key of ['node_labels', 'labels']) if (Array.isArray(n[key]) && n[key].length) return n[key];
+    return n.type ? [n.type] : [];
 }
 
 /** Section key for a node (first section whose labels it carries), 'employer', or null. */

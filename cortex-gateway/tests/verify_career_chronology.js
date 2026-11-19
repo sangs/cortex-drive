@@ -42,6 +42,7 @@ eq(c.sectionOf({ labels: ['SocialLearning'] }), 'thoughtLeadership', 'social lea
 eq(c.sectionOf({ labels: ['Company'] }), 'employer', 'Company is an employer');
 eq(c.sectionOf({ labels: ['Skill'] }), null, 'structural nodes are not listed');
 eq(c.sectionOf({ type: 'Project' }), 'projects', 'type used when labels are missing');
+eq(c.sectionOf({ node_labels: ['Project', 'Hackathon'], labels: [] }), 'hackathons', 'MCP node_labels read first (S2-94: `labels` would trigger the MCP visual bouncer)');
 
 // ── The real 2026-11-19 data, with the owner-confirmed employer links ────────────────────────
 const linked = FIXTURE.map(n => {
