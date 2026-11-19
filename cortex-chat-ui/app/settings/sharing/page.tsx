@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
+import AccountMenu from '@/components/AccountMenu';
 
 type Tab = 'public-links' | 'named-shares' | 'pending-invites';
 
@@ -289,6 +290,7 @@ export default function SharingSettingsPage() {
                             <ExternalLink className="w-3.5 h-3.5" />
                             Open Dashboard
                         </Link>
+                        <AccountMenu />
                     </div>
                 </div>
             </header>

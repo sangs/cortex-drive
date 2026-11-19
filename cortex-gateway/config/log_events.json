@@ -32,6 +32,16 @@
       "tag": "USER_ERROR",
       "severity": "WARNING",
       "fields": ["code", "route", "status", "cause", "cause_code", "user_type"]
+    },
+    "auth.session_started": {
+      "tag": "AUTH",
+      "severity": "INFO",
+      "fields": ["clerk_event", "user_id", "session_id", "status"]
+    },
+    "auth.session_ended": {
+      "tag": "AUTH",
+      "severity": "INFO",
+      "fields": ["clerk_event", "user_id", "session_id", "status"]
     }
   }
 }

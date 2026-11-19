@@ -9,6 +9,7 @@ import {
     ArrowLeft
 } from "lucide-react";
 import Link from "next/link";
+import AccountMenu from "@/components/AccountMenu";
 
 export default function AdminPage() {
     // Mock users data - in reality, this would fetch from a database or Clerk API
@@ -40,8 +41,11 @@ export default function AdminPage() {
                             Admin Control Center
                         </h1>
                     </div>
+                    <div className="flex items-center gap-3">
                     <div className="px-4 py-2 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm font-medium">
                         System Admin
+                    </div>
+                    <AccountMenu theme="dark" />
                     </div>
                 </div>
 

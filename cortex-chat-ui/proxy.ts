@@ -1,17 +1,15 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isPublicRoute = createRouteMatcher([
-    "/sign-in(.*)",
-    "/sign-up(.*)",
-    "/",
-    "/graph-view(.*)",  // public graph links (Loom-style) — no Clerk account required
-]);
+import { AUTH_ROUTES, PUBLIC_ROUTES } from "./lib/session-state";
+
+// Public routes (incl. /graph-view guest links) are listed once in config/auth-session.json (S2-92).
+const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 export default clerkMiddleware(async (auth, request) => {
     if (!isPublicRoute(request)) {
         await auth.protect();
     }
-});
+}, { signInUrl: AUTH_ROUTES.signIn, signUpUrl: AUTH_ROUTES.signUp });
 
 export const config = {
     matcher: [

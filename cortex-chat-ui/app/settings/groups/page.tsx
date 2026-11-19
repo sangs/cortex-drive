@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
+import AccountMenu from '@/components/AccountMenu';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -267,6 +268,7 @@ export default function GroupsPage() {
                             New Group
                         </button>
                         )}
+                        <AccountMenu />
                     </div>
                 </div>
             </header>

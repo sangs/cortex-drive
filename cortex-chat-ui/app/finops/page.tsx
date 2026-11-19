@@ -12,6 +12,7 @@ import { useAuth } from '@clerk/nextjs';
 import { AlertTriangle, ArrowLeft, Loader2, OctagonAlert, RefreshCw } from 'lucide-react';
 
 import { GATEWAY_URL } from '@/lib/gateway';
+import AccountMenu from '@/components/AccountMenu';
 import { SOURCE_LABEL, formatUsd, providerColor, type FinopsSummary } from '@/lib/finops-types';
 import FinopsDailyChart from '@/components/FinopsDailyChart';
 import FinopsPauseControl from '@/components/FinopsPauseControl';
@@ -85,10 +86,13 @@ export default function FinopsPage() {
                         </Link>
                         <h1 className="text-2xl font-bold text-slate-900">Costs</h1>
                     </div>
+                    <div className="flex items-center gap-3">
                     <button onClick={() => load(true)} disabled={loading}
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-600 hover:text-indigo-600 disabled:opacity-50">
                         <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
                     </button>
+                    <AccountMenu />
+                    </div>
                 </div>
                 <p className="text-sm text-slate-500">
                     What Cortex-Drive costs to run, all users together: Google Cloud and OpenAI. Months follow Pacific time,

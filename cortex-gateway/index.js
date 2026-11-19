@@ -15,6 +15,7 @@ const _domainManifestsRaw = JSON.parse(fs.readFileSync(path.join(__dirname, 'con
 const { canonicalDomain, externalSignal, contentDomainIds } = require('./utils/domain_ids');
 const { logEvent, LOG_EVENTS } = require('./utils/log_event');   // structured events (config/log_events.json)
 const { sendSafeError, GraphUnavailableError, isFatalToolError, isGraphUnavailableResult } = require('./utils/user_errors');   // S2-90
+const { handleClerkSessionEvent } = require('./utils/clerk_session_events');   // S2-92 sign-in/sign-out audit
 const { withUsage, OPENAI_FEATURES, usageContextMiddleware } = require('./utils/openai_usage');   // FinOps S2-83
 const finops = require('./utils/finops');   // owner-only cost summary (FinOps S2-83 release 4)
 const { createOpenAIPause, CONFIG: PAUSE_CONFIG } = require('./utils/openai_pause');   // owner's manual pause of OpenAI spend (release 5)
@@ -1461,6 +1462,9 @@ app.post('/api/webhooks/clerk', async (req, res) => {
         console.error('[webhook/clerk] Signature verification failed:', err.message);
         return res.status(400).json({ error: 'Invalid signature' });
     }
+
+    // Sign-in / sign-out audit (S2-92): one [AUTH] log line, no Redis or Permify writes.
+    if (handleClerkSessionEvent(event)) return res.status(200).json({ received: true });
 
     if (event.type && event.type.startsWith('organizationMembership.')) {
         // Membership changed in Clerk → Permify follows (S2-46). A failure answers 500 so Clerk

@@ -1,0 +1,21 @@
+{
+  "_comment": "Sign-in / sign-out routes and per-user browser state (S2-92, documents/architecture/sign-out-and-sign-in-design-2026-11-18.md). One list, read by ClerkProvider (app/layout.tsx), clerkMiddleware (proxy.ts), SessionGuard and the dashboard. Committed config, so production builds get the same routes (.env.local* is not in the image).",
+  "routes": {
+    "signIn": "/sign-in",
+    "signUp": "/sign-up",
+    "afterSignIn": "/dashboard",
+    "afterSignUp": "/dashboard",
+    "signedOutParam": "signed_out"
+  },
+  "userSessionStorageKeys": {
+    "dashboard": "cortex_dashboard",
+    "pendingActivated": "pending_activated"
+  },
+  "publicRoutes": [
+    "/sign-in(.*)",
+    "/sign-up(.*)",
+    "/",
+    "/graph-view(.*)"
+  ],
+  "_publicRoutesComment": "Routes reachable without a session (Clerk route patterns). proxy.ts protects everything else; SessionGuard does not redirect away from these on sign-out. /graph-view = public graph links, no Clerk account required."
+}

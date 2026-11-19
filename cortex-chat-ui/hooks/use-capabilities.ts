@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
+import { registerUserStateClearer } from '@/lib/session-state';
 
 export type SourceVisibility = 'private' | 'organization' | 'public';
 export interface Capabilities {
@@ -26,6 +27,12 @@ export const NO_CAPABILITIES: Capabilities = Object.freeze({
 
 // One request per signed-in user per page load, shared by every component that asks.
 const cache = new Map<string, Promise<Capabilities>>();
+
+/** Emptied whenever a session ends (S2-92 SessionGuard), so nothing outlives the sign-out. */
+export function clearCapabilitiesCache(): void {
+    cache.clear();
+}
+registerUserStateClearer(clearCapabilitiesCache);
 
 async function fetchCapabilities(getToken: () => Promise<string | null>): Promise<Capabilities> {
     const token = await getToken();

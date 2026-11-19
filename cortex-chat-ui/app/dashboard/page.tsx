@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
-import { useUser, useAuth, UserButton, OrganizationSwitcher } from "@clerk/nextjs";
+import { useUser, useAuth } from "@clerk/nextjs";
+import AccountMenu from "@/components/AccountMenu";
+import { STORAGE_KEYS, ownedDashboardState } from "@/lib/session-state";
 import { 
     BrainCircuit, 
     Send, 
@@ -108,7 +110,7 @@ type UndoExtra = {
 
 export default function DashboardPage() {
     const { user } = useUser();
-    const { getToken } = useAuth();
+    const { getToken, userId, isLoaded: authLoaded } = useAuth();
     // Controls this user may use (S2-69); all false until the gateway answers.
     const caps = useCapabilities();
     const { isConnected, query, callTool, abortQuery, streamBridges } = useMCP();
@@ -209,11 +211,14 @@ export default function DashboardPage() {
     const [systemStatus, setSystemStatus] = useState<{ mcp: string, neo4j: string }>({ mcp: 'unknown', neo4j: 'unknown' });
 
     // Restore dashboard state from sessionStorage on mount (survives settings navigation).
+    // Only the user who saved it gets it back (S2-92): anything else is deleted, not restored.
     useEffect(() => {
+        if (!authLoaded || hasMounted) return;
         try {
-            const saved = sessionStorage.getItem('cortex_dashboard');
-            if (saved) {
-                const s = JSON.parse(saved);
+            const raw = sessionStorage.getItem(STORAGE_KEYS.dashboard);
+            const s = ownedDashboardState(raw ? JSON.parse(raw) : null, userId);
+            if (raw && !s) sessionStorage.removeItem(STORAGE_KEYS.dashboard);
+            if (s) {
                 if (s.messages?.length)              setMessages(s.messages);
                 if (s.graphData?.nodes?.length)      setGraphData(s.graphData);
                 if (s.domainSignal)                  setDomainSignal(s.domainSignal);
@@ -228,7 +233,7 @@ export default function DashboardPage() {
         // nothing was restored, rather than waiting for the first message.
         setConversationId(prev => prev || crypto.randomUUID());
         setHasMounted(true);
-    }, []);
+    }, [authLoaded, userId, hasMounted]);
 
     // Poll real per-service reachability for the System Health panel. Distinct from
     // useMCP()'s isConnected, which only reflects the gateway SSE connection — this
@@ -256,7 +261,7 @@ export default function DashboardPage() {
 
     // Persist key dashboard state to sessionStorage whenever it changes.
     useEffect(() => {
-        if (!hasMounted) return;
+        if (!hasMounted || !userId) return;
         if (!messages.length && !graphData.nodes.length) return;
         try {
             const safeLinks = graphData.links.map(l => ({
@@ -264,7 +269,8 @@ export default function DashboardPage() {
                 source: typeof l.source === 'object' && l.source !== null ? (l.source as any).id ?? l.source : l.source,
                 target: typeof l.target === 'object' && l.target !== null ? (l.target as any).id ?? l.target : l.target,
             }));
-            sessionStorage.setItem('cortex_dashboard', JSON.stringify({
+            sessionStorage.setItem(STORAGE_KEYS.dashboard, JSON.stringify({
+                ownerUserId: userId,
                 messages,
                 graphData: { nodes: graphData.nodes, links: safeLinks },
                 domainSignal,
@@ -274,14 +280,14 @@ export default function DashboardPage() {
                 conversationId,
             }));
         } catch { /* non-fatal — quota exceeded or circular ref */ }
-    }, [messages, graphData, domainSignal, autoClear, viewMode, chatWidth, conversationId, hasMounted]);
+    }, [messages, graphData, domainSignal, autoClear, viewMode, chatWidth, conversationId, hasMounted, userId]);
 
     // Pull model safety net: activate any pending grants for this user on first load per session.
     // Admins additionally run a full sweep — provisioning grants for any user who signed up
     // but whose webhook delivery was missed (cold start, transient failure, etc.).
     useEffect(() => {
         if (!user || typeof sessionStorage === 'undefined') return;
-        if (sessionStorage.getItem('pending_activated')) {
+        if (sessionStorage.getItem(STORAGE_KEYS.pendingActivated)) {
             setIsActivating(false); // already ran this session — unblock immediately
             return;
         }
@@ -301,7 +307,7 @@ export default function DashboardPage() {
                     .then(d => { if (d.activated > 0) console.log(`[admin-sweep] Activated ${d.activated} pending grant(s)`); })
                     .catch(() => {});
             }
-            sessionStorage.setItem('pending_activated', '1');
+            sessionStorage.setItem(STORAGE_KEYS.pendingActivated, '1');
             setIsActivating(false); // unblock send button — Permify writes are complete
         }).catch(() => setIsActivating(false)); // unblock on auth failure too
     }, [user, getToken]);
@@ -758,7 +764,7 @@ export default function DashboardPage() {
     };
 
     const startNewAnalysis = () => {
-        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
+        try { sessionStorage.removeItem(STORAGE_KEYS.dashboard); } catch { /* non-fatal */ }
         setMessages([
             {
                 role: "assistant",
@@ -805,7 +811,7 @@ export default function DashboardPage() {
     // live instead (reusing executeQuery, the same pipeline handleSend uses) — everything before
     // that last question is still restored from cache as history context.
     const openHistoricalConversation = (conversation: HistoricalConversation, forceRefresh: boolean = false) => {
-        try { sessionStorage.removeItem('cortex_dashboard'); } catch { /* non-fatal */ }
+        try { sessionStorage.removeItem(STORAGE_KEYS.dashboard); } catch { /* non-fatal */ }
         setLastBridge(null);
         setUndoStack([]);
         setNodeExpansionDepth(new Map());
@@ -1408,32 +1414,8 @@ export default function DashboardPage() {
                 {/* Footer Section */}
                 <div className="p-4 border-t border-slate-200 bg-white/50">
                     {hasMounted ? (
-                        <div className="flex flex-col gap-3">
-                            <div className="px-1">
-                                <OrganizationSwitcher
-                                    afterCreateOrganizationUrl="/dashboard"
-                                    appearance={{
-                                        elements: {
-                                            rootBox: "w-full",
-                                            organizationSwitcherTrigger: "w-full justify-start p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors shadow-sm font-bold text-slate-900",
-                                            organizationPreviewMainIdentifier: "font-bold text-slate-900",
-                                        }
-                                    }}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between px-3 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm">
-                                <div className="flex items-center gap-3">
-                                    <UserButton afterSignOutUrl="/" />
-                                    <div className="flex flex-col">
-                                        <span className="text-xs font-black text-slate-900 truncate max-w-[120px]">
-                                            {user?.fullName || "Agent Identity"}
-                                        </span>
-                                        <span className="text-[10px] text-slate-500 uppercase font-black tracking-tighter">
-                                            Enterprise Tier
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2">
+                        // Shared account menu (S2-92): org switcher, user, Sign out; page links as children.
+                        <AccountMenu layout="sidebar">
                                 {caps.finops && (
                                 <Link href="/finops" title="Costs">
                                     <DollarSign className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
@@ -1444,9 +1426,7 @@ export default function DashboardPage() {
                                     <Settings className="w-4 h-4 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer" />
                                 </Link>
                                 )}
-                                </div>
-                            </div>
-                        </div>
+                        </AccountMenu>
                     ) : (
                         <div className="h-[92px] w-full bg-slate-100/50 rounded-2xl animate-pulse" />
                     )}

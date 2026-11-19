@@ -1,8 +1,18 @@
 import { SignIn } from "@clerk/nextjs";
 
-export default function Page() {
+import { AUTH_ROUTES } from "@/lib/session-state";
+
+// After sign-out, Clerk sends users here with ?signed_out=1 (S2-92): say so, then offer sign-in.
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+    const params = await searchParams;
+    const signedOut = params[AUTH_ROUTES.signedOutParam] === "1";
     return (
-        <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-950">
+            {signedOut && (
+                <p role="status" className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300">
+                    You have signed out. Sign in again to continue.
+                </p>
+            )}
             <SignIn 
                 appearance={{
                     elements: {
