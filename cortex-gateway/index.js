@@ -572,6 +572,20 @@ const shareLinks = createShareLinks({
     },
 });
 
+// Offboarding a person whose Clerk account is gone (S2-50): the user.deleted webhook below and
+// scripts/reconcile_offboarding.js (orphan sweep) share this routine.
+const { createOffboarding, personFromClerkUser, TRIGGERS: OFFBOARDING_TRIGGERS } = require('./utils/offboarding');
+const offboarding = createOffboarding({
+    db, permify, redis,
+    bento: {
+        ownedNodes: async (ownerId, extraNodeIds) =>
+            (await bentoPost('/owned_nodes', process.env.TENANT_ID || '', { owner_id: ownerId, extra_node_ids: extraNodeIds })).nodes,
+        transferOwner: async (fromSub, transfers) =>
+            (await bentoPost('/transfer_owner', process.env.TENANT_ID || '', { from_sub: fromSub, transfers })).changed,
+    },
+    revokeLink: (linkId, ownerSub) => shareLinks.revokeLink(linkId, ownerSub),
+});
+
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
 const { runCrossMode, crossEvidenceText, withConnectionsSection } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
@@ -1286,12 +1300,34 @@ app.post('/api/webhooks/clerk', async (req, res) => {
         return res.status(200).json({ received: true });
     }
 
+    if (event.type === 'user.deleted') {
+        // The account is gone (S2-50): cut access, move content to the steward, clear history per D1. A failure
+        // answers 500 so Clerk retries (the routine is idempotent); the orphan sweep is the backstop.
+        const userSub = event.data && event.data.id;
+        if (!userSub) return res.status(400).json({ error: 'user.deleted without an id' });
+        try {
+            const result = await offboarding.offboard(userSub, { trigger: OFFBOARDING_TRIGGERS.USER_DELETED });
+            console.log(`[webhook/clerk] user.deleted: ${userSub} → ${result.skipped ? `skipped (${result.reason})` : 'offboarded'}`);
+        } catch (err) {
+            console.error(`[webhook/clerk] user.deleted offboarding failed for ${userSub}:`, err.message);
+            return res.status(500).json({ error: 'Offboarding failed' });
+        }
+        return res.status(200).json({ received: true });
+    }
+
+    if (event.type === 'user.created' || event.type === 'user.updated') {
+        // Directory row: who an id is, so transferred content can say whose it was after the account is gone (S2-50 D2).
+        offboarding.upsertPerson(personFromClerkUser(event.data)).catch(e =>
+            console.error('[webhook/clerk] people_directory upsert failed:', e.message));
+    }
+
     if (event.type === 'user.created') {
         const { id: userSub, email_addresses, primary_email_address_id } = event.data;
         const primaryEmail =
             email_addresses?.find(e => e.id === primary_email_address_id)?.email_address
             || email_addresses?.[0]?.email_address;
-        console.log(`[webhook/clerk] user.created: ${primaryEmail} → ${userSub}`);
+        // No address in the log (S2-93 rule: logs carry ids, not personal data).
+        console.log(`[webhook/clerk] user.created: ${userSub}`);
         if (primaryEmail && userSub) {
             // Fire-and-forget — respond 200 immediately so Clerk doesn't retry. New users are NOT added
             // to the organization (S2-47, 2026-10-26); organization membership comes only from an

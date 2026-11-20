@@ -162,6 +162,31 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(result).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path in ("/owner_ids", "/owned_nodes", "/transfer_owner"):
+            # Offboarding (S2-50): internal calls from the gateway's utils/offboarding.js only (Bento is IAM-locked).
+            # No end-user identity: these read or move ownership by person, across organizations.
+            try:
+                from neo4j_connection import get_driver
+                import ownership
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                driver = get_driver()
+                if self.path == "/owner_ids":
+                    result = {"owner_ids": ownership.owner_ids(driver)}
+                elif self.path == "/owned_nodes":
+                    result = {"nodes": ownership.owned_nodes(driver, params.get("owner_id") or "",
+                                                             params.get("extra_node_ids") or [])}
+                else:
+                    result = {"changed": ownership.transfer_owner(driver, params.get("from_sub") or "",
+                                                                  params.get("transfers") or [])}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+            except ValueError as e:
+                self.send_error(400, str(e))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path == "/nodes_by_ids":
             # Live shared graph view (unified shares phase 1): the given nodes the requester may see now.
             # Requires a requester: an empty x-user-id would be an internal (whole-tenant) call.

@@ -1,0 +1,18 @@
+{
+  "_comment": "Offboarding a person (S2-50). Design: documents/security/offboarding-and-retention-design-2026-11-20.md. Read by utils/offboarding.js and scripts/reconcile_offboarding.js.",
+  "stewards": {
+    "_comment": "Who receives the content of a person whose account is gone, per organization (D2). 'platform_org' means the platform organization (env TENANT_ID) and resolves to the platform owner (env OWNER_USER_ID). Other organizations: '<org id>': '<Clerk user id of the steward>'. An organization with no steward keeps the content where it is (counted as awaiting_steward) until one is set.",
+    "platform_org": "platform_owner"
+  },
+  "transfer_label": "Transferred from {name}",
+  "unknown_person_label": "a former user ({short_id})",
+  "clerk_user_id_pattern": "^user_[A-Za-z0-9]{20,40}$",
+  "never_offboard_env": ["OWNER_USER_ID", "PUBLIC_TRIAL_USER_ID"],
+  "permify_subject_entity_types": ["org", "group", "node", "agent"],
+  "node_owner_relation": "owner",
+  "sweep": {
+    "_comment": "The orphan sweep refuses to change anything when more people than this look deleted (likely a Clerk outage or the wrong Clerk instance); rerun with --force after checking. Before acting it confirms the platform owner exists in this Clerk instance.",
+    "max_people_per_run": 10,
+    "apply_on_deploy": true
+  }
+}

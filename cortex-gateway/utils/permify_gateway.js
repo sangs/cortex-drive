@@ -266,8 +266,51 @@ async function listOrgRelations(orgId) {
   return out;
 }
 
+/**
+ * Every tuple naming one user as its subject, for the given entity types (offboarding, S2-50). Pages through.
+ * Returns [{ entityType, entityId, relation }]. Read-only.
+ */
+async function listSubjectTuples(userId, entityTypes) {
+  if (!userId) throw new Error('refusing an unscoped subject read');
+  const out = [];
+  for (const type of entityTypes) {
+    let token = '';
+    do {
+      const data = await _post('/data/relationships/read', {
+        metadata:         { schema_version: '', snap_token: '' },
+        filter:           { entity: { type, ids: [] }, relation: '', subject: { type: 'user', ids: [String(userId)], relation: '' } },
+        page_size:        100,
+        continuous_token: token,
+      });
+      for (const t of data.tuples || []) {
+        if (t.subject && t.subject.type === 'user' && t.subject.id === String(userId) && !t.subject.relation) {
+          out.push({ entityType: t.entity.type, entityId: t.entity.id, relation: t.relation });
+        }
+      }
+      token = data.continuous_token || '';
+    } while (token);
+  }
+  return out;
+}
+
+/** Delete ONE tuple whose subject is a user (exact filter, AP-28). Throws on failure. */
+async function deleteUserTuple(entityType, entityId, relation, userId) {
+  return _post('/relationships/delete', { filter: exactTupleFilter(entityType, entityId, relation, { type: 'user', id: userId }) });
+}
+
+/** Make a user the owner of a node (node#owner @user). Used when content is transferred (S2-50). */
+async function writeNodeOwner(nodeId, userId) {
+  if (!nodeId || !userId) throw new Error('refusing an owner write without node and user');
+  return _post('/relationships/write', { metadata: { schema_version: '' }, tuples: [{
+    entity: { type: 'node', id: String(nodeId) }, relation: 'owner', subject: { type: 'user', id: String(userId) },
+  }] });
+}
+
 module.exports = {
   configured,
+  listSubjectTuples,
+  deleteUserTuple,
+  writeNodeOwner,
   writeOrgRelation,
   deleteOrgRelation,
   listOrgRelations,

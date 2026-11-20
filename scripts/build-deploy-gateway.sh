@@ -247,6 +247,40 @@ if ! (
 fi
 echo "✓ Organization membership reconciled"
 
+# --- Offboarding orphan sweep (S2-50, 2026-11-20) ------------------------------
+# People whose Clerk account is gone but who still hold access, content, invitations, links or history are
+# offboarded with the same routine as the user.deleted webhook (backstop for a missed or failed webhook).
+# Needs the live Bento (/owner_ids, /owned_nodes, /transfer_owner) and the app database through the Cloud SQL
+# Auth Proxy. OFFBOARDING_SWEEP_DRY_RUN=1 reports without changing anything. Secrets stay in this subshell.
+SWEEP_MODE="--apply"
+if [ "${OFFBOARDING_SWEEP_DRY_RUN:-}" = "1" ]; then SWEEP_MODE=""; fi
+echo "--- Offboarding sweep (${SWEEP_MODE:-dry run})..."
+if ! lsof -i :5432 >/dev/null 2>&1; then
+    nohup cloud-sql-proxy "${CLOUD_SQL_CONN}" --port 5432 >/dev/null 2>&1 &
+    sleep 4
+fi
+if ! (
+    export CLERK_SECRET_KEY="$(gcloud secrets versions access latest --secret=CLERK_SECRET_KEY --project "${PROJECT_ID}")"
+    export PERMIFY_API_URL="$(gcloud secrets versions access latest --secret=PERMIFY_API_URL --project "${PROJECT_ID}")"
+    export OWNER_USER_ID="$(gcloud secrets versions access latest --secret=OWNER_USER_ID --project "${PROJECT_ID}")"
+    export TENANT_ID="$(gcloud secrets versions access latest --secret=TENANT_ID --project "${PROJECT_ID}")"
+    export REDIS_URL="$(gcloud secrets versions access latest --secret=REDIS_URL --project "${PROJECT_ID}")"
+    export DB_PASSWORD="$(gcloud secrets versions access latest --secret=CORTEX_APP_DB_PASSWORD --project "${PROJECT_ID}")"
+    PUBLIC_TRIAL_USER_ID="$(gcloud secrets versions access latest --secret=PUBLIC_TRIAL_USER_ID --project "${PROJECT_ID}" 2>/dev/null || true)"
+    export PUBLIC_TRIAL_USER_ID
+    export OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS}"
+    export DB_HOST=127.0.0.1 DB_PORT=5432 DB_NAME=cortexdrive_app DB_USER=cortex-app-user
+    export BENTO_SERVER_URL="${BENTO_URL}"
+    export BENTO_ID_TOKEN="$(gcloud auth print-identity-token --audiences="${BENTO_URL}" 2>/dev/null || gcloud auth print-identity-token)"
+    export PERMIFY_API_TOKEN="$(gcloud auth print-identity-token --audiences="${PERMIFY_API_URL}" 2>/dev/null || gcloud auth print-identity-token)"
+    cd "${REPO}/cortex-gateway" && node scripts/reconcile_offboarding.js ${SWEEP_MODE}
+); then
+    echo "❌ Offboarding sweep failed or refused (the gateway is deployed). Re-run:"
+    echo "   cd cortex-gateway && node scripts/reconcile_offboarding.js [--apply]  (with the env above)"
+    exit 1
+fi
+echo "✓ Offboarding sweep done"
+
 echo ""
 echo "✓ cortex-gateway deployed"
 echo "  Custom domain: https://api.cortex-drive.com"

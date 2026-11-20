@@ -61,6 +61,15 @@ let passed = 0;
         ['group member removal', p => p.removeGroupMember('g1', 'alice'), ['group:g1#member@user:alice']],
         ['privacy off', p => p.writePrivacyAttribute('n1', false), ['n1.is_private']],
         ['tenant-wide on', p => p.makeNodeTenantWide('n3', 'o1'), [], ['node:n3#tenant_viewer@org:o1#member']],
+        // Offboarding (S2-50): list everything naming one user, then remove one of those entries exactly.
+        ['offboarding: list + delete one', async p => {
+            const listed = (await p.listSubjectTuples('alice', ['org', 'group', 'node', 'agent']))
+                .map(t => `${t.entityType}:${t.entityId}#${t.relation}`).sort();
+            assert.deepStrictEqual(listed, ['group:g1#member', 'node:n1#shared_viewer', 'node:n2#shared_viewer'],
+                                   'every tuple naming alice, and only alice (not bob, not via a group)');
+            await p.deleteUserTuple('node', 'n2', 'shared_viewer', 'alice');
+        }, ['node:n2#shared_viewer@user:alice']],
+        ['offboarding: owner moved', async p => { await p.writeNodeOwner('n2', 'steward'); }, [], ['node:n2#owner@user:steward']],
     ];
     for (const [i, [label, act, removed, added = []]] of cases.entries()) {
         const tenant = `live${Date.now()}x${i}`;
