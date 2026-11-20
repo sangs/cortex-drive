@@ -711,6 +711,28 @@ def validate_upsert(label: str, data: Dict[str, Any]):
         
     return model_map[label](**data)
 
+# Which raw node properties a caller gets back (S2-98, 2026-11-20; documents/security/node-property-exposure-design-2026-11-20.md).
+# Read by property_policy.visible_properties for get_node_details and expand_node_topology.
+# - Never returned to anyone: vectors (any key ending in one of these suffixes). They are internal and large.
+# - Everyone except the tenant owner and internal calls (guest links, members, collaborators) gets ONLY the keys below:
+#   an allowlist, so a property added later stays hidden until someone decides it is safe to show. Contact details
+#   (email, phone, linkedin) and bookkeeping (owner_id, tenant_id, revision_id, content_hash, employer_source, ...)
+#   are deliberately absent.
+NEVER_RETURNED_PROPERTY_SUFFIXES = ('embedding', 'Embedding')
+SHARED_VIEW_PROPERTY_ALLOWLIST = frozenset({
+    # identity and text
+    'node_id', 'name', 'title', 'type', 'description', 'text', 'bio', 'aliases', 'category', 'persona',
+    # career
+    'role', 'location', 'institution', 'skills',
+    # dates
+    'year', 'startYear', 'endYear', 'endDate', 'isPresent', 'displayDate', 'published_date', 'published_at',
+    'aired_date', 'startTime', 'endTime', 'last_synced_at',
+    # links and media
+    'url', 'link', 'links', 'link_titles', 'base_url', 'image_urls',
+    # episodes and documents
+    'number', 'filename', 'mime_type', 'page_count', 'page', 'page_start', 'level', 'section_path',
+})
+
 # Cap on node ids per Bento /nodes_in_tenant request (gateway owner share checks, S2-43).
 # Matches MAX_NODES_PER_CHECK in cortex-gateway/utils/share_authz.js.
 NODES_IN_TENANT_MAX_IDS = 200

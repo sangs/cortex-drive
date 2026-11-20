@@ -1414,6 +1414,9 @@ class ExpertTools:
             return json.dumps({"error": "Node not found or access denied."})
 
         data = result.records[0].data()
+        # S2-98: only the properties this caller may see (vectors never; non-owners get the allowlist only).
+        from property_policy import visible_properties
+        data["properties"] = visible_properties(data.get("properties"), self._has_tenant_visibility())
         # Apply Python Sanitizer to Narratives
         if data.get("narratives"):
             data["narratives"] = [self._sanitize_narrative(n) for n in data["narratives"] if n]
@@ -1554,10 +1557,12 @@ class ExpertTools:
                 allowed_labels=DISCOVERY_LABELS
             )
             
+            from property_policy import visible_properties
+            full_access = self._has_tenant_visibility()
             output = []
             for record in result.records:
-                details = record["Details"]
-                details.pop("embedding", None)
+                # S2-98: vectors never; non-owners get the allowlist only.
+                details = visible_properties(record["Details"], full_access)
                 details.pop("tenant_id", None)
                 details["links"] = record["ref_urls"]
                 
