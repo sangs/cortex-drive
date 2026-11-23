@@ -121,6 +121,9 @@ module.exports = {
     ],
     // §4.5 open discovery: answered with an overview of what this user can see, not a broad search.
     openDiscoveryPatternSource: '\\b(?:tell me something interesting|surprise me|what\'s new|what is new|what do you know|what can (?:you do|i ask)|where do i start|what is in (?:here|my graph))\\b',
+    // S2-102: the whole message asks for the overview (the starter question "What's in Cortex-Drive for me?" and close
+    // variants). Checked before titles, because "Cortex-Drive" is also a career Project title.
+    overviewQuestionPatternSource: '^\\s*what(?:\'s|\u2019s| is) in (?:cortex[- ]drive|here|my graph) for me\\s*[?.!]*\\s*$',
     // §4.5 pronoun with nothing to point to: person pronouns only ("it" is too common to mean a missing antecedent).
     personPronounPatternSource: '\\b(?:she|her|hers|he|him|his|they|them|their)\\b',
     singleWordAllowlist: [

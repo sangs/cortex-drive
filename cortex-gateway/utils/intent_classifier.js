@@ -211,7 +211,7 @@ function buildRoutingLookups(catalog, viewer) {
             continue;
         }
         entity.set(e.name.toLowerCase(), e.domain);
-        titles.push({ name: e.name, domain: e.domain, type: e.type || null, node_id: e.node_id || null });
+        titles.push({ name: e.name, domain: e.domain, type: e.type || null, node_id: e.node_id || null, added: e.added || null });
         const pattern = e.short_name ? _shortNamePattern(e.short_name) : null;
         if (pattern) short.push({ pattern, domain: e.domain, matched: e.short_name.toLowerCase(), title: e.name });
     }
@@ -221,6 +221,15 @@ function buildRoutingLookups(catalog, viewer) {
             bridge.set(name.toLowerCase(), domains);
         }
     }
+    // Bridge entities this asker can explore across sources (S2-102 starter slot 4): a visible topic with at least
+    // one source the asker can open on every side (catalog `bridge_anchors`; AP-30). An older catalog has no anchors → none.
+    const bridgeVisible = [];
+    for (const [key, sides] of Object.entries((catalog || {}).bridge_anchors || {})) {
+        const name = topics.get(key);
+        const sideLists = Object.values(sides || {});
+        if (name && sideLists.length > 1 && sideLists.every(list => (list || []).some(canOpen))) bridgeVisible.push(name);
+    }
+    bridgeVisible.sort();
     // A name part routes only if exactly one visible person has it ("Sangeetha"; a shared "David" never does).
     const personPart = [];      // [{ pattern, name }]
     for (const [part, names] of partOwners) {
@@ -232,7 +241,7 @@ function buildRoutingLookups(catalog, viewer) {
     for (const [part, names] of partOwners) {
         if (names.size > 1) personPartShared.push({ pattern: new RegExp(`(?<!\\p{L})${_escapeRegex(part)}(?!\\p{L})`, 'iu'), names: [...names].sort() });
     }
-    return { entity, person, personWork, personIds, personPart, personPartShared, topics, titles, short, bridge, withheld };
+    return { entity, person, personWork, personIds, personPart, personPartShared, topics, titles, short, bridge, bridgeVisible, withheld };
 }
 
 const STATIC_LOOKUPS = buildRoutingLookups(_loadStaticCatalog());

@@ -103,6 +103,8 @@ OWNER_CLERK_SUBS="${OWNER_CLERK_SUBS:-user_3LFIHAyUMoFU4p7J321fqf5mDzo}"
 # 00116; caught by the post-deploy check: 5.7 answered from general knowledge again).
 # BRIDGE_PLAN defaults to "owner": bridge questions answered without a model for the platform owner (design
 # bridge-pipeline-without-model-design-2026-11-13.md §9 step 3, approved 2026-11-13). "off" restores the model path.
+# ROUTING_EARLY_ANSWERS defaults to "all": the simple answers (greeting, overview, out of scope) for every user, apart
+# from the smarter routing (S2-102 §3.4, owner agreed 2026-11-23). "owner" or "off" narrows it again.
 NEW_ENV_VARS="ENABLE_DOCUMENT_DOMAIN=${ENABLE_DOCUMENT_DOMAIN:?run: source scripts/cloud-env.sh},MCP_SERVER_URL=${MCP_URL},OWNER_CLERK_SUBS=${OWNER_CLERK_SUBS},BENTO_SERVER_URL=${BENTO_URL},NODE_ENV=production,ALLOWED_ORIGIN=${APP_DOMAIN},\
 CLOUD_SQL_INSTANCE=${CLOUD_SQL_CONN},DB_NAME=cortexdrive_app,DB_USER=cortex-app-user,\
 PERMIFY_TENANT_ID=cortex-drive,PERMIFY_MAX_DEPTH=5,PERMIFY_SCHEMA_VERSION=${PERMIFY_SCHEMA_VERSION},\
@@ -110,6 +112,7 @@ CLERK_ORG_ID=org_3E0FtIXiFM6DHwXg05sEVvq2mi0,\
 ENABLE_SEMANTIC_CANDIDATE_SEARCH=${ENABLE_SEMANTIC_CANDIDATE_SEARCH:-true},\
 ROUTING_V2=${ROUTING_V2:-owner},\
 BRIDGE_PLAN=${BRIDGE_PLAN:-owner},\
+ROUTING_EARLY_ANSWERS=${ROUTING_EARLY_ANSWERS:-all},\
 FINOPS_PROJECT=${FINOPS_PROJECT:?run: source scripts/cloud-env.sh},USAGE_PROJECT=${PROJECT_ID}"
 
 # --- Env-var drift guard --------------------------------------------------

@@ -38,7 +38,7 @@ const ITEMS = {
     eq(Object.keys(SUGGESTED.by_type).sort(), Object.keys(ITEMS).sort(), 'every configured type is covered by this test');
     eq(suggestedQuestions('Project', 'Cortex-Drive'), ['What was built in Cortex-Drive?', 'Which technologies were used in Cortex-Drive?'],
        'templates filled with the exact title');
-    eq(suggestedQuestions('Unknown', 'X'), ['What does Cortex-Drive know about X?'], 'unknown type: the default template');
+    eq(suggestedQuestions('Unknown', 'X'), ['Tell me about X.'], 'unknown type: the default template');
     eq(suggestedQuestions('Project', ''), [], 'no title: no questions');
     ok(suggestedQuestions('DocumentSource', 'D').length <= SUGGESTED.max_per_item, 'at most max_per_item');
 

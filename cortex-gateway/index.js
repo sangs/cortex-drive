@@ -665,8 +665,12 @@ async function answerCrossMode({ req, question, history, routing, tenantId, user
 // account only — for testing in production without changing anyone else's answers) | true (everyone).
 const ROUTING_V2_MODE = ['owner', 'true'].includes(process.env.ROUTING_V2) ? process.env.ROUTING_V2 : 'off';
 const routingV2For = userId => ROUTING_V2_MODE === 'true' || (ROUTING_V2_MODE === 'owner' && isOwner(userId));
-const { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer } = require('./utils/routing_v2');
-const { suggestedQuestions } = require('./utils/suggestions');
+// S2-102 §3.4 (owner agreed 2026-11-23): the simple answers (greeting, overview, out of scope) for everyone, apart from
+// the smarter routing. ROUTING_EARLY_ANSWERS = off | owner | all.
+const ROUTING_EARLY_ANSWERS_MODE = ['owner', 'all'].includes(process.env.ROUTING_EARLY_ANSWERS) ? process.env.ROUTING_EARLY_ANSWERS : 'off';
+const earlyAnswersFor = userId => ROUTING_EARLY_ANSWERS_MODE === 'all' || (ROUTING_EARLY_ANSWERS_MODE === 'owner' && isOwner(userId));
+const { EARLY_ANSWER_MODES, routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer } = require('./utils/routing_v2');
+const { suggestedQuestions, starterQuestions, MORE_PAGES: STARTER_PAGES } = require('./utils/suggestions');
 const { toolsForRoute, discoveryEvidence } = require('./utils/turn_grounding');
 const { createContentGaps, gapKindFor } = require('./utils/content_gaps');
 /** §4.5 overview from Bento, as the asking user (direct fetch + Cloud Run token, AP-18). */
@@ -2293,6 +2297,23 @@ const receivedShares = createReceivedShares({
         return `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.emailAddresses?.[0]?.emailAddress || '';
     },
 });
+// Starter questions under the empty chat (S2-102 §3.3): built from the titles this user can open (AP-30), no LLM.
+// ?page=N is "More ideas". Guest links have no chat box.
+app.get('/api/suggestions/starters', authMiddleware, async (req, res) => {
+    if (req.guestAuth === true) return res.json({ questions: [] });
+    try {
+        const userId = req.headers['x-user-id'];
+        const tenantId = req.headers['x-tenant-id'];
+        const { allowedIds } = await resolveAndCachePermissions(userId, tenantId);
+        const lookups = buildRoutingLookups(await entityCatalogStore.getCatalog(routingTenantFor(req.headers['x-user-type'], tenantId)),
+                                            { isOwner: isOwner(userId), allowedIds, userId });
+        const page = Number.parseInt(req.query.page, 10) || 0;
+        res.json({ questions: starterQuestions(lookups, { userId, page }), page, pages: STARTER_PAGES });
+    } catch (err) {
+        console.error('[/api/suggestions/starters]', err.message);
+        res.status(503).json({ error: 'Could not load suggested questions' });
+    }
+});
 app.get('/api/share/received', authMiddleware, async (req, res) => {
     if (req.guestAuth === true) return res.json([]);
     try {
@@ -3305,14 +3326,21 @@ app.post('/query', authMiddleware, openaiPause.guard, async (req, res) => {
         // keep today's routing until cross mode (step 4) and the §4.5 overview exist. A failed coverage check never
         // becomes "no data" (it falls back to today's routing).
         let routingV2 = null;
-        if (routingV2For(userId)) {
-            routingV2 = await routeQuestion(question, routingLookups, {
+        const fullRoutingV2 = routingV2For(userId);
+        if (fullRoutingV2 || earlyAnswersFor(userId)) {
+            // Without full routing v2 only the simple answers are taken (S2-102 §3.4); any other mode keeps today's
+            // routing. No coverage check then: the simple answers are pattern-detected, so nothing extra is called.
+            const routed = await routeQuestion(question, routingLookups, fullRoutingV2 ? {
                 coverage: terms => domainCoverage({ tenantId, userId, guestAnchor: req.headers['x-guest-share-anchor'] || '' }, terms),
                 resolvedPersons: resolveClarifyChoice(clarifyChoice, routingLookups),
                 history,   // a person pronoun is resolved from the conversation (§4.5)
-            });
+            } : {});
+            if (fullRoutingV2 || EARLY_ANSWER_MODES.has(routed.mode)) routingV2 = routed;
+        }
+        if (routingV2) {
             console.log(`[ROUTING_V2] mode=${routingV2.mode} domains=${routingV2.domains.join(',')} subject=${routingV2.roles.subject.length} topics=${routingV2.roles.topic.length}${routingV2.no_data ? ' no_data' : ''}${routingV2.coverage_unavailable ? ' coverage_unavailable' : ''}`);
-            const suggestions = ['small_talk', 'out_of_scope', 'overview'].includes(routingV2.mode) ? suggestedQuestions(routingLookups) : [];
+            const suggestions = EARLY_ANSWER_MODES.has(routingV2.mode)
+                ? suggestedQuestions(routingLookups, { userId, excludeKinds: routingV2.mode === 'overview' ? ['overview'] : [] }) : [];
             let early = routingV2EarlyResponse(routingV2, domainSignal, { suggestions });
             if (!early && routingV2.mode === 'overview') {
                 // §4.5 open discovery: an overview of what this user can see, written by code (no search, no LLM).

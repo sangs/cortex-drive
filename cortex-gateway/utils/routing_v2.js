@@ -44,6 +44,7 @@ const DOCUMENT_STRUCTURE_RE = INTENT_PATTERNS.filter(p => p.domain_signal === DO
 const { isSmallTalk } = require('./grounding_guard');
 const OUT_OF_SCOPE = (CFG.outOfScope || []).map(o => ({ re: new RegExp(o.patternSource, 'i'), label: o.label }));
 const OPEN_DISCOVERY_RE = CFG.openDiscoveryPatternSource ? new RegExp(CFG.openDiscoveryPatternSource, 'i') : null;
+const OVERVIEW_QUESTION_RE = CFG.overviewQuestionPatternSource ? new RegExp(CFG.overviewQuestionPatternSource, 'i') : null;
 const PERSON_PRONOUN_RE = CFG.personPronounPatternSource ? new RegExp(CFG.personPronounPatternSource, 'i') : null;
 // §4.5 modes that answer without search or LLM; the domain stays the safe default (AP-21).
 const NO_SEARCH_MODES = ['small_talk', 'out_of_scope', 'overview'];
@@ -118,6 +119,8 @@ async function routeQuestion(question, lookups, opts = {}) {
     const q = String(question || '');
     // 0. Small talk (§4.5): the whole message is a greeting or thanks.
     if (isSmallTalk(q)) return result('small_talk', [], { roles: { subject: [], topic: [], container: [] }, domain_scores: {}, content_kind: null });
+    // 0b. The whole message asks for the overview (S2-102 starter); before titles ("Cortex-Drive" is also a title).
+    if (OVERVIEW_QUESTION_RE && OVERVIEW_QUESTION_RE.test(q)) return result('overview', [], { roles: { subject: [], topic: [], container: [] }, domain_scores: {}, content_kind: null });
     const titles = findAll(q, titleNames(lookups));
     // A shorter topic inside a longer title ("Software" in "Software Engineering Daily") is part of that title.
     const covers = (a, b) => a.start <= b.start && a.end >= b.end;
@@ -301,4 +304,8 @@ function personFromHistory(history, lookups) {
     return null;
 }
 
-module.exports = { routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer, findAll, wordRe };
+/** S2-102 §3.4: the simple answers — pattern-detected, no search, no LLM, built only from what the asker can see. These run
+ *  for everyone under ROUTING_EARLY_ANSWERS; the rest of routing v2 stays behind ROUTING_V2. */
+const EARLY_ANSWER_MODES = new Set(['small_talk', 'out_of_scope', 'overview']);
+
+module.exports = { EARLY_ANSWER_MODES, routeQuestion, routingSummary, routingV2EarlyResponse, overviewAnswer, findAll, wordRe };

@@ -40,6 +40,7 @@ import { useMCP } from "@/hooks/use-mcp";
 import { GATEWAY_URL } from "@/lib/gateway";
 import type { BridgeOptions, BridgeProgressItem } from "@/utils/bridgeTypes";
 import { clarifyChoiceFor, readClarify } from "@/utils/clarify";
+import { inferredLinkCount, readSuggestions, withoutSuggestionList } from "@/utils/suggestions";
 import type { Clarify, ClarifyChoice, ClarifyOption } from "@/utils/clarify";
 import { bridgeDomainName, bridgeProgressText, combineBridgeSummaries } from "@/utils/bridgeTypes";
 import { useCapabilities } from "@/hooks/use-capabilities";
@@ -51,6 +52,7 @@ const GraphShareModal = dynamic(() => import("@/components/GraphShareModal"), { 
 const ConversationHistoryModal = dynamic(() => import("@/components/ConversationHistoryModal"), { ssr: false });
 const AddSourceModal = dynamic(() => import("@/components/AddSourceModal"), { ssr: false });
 const SharedWithMe = dynamic(() => import("@/components/SharedWithMe"), { ssr: false });
+const StarterQuestions = dynamic(() => import("@/components/StarterQuestions"), { ssr: false });
 
 // System Health panel polling — see documents/architecture/neo4j-status-indicator-design-2026-08-27.md
 const SYSTEM_STATUS_POLL_INTERVAL_MS = 30000;
@@ -203,6 +205,10 @@ export default function DashboardPage() {
     const bentoCache = useRef<Map<string, any>>(new Map());
     const [isBentoHydrating, setIsBentoHydrating] = useState(false);
     const [legendOpen, setLegendOpen] = useState(false);
+    // S2-102 §3.5: the first answer in this page session that adds gold dashed links explains them once.
+    const inferredNoteShown = useRef(false);
+    // S2-102 §3.3: "Try asking" brings the starter questions back after the conversation has started.
+    const [showStarters, setShowStarters] = useState(false);
     const [accessScope, setAccessScope] = useState<string | null>(null);
     const [isActivating, setIsActivating] = useState(true);
     const [conversationId, setConversationId] = useState<string>('');
@@ -666,10 +672,13 @@ export default function DashboardPage() {
 
             // 1. Add assistant text answer (a clarifying question keeps its options and the question it is about)
             const clarify = readClarify(result.clarify);
+            // Greeting / overview answers (S2-102): their "You could ask" list is shown as buttons instead of text.
+            const suggestions = readSuggestions(result.suggestions);
             setMessages(prev => [...prev, {
                 role: "assistant",
-                content: result.answer,
+                content: suggestions.length ? withoutSuggestionList(result.answer, suggestions) : result.answer,
                 ...(clarify ? { clarify, clarifyFor: userMsg } : {}),
+                ...(suggestions.length ? { suggestions } : {}),
             }]);
 
             if (result.raw_data) {
@@ -687,6 +696,12 @@ export default function DashboardPage() {
                 expansionContributions.current = new Map();
                 setFocusedNodeIds(null);
                 setGraphData(newGraph);
+                if (!inferredNoteShown.current && inferredLinkCount(newGraph.links) > 0) {
+                    inferredNoteShown.current = true;
+                    setLegendOpen(true);
+                    setMessages(prev => prev.map((m, idx) => idx === prev.length - 1 && m.role === 'assistant'
+                        ? { ...m, note: 'Gold dashed links are inferred for this session only: the same thing was found in two sources. Nothing is saved to the graph.' } : m));
+                }
 
                 // 3. Auto-Shift Timeline: Scan for the most relevant year in the results
                 try {
@@ -730,6 +745,7 @@ export default function DashboardPage() {
     // graph" loads the shared item's neighbourhood, read live under the user's own permissions.
     const askSuggested = async (question: string) => {
         if (!isConnected || isProcessing || isActivating) return;
+        setShowStarters(false);
         await executeQuery(question, [...messages], false, conversationId);
     };
     const openSharedItem = async (item: { title: string }) => {
@@ -1462,6 +1478,9 @@ export default function DashboardPage() {
                                 <span>This answer is based on public nodes only — your session may have limited access.</span>
                             </div>
                         )}
+                        {messages.length === 0 && !isProcessing && (
+                            <StarterQuestions onAsk={askSuggested} disabled={!isConnected || isActivating} />
+                        )}
                         {messages.map((msg, i) => (
                             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`max-w-[95%] ${msg.role === 'user' ? 'bg-secondary p-5 rounded-2xl text-foreground font-medium shadow-sm ring-1 ring-border' : 'text-foreground'}`}>
@@ -1479,9 +1498,34 @@ export default function DashboardPage() {
                                             ))}
                                         </div>
                                     )}
+                                    {msg.suggestions && i === messages.length - 1 && !isProcessing && (
+                                        <div className="flex flex-col gap-2 mt-3" role="group" aria-label="You could ask">
+                                            <span className="text-xs font-bold text-slate-500">You could ask</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {(msg.suggestions as string[]).map(q => (
+                                                    <button
+                                                        key={q}
+                                                        onClick={() => askSuggested(q)}
+                                                        className="text-left px-3 py-1.5 rounded-xl text-xs font-bold border border-border bg-white/80 hover:bg-indigo-50 hover:border-indigo-200 text-slate-700 hover:text-indigo-700 transition-all"
+                                                    >
+                                                        {q}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {msg.note && (
+                                        <div className="mt-3 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                                            <span className="mt-1.5 inline-block w-6 border-t-2 border-dashed border-amber-500 shrink-0" aria-hidden />
+                                            <span>{msg.note}</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))}
+                        {showStarters && messages.length > 0 && !isProcessing && (
+                            <StarterQuestions onAsk={askSuggested} disabled={!isConnected || isActivating} intro={false} />
+                        )}
                         {isProcessing && (
                             <div className="flex justify-start">
                                 <div className="flex items-center gap-3 text-primary text-sm font-bold animate-pulse" aria-live="polite">
@@ -1494,6 +1538,14 @@ export default function DashboardPage() {
 
                     {/* Chat Input Floating Box */}
                     <div className="absolute bottom-0 left-0 right-0 p-8 pt-0 bg-gradient-to-t from-white via-white to-transparent">
+                        {messages.length > 0 && !isProcessing && (
+                            <button
+                                onClick={() => setShowStarters(v => !v)}
+                                className="mb-2 text-[11px] font-bold text-slate-400 hover:text-indigo-600 transition-colors"
+                            >
+                                {showStarters ? 'Hide suggestions' : 'Try asking'}
+                            </button>
+                        )}
                         <div className="relative shadow-2xl shadow-primary/10 rounded-2xl overflow-hidden ring-1 ring-border">
                             <input
                                 value={input}
@@ -1751,11 +1803,26 @@ export default function DashboardPage() {
                                                 <span className="text-[10px] font-black text-slate-400 bg-slate-50 rounded px-1.5 py-0.5">○</span>
                                                 <span className="text-[10px] text-slate-500 font-medium">Click for details</span>
                                             </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] font-black text-amber-500 bg-amber-50 rounded px-1.5 py-0.5">✦</span>
-                                                <span className="text-[10px] text-slate-500 font-medium">Federated bridge</span>
-                                            </div>
                                         </div>
+                                        {/* Links (S2-102 §3.5): what the two line styles mean; shown when the graph has links. */}
+                                        {graphData.links.length > 0 && (
+                                            <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5 max-w-xs">
+                                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Links</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-block w-6 border-t-2 border-slate-400 shrink-0" aria-hidden />
+                                                    <span className="text-[10px] text-slate-500 font-medium">Recorded link (saved in the graph)</span>
+                                                </div>
+                                                {inferredLinkCount(graphData.links) > 0 && (
+                                                    <div className="flex items-start gap-2">
+                                                        <span className="mt-1.5 inline-block w-6 border-t-2 border-dashed border-amber-500 shrink-0" aria-hidden />
+                                                        <span className="text-[10px] text-slate-500 font-medium">
+                                                            Inferred link ({inferredLinkCount(graphData.links)}): the same thing found in two sources.
+                                                            Shown for this session only; nothing is saved. Its label says why.
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>

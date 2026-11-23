@@ -1,5 +1,5 @@
 {
-  "_comment": "Suggested questions for shared items (unified shares phase 2, 2026-10-29; design security/unified-shares-design-2026-10-29.md §5.2). Deterministic templates keyed by the shared root's node type; {title} is the item's exact name. Used by GET /api/share/received (and later by the share emails), so the page and the email never disagree. Every template is tested to route to the item's domain (tests/verify_received_shares.js). No LLM.",
+  "_comment": "Suggested questions, deterministic templates (never an LLM). by_type/default/max_per_item: per shared item in 'Shared with me' (unified shares phase 2, 2026-10-29; security/unified-shares-design-2026-10-29.md §5.2). starter_*: the starter questions under the empty chat and after a greeting or the overview (S2-102, architecture/question-suggestions-design-2026-11-23.md §3.2), built by utils/suggestions.js from titles the asker can open. {title} is an item's exact name; {entity} a topic found in sources on more than one side. Every template is tested to route to the right domain (tests/verify_received_shares.js, tests/verify_suggestions.js). Avoid the product name in templates: 'Cortex-Drive' is also a career Project title and would route there.",
   "max_per_item": 3,
   "by_type": {
     "DocumentSource": ["Summarise {title}.", "What are the main findings of {title}?", "What does {title} say about its method?"],
@@ -11,5 +11,10 @@
     "Episode": ["What was discussed in {title}?", "Who were the guests of {title}?"],
     "Podcast": ["Which episodes of {title} are there?", "What topics does {title} cover?"]
   },
-  "default": ["What does Cortex-Drive know about {title}?"]
+  "default": ["Tell me about {title}."],
+  "starter_overview": "What's in Cortex-Drive for me?",
+  "starter_across_sources": ["What does {entity} cover?"],
+  "starter_slots": ["overview", "single_newest", "single_other", "across_sources"],
+  "starter_type_for_domain": { "document": "DocumentSource", "website": "WebsiteSource", "podcast": "Episode", "career": "Project" },
+  "starter_more_pages": 5
 }

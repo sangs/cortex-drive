@@ -29,6 +29,15 @@ ORG_TIER = "org"
 BRIDGE_REL_TYPES_WEBSITE = ["COVERS_TECHNOLOGY", "DISCUSSES"]
 BRIDGE_REL_TYPES_PODCAST = ["COVERS_TECHNOLOGY", "COVERS_CONCEPT", "HAS_TOPIC"]
 BRIDGE_DOMAINS = ["website", "podcast"]
+# Sources kept per side of a bridge entity (S2-102): enough to find one the asker can open, bounded catalog size.
+BRIDGE_ANCHORS_PER_SIDE = 25
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _iso_date(value):
+    """'YYYY-MM-DD' from a stored date or datetime string, or None (dates in other formats are not ranked)."""
+    m = _ISO_DATE.match(str(value or ""))
+    return m.group(0) if m else None
 
 _SHORT_NAME_SPLIT = re.compile("|".join(re.escape(s) for s in SOURCE_SHORT_NAME_SEPARATORS))
 
@@ -91,7 +100,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             WHERE n.name IS NOT NULL AND n.tenant_id IN $tiers
               AND any(l IN labels(n) WHERE l IN $labels)
             RETURN n.name AS name, labels(n) AS labels, n.node_id AS node_id, n.tenant_id AS tenant,
-                   n.owner_id AS owner_id
+                   n.owner_id AS owner_id,
+                   toString(coalesce(n.last_synced_at, n.published_date, n.aired_date, n.created_at)) AS added
             """,
             tiers=tiers, labels=label_list).data()
         for r in rows:
@@ -114,6 +124,9 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                 sn = short_name(name)
                 if sn:
                     entry["short_name"] = sn
+            added = _iso_date(r["added"])
+            if added:
+                entry["added"] = added   # newest-first starter questions (S2-102 §3.2 slot 2)
             entries.append(entry)
 
         # Persons' work domains (cross-domain design 2026-11-09 §4.1, S2-78): the routing domains of the
@@ -179,21 +192,35 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
             f"""
             MATCH (website_bridge) WHERE (website_bridge:Technology OR website_bridge:Concept)
               AND website_bridge.tenant_id IN $tiers
-            MATCH (website_bridge)-[:{website_rels}*1..2]-(:WebsiteSource)
-            WITH DISTINCT website_bridge.name AS candidate_name
+            MATCH (website_bridge)-[:{website_rels}*1..2]-(website_source:WebsiteSource)
+            WHERE website_source.tenant_id IN $tiers
+            WITH website_bridge.name AS candidate_name, collect(DISTINCT website_source) AS website_sources
             MATCH (podcast_bridge) WHERE (podcast_bridge:Technology OR podcast_bridge:Concept)
               AND podcast_bridge.name = candidate_name
               AND podcast_bridge.tenant_id IN $tiers
             MATCH (podcast_bridge)-[:{podcast_rels}*1..2]-(podcast_anchor)
             WHERE podcast_anchor:Episode OR podcast_anchor:Topic OR podcast_anchor:Podcast
-            RETURN DISTINCT candidate_name AS entity_name
+            WITH candidate_name, website_sources,
+                 collect(DISTINCT CASE WHEN (podcast_anchor:Episode OR podcast_anchor:Podcast)
+                                        AND podcast_anchor.tenant_id IN $tiers THEN podcast_anchor END) AS podcast_sources
+            RETURN candidate_name AS entity_name,
+                   [s IN website_sources[..$k] | {{node_id: s.node_id, tenant: s.tenant_id, owner_id: s.owner_id}}] AS website,
+                   [s IN podcast_sources[..$k] | {{node_id: s.node_id, tenant: s.tenant_id, owner_id: s.owner_id}}] AS podcast
             """,
-            tiers=tiers).data()
-    bridge_entities = {}
+            tiers=tiers, k=BRIDGE_ANCHORS_PER_SIDE).data()
+    bridge_entities, bridge_anchors = {}, {}
     for r in bridge_rows:
         name = (r["entity_name"] or "").strip()
-        if name:
-            bridge_entities[name.lower()] = list(BRIDGE_DOMAINS)
+        if not name:
+            continue
+        bridge_entities[name.lower()] = list(BRIDGE_DOMAINS)
+        # The sources on each side (S2-102 §3.2 slot 4): the gateway suggests an across-sources question only
+        # when the asker can open at least one source on every side (AP-30). Capped per side.
+        bridge_anchors[name.lower()] = {
+            side: [{"node_id": a["node_id"], "tier": a["tenant"] if a["tenant"] in GLOBAL_TIERS else ORG_TIER,
+                    **({"owner_id": a["owner_id"]} if a.get("owner_id") else {})}
+                   for a in (r[side] or []) if a.get("node_id")]
+            for side in BRIDGE_DOMAINS}
 
     # `domains` / `persons` keep the pre-S2-60 shape so an older gateway can read a newer file.
     domains = {external_signal(d): sorted({e["name"] for e in entries if e["domain"] == external_signal(d)})
@@ -205,5 +232,6 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
         "domains": domains,
         "persons": sorted({e["name"] for e in entries if e["domain"] == "person"}),
         "bridge_entities": bridge_entities,
+        "bridge_anchors": bridge_anchors,
         "entries": sorted(entries, key=lambda e: (e["domain"], e["name"])),
     }
