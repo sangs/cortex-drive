@@ -574,7 +574,7 @@ const shareLinks = createShareLinks({
 
 // Offboarding a person whose Clerk account is gone (S2-50): the user.deleted webhook below and
 // scripts/reconcile_offboarding.js (orphan sweep) share this routine.
-const { createOffboarding, personFromClerkUser, TRIGGERS: OFFBOARDING_TRIGGERS } = require('./utils/offboarding');
+const { createOffboarding, personFromClerkUser, isProtected: isProtectedFromOffboarding, TRIGGERS: OFFBOARDING_TRIGGERS } = require('./utils/offboarding');
 const offboarding = createOffboarding({
     db, permify, redis,
     bento: {
@@ -582,8 +582,19 @@ const offboarding = createOffboarding({
             (await bentoPost('/owned_nodes', process.env.TENANT_ID || '', { owner_id: ownerId, extra_node_ids: extraNodeIds })).nodes,
         transferOwner: async (fromSub, transfers) =>
             (await bentoPost('/transfer_owner', process.env.TENANT_ID || '', { from_sub: fromSub, transfers })).changed,
+        nodeTenants: async nodeIds => (await bentoPost('/node_tenants', process.env.TENANT_ID || '', { node_ids: nodeIds })).tenants,
     },
     revokeLink: (linkId, ownerSub) => shareLinks.revokeLink(linkId, ownerSub),
+});
+// "Remove person" (S2-50 build 2b): E1 member removal (scoped offboarding + Clerk) and E3 collaborator removal.
+const { createRemovePerson, RemoveError } = require('./utils/remove_person');
+const removePerson = createRemovePerson({
+    db, redis, offboarding,
+    isProtected: sub => isProtectedFromOffboarding(sub, process.env),
+    listOrgMembers: orgId => permify.listOrgRelations(orgId),
+    deleteClerkMembership: (orgId, userSub) => clerkClient.organizations.deleteOrganizationMembership({ organizationId: orgId, userId: userSub }),
+    revokeAudienceAccess: (audience, nodeIds) => revokeAudienceAccess(audience, nodeIds),
+    removeGroupMember: (groupId, userSub) => permify.removeGroupMember(groupId, userSub),
 });
 
 // Steward review of transferred content (S2-50 §3b): "Transferred to you". Bento does the graph work, the module the rest.
@@ -1305,8 +1316,14 @@ app.post('/api/webhooks/clerk', async (req, res) => {
         const membership = membershipFromClerkEvent(event.data);
         if (!membership) return res.status(400).json({ error: 'Membership event without organization or user' });
         try {
-            if (event.type === 'organizationMembership.deleted') await orgMembershipSync.removeMembership(membership);
-            else await orgMembershipSync.applyMembership(membership);
+            if (event.type === 'organizationMembership.deleted') {
+                await orgMembershipSync.removeMembership(membership);
+                // E1 (S2-50 build 2b): the rest of what belongs to this organization — its groups, shares on its content,
+                // invitations, links, hidden history; content → the organization's steward. Idempotent: after an in-app
+                // "Remove person" this finds nothing to do.
+                const r = await offboarding.offboard(membership.userId, { trigger: OFFBOARDING_TRIGGERS.MEMBERSHIP_DELETED, orgId: membership.orgId });
+                if (!r.skipped) console.log(`[webhook/clerk] organizationMembership.deleted ${membership.userId}: offboarded from ${membership.orgId}`);
+            } else await orgMembershipSync.applyMembership(membership);
         } catch (err) {
             console.error(`[webhook/clerk] ${event.type} sync failed:`, err.message);
             return res.status(500).json({ error: 'Membership sync failed' });
@@ -2328,6 +2345,49 @@ app.post('/api/transfers/:id/delete', authMiddleware, transferRoute((userSub, re
     transfers.remove(userSub, req.params.id, req.body && req.body.source_ids, { confirm: Boolean(req.body && req.body.confirm === true) })));
 app.post('/api/transfers/:id/purge-history', authMiddleware, transferRoute((userSub, req) =>
     transfers.purgeHistory(userSub, req.params.id, { confirm: Boolean(req.body && req.body.confirm === true) })));
+
+// People you can remove (S2-50 build 2b, design §5 step 2): members of your organization (owner / org admin) and the
+// outside people you shared with. Names from people_directory; ids only otherwise. Never anyone protected or yourself.
+app.get('/api/people', authMiddleware, async (req, res) => {
+    if (req.guestAuth === true) return res.status(403).json({ error: 'Not available for guest links' });
+    try {
+        const me = req.headers['x-user-id'];
+        const tenantId = req.headers['x-tenant-id'];
+        const caps = capabilitiesFor(principalFromRequest(req, isOwner));
+        const members = caps.admin && tenantId ? (await permify.listOrgRelations(tenantId)).map(r => r.userId) : [];
+        const { rows: collab } = await db.query(
+            `SELECT DISTINCT ra.assignee_id AS id FROM role_assignments ra
+               JOIN share_grants sg ON ra.resource_type = 'grant' AND ra.resource_id = sg.grant_id::text
+              WHERE sg.issued_by = $1 AND sg.status = 'active' AND ra.status = 'active' AND ra.assignee_type = 'user'
+             UNION SELECT gm.user_sub FROM group_members gm JOIN groups g ON g.group_id = gm.group_id WHERE g.created_by = $1`, [me]);
+        const memberSet = new Set(members);
+        const ids = [...new Set([...members, ...collab.map(r => r.id)])]
+            .filter(id => id && id !== me && !isProtectedFromOffboarding(id, process.env));
+        const { rows: names } = ids.length ? await db.query('SELECT user_sub, display_name FROM people_directory WHERE user_sub = ANY($1)', [ids]) : { rows: [] };
+        const nameOf = new Map(names.map(n => [n.user_sub, n.display_name]));
+        res.json(ids.map(id => ({ userSub: id, name: nameOf.get(id) || null, kind: memberSet.has(id) ? 'member' : 'collaborator' })));
+    } catch (err) {
+        console.error('[/api/people]', err.message);
+        res.status(503).json({ error: 'Could not load people' });
+    }
+});
+function removeRoute(handler) {
+    return async (req, res) => {
+        if (req.guestAuth === true) return res.status(403).json({ error: 'Not available for guest links' });
+        try {
+            res.json(await handler(req.headers['x-user-id'], req.headers['x-tenant-id'], req.params.userSub, req.body && req.body.confirm === true));
+        } catch (err) {
+            if (err instanceof RemoveError) return res.status(err.status).json({ error: err.message });
+            console.error(`[REMOVE-PERSON] ${req.path} failed:`, err.message);
+            res.status(500).json({ error: 'Could not remove this person. Refresh to see what changed, then retry.' });
+        }
+    };
+}
+// confirm:false (or absent) → preview counts only; confirm:true → do it.
+app.post('/api/people/:userSub/remove-member', authMiddleware, requireCapability('admin', 'Only an organization admin can remove members.'),
+    removeRoute((me, tenantId, target, confirm) => confirm ? removePerson.removeMember(me, tenantId, target) : removePerson.previewMember(me, tenantId, target)));
+app.post('/api/people/:userSub/remove-collaborator', authMiddleware, requireCapability('share', 'You cannot share from this account.'),
+    removeRoute((me, _tenantId, target, confirm) => confirm ? removePerson.removeCollaborator(me, target) : removePerson.previewCollaborator(me, target)));
 
 // Starter questions under the empty chat (S2-102 §3.3): built from the titles this user can open (AP-30), no LLM.
 // ?page=N is "More ideas". Guest links have no chat box.

@@ -82,6 +82,11 @@ class OwnershipTransferTest(unittest.TestCase):
         self.assertEqual(again[TEST_TENANT_ID], [], "second run changes nothing")
         self.assertEqual(self.props("s250-src")["transfer_id"], "t-1")
 
+    def test_node_tenants(self):
+        self.assertEqual(ownership.node_tenants(self.driver, ["s250-src", "s250-other", "no-such-node", ""]),
+                         {"s250-src": TEST_TENANT_ID, "s250-other": TEST_TENANT_ID})
+        self.assertEqual(ownership.node_tenants(self.driver, []), {})
+
     def test_refusals(self):
         for bad_from, t in [("", {"tenant_id": TEST_TENANT_ID, "to_sub": STEWARD}),
                             (GONE, {"tenant_id": TEST_TENANT_ID, "to_sub": GONE}),

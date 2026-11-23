@@ -35,6 +35,20 @@ def owned_nodes(driver, owner_id: str, extra_node_ids: Iterable[str] = ()) -> li
     return [{"node_id": r["node_id"], "tenant_id": r["tenant_id"]} for r in records]
 
 
+NODE_TENANTS_MAX = 5000   # one call's ids (a person's shares and grants); the gateway sends at most this many
+
+
+def node_tenants(driver, node_ids: Iterable[str]) -> dict:
+    """{node_id: tenant_id} for the given ids (S2-50 E1: which organization a share or grant belongs to). Read-only.
+    Ids not in the graph are left out."""
+    ids = [str(i) for i in (node_ids or []) if i][:NODE_TENANTS_MAX]
+    if not ids:
+        return {}
+    records, _, _ = driver.execute_query(
+        "MATCH (n) WHERE n.node_id IN $ids RETURN n.node_id AS node_id, n.tenant_id AS tenant_id", ids=ids)
+    return {r["node_id"]: r["tenant_id"] for r in records if r["node_id"]}
+
+
 def transfer_owner(driver, from_sub: str, transfers: list) -> dict:
     """Move ownership, one organization at a time, in one transaction.
 

@@ -290,6 +290,11 @@ export default function SharingSettingsPage() {
                             className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors">
                             <RefreshCw className="w-4 h-4" />
                         </button>
+                        <Link href="/settings/people"
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold transition-all">
+                            <UserCheck className="w-3.5 h-3.5" />
+                            People
+                        </Link>
                         <Link href="/settings/groups"
                             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold transition-all">
                             <Users className="w-3.5 h-3.5" />

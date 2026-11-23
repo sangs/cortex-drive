@@ -56,16 +56,21 @@ function world() {
         ],
         sql: {
             people_directory: [{ user_sub: GONE, display_name: 'Ada L', email: 'ada@x' }],
-            role_assignments: [{ assignment_id: 'ra1', assignee_type: 'user', assignee_id: GONE, status: 'active' }],
-            group_members: [{ group_id: 'g1', user_sub: GONE }],
-            invitations: [{ invitation_id: 'i-sent', invited_by: GONE, status: 'pending', invited_email: 'p@q' },
-                          { invitation_id: 'i-to', invited_by: OWNER, status: 'pending', invited_email: 'ADA@x' }],
-            share_links: [{ link_id: 'l1', owner_sub: GONE, revoked_at: null }],
+            role_assignments: [{ assignment_id: 'ra1', assignee_type: 'user', assignee_id: GONE, status: 'active', root: 'shared-to-them' },
+                               { assignment_id: 'ra2', assignee_type: 'user', assignee_id: GONE, status: 'active', root: 'cust-shared' }],
+            group_members: [{ group_id: 'g1', user_sub: GONE }, { group_id: 'g9', user_sub: GONE }],
+            group_orgs: { g1: PLATFORM_ORG, g2: PLATFORM_ORG, g9: OTHER_ORG },
+            invitations: [{ invitation_id: 'i-sent', invited_by: GONE, status: 'pending', invited_email: 'p@q', org_id: PLATFORM_ORG },
+                          { invitation_id: 'i-to', invited_by: OWNER, status: 'pending', invited_email: 'ADA@x', org_id: PLATFORM_ORG },
+                          { invitation_id: 'i-cust', invited_by: GONE, status: 'pending', invited_email: 'r@s', org_id: OTHER_ORG }],
+            share_links: [{ link_id: 'l1', owner_sub: GONE, revoked_at: null, org_id: PLATFORM_ORG },
+                          { link_id: 'l2', owner_sub: GONE, revoked_at: null, org_id: OTHER_ORG }],
             share_grants: [{ grant_id: 'gr1', root_node_id: 'n-plat-1', issued_by: GONE, status: 'active' },
                            { grant_id: 'gr2', root_node_id: 'n-cust-1', issued_by: GONE, status: 'active' }],
             groups: [{ group_id: 'g2', org_id: PLATFORM_ORG, created_by: GONE }],
             conversations: [{ conversation_id: 'c-personal', user_sub: GONE, org_id: `personal:${GONE}`, status: 'active' },
-                            { conversation_id: 'c-org', user_sub: GONE, org_id: PLATFORM_ORG, status: 'active' }],
+                            { conversation_id: 'c-org', user_sub: GONE, org_id: PLATFORM_ORG, status: 'active' },
+                            { conversation_id: 'c-cust', user_sub: GONE, org_id: OTHER_ORG, status: 'active' }],
             offboarding_log: [], content_transfers: [],
         },
         redisDel: [], redisIncr: [], linksRevoked: [], calls: [],
@@ -80,23 +85,24 @@ function world() {
             const e = T.people_directory.filter(r => r.user_sub === args[0]).map(r => r.email.toLowerCase());
             return rows([...new Set(e)].map(email => ({ email })));
         }
-        if (sql.startsWith('SELECT assignment_id FROM role_assignments')) return rows(T.role_assignments.filter(r => r.assignee_id === args[0] && r.status === 'active'));
-        if (sql.startsWith('SELECT group_id FROM group_members')) return rows(T.group_members.filter(r => r.user_sub === args[0]));
-        if (sql.startsWith('SELECT invitation_id FROM invitations WHERE invited_by')) return rows(T.invitations.filter(r => r.invited_by === args[0] && r.status === 'pending'));
-        if (sql.startsWith('SELECT invitation_id FROM invitations WHERE lower')) return rows(T.invitations.filter(r => args[0].includes(r.invited_email.toLowerCase()) && r.status === 'pending'));
-        if (sql.startsWith('SELECT link_id FROM share_links')) return rows(T.share_links.filter(r => r.owner_sub === args[0] && !r.revoked_at));
+        if (sql.startsWith('SELECT ra.assignment_id, sg.root_node_id FROM role_assignments')) return rows(T.role_assignments.filter(r => r.assignee_id === args[0] && r.status === 'active').map(r => ({ assignment_id: r.assignment_id, root_node_id: r.root })));
+        if (sql.startsWith('SELECT gm.group_id, g.org_id FROM group_members')) return rows(T.group_members.filter(r => r.user_sub === args[0]).map(r => ({ group_id: r.group_id, org_id: T.group_orgs[r.group_id] })));
+        if (sql.startsWith('SELECT group_id::text AS id, org_id FROM groups')) return rows(args[0].filter(id => T.group_orgs[id]).map(id => ({ id, org_id: T.group_orgs[id] })));
+        if (sql.startsWith('SELECT invitation_id, org_id FROM invitations WHERE invited_by')) return rows(T.invitations.filter(r => r.invited_by === args[0] && r.status === 'pending'));
+        if (sql.startsWith('SELECT invitation_id, org_id FROM invitations WHERE lower')) return rows(T.invitations.filter(r => args[0].includes(r.invited_email.toLowerCase()) && r.status === 'pending'));
+        if (sql.startsWith('SELECT link_id, org_id FROM share_links')) return rows(T.share_links.filter(r => r.owner_sub === args[0] && !r.revoked_at));
         if (sql.startsWith('SELECT grant_id, root_node_id FROM share_grants')) return rows(T.share_grants.filter(r => r.issued_by === args[0] && r.status === 'active'));
         if (sql.startsWith('SELECT group_id, org_id FROM groups')) return rows(T.groups.filter(r => r.created_by === args[0]));
         if (sql.startsWith('SELECT conversation_id FROM conversations')) return rows(T.conversations.filter(r => r.user_sub === args[0] && r.org_id.startsWith('personal:')));
         if (sql.startsWith('SELECT conversation_id, org_id FROM conversations')) return rows(T.conversations.filter(r => r.user_sub === args[0] && !r.org_id.startsWith('personal:') && r.status === 'active'));
-        if (sql.startsWith("UPDATE role_assignments SET status = 'revoked'")) { T.role_assignments.forEach(r => { if (r.assignee_id === args[0]) r.status = 'revoked'; }); return rows([]); }
-        if (sql.startsWith('DELETE FROM group_members')) { T.group_members = T.group_members.filter(r => r.user_sub !== args[0]); return rows([]); }
+        if (sql.startsWith("UPDATE role_assignments SET status = 'revoked'")) { T.role_assignments.forEach(r => { if (r.assignee_id === args[0] && args[2].includes(r.assignment_id)) { r.status = 'revoked'; r.revoked_by = args[1]; } }); return rows([]); }
+        if (sql.startsWith('DELETE FROM group_members')) { T.group_members = T.group_members.filter(r => !(r.user_sub === args[0] && args[1].includes(r.group_id))); return rows([]); }
         if (sql.startsWith("UPDATE invitations SET status = 'cancelled'")) { T.invitations.forEach(r => { if (args[0].includes(r.invitation_id)) r.status = 'cancelled'; }); return rows([]); }
         if (sql.startsWith('UPDATE share_grants SET issued_by')) { T.share_grants.find(g => g.grant_id === args[1]).issued_by = args[0]; return rows([]); }
         if (sql.startsWith('UPDATE role_assignments SET assigned_by')) return rows([]);
         if (sql.startsWith('UPDATE groups SET created_by')) { T.groups.find(g => g.group_id === args[1]).created_by = args[0]; return rows([]); }
         if (sql.startsWith('DELETE FROM conversations')) { T.conversations = T.conversations.filter(r => !(r.user_sub === args[0] && r.org_id.startsWith('personal:'))); return rows([]); }
-        if (sql.startsWith("UPDATE conversations SET status = 'deleted'")) { T.conversations.forEach(r => { if (r.user_sub === args[0] && !r.org_id.startsWith('personal:')) r.status = 'deleted'; }); return rows([]); }
+        if (sql.startsWith("UPDATE conversations SET status = 'deleted'")) { T.conversations.forEach(r => { if (r.user_sub === args[0] && args[1].includes(r.conversation_id)) r.status = 'deleted'; }); return rows([]); }
         if (sql.startsWith('DELETE FROM people_directory')) { T.people_directory = T.people_directory.filter(r => r.user_sub !== args[0]); return rows([]); }
         if (sql.startsWith('INSERT INTO offboarding_log')) { T.offboarding_log.push({ id: args[0], user: args[1], trigger: args[2], status: sql.includes("'failed'") ? 'failed' : 'completed', counts: JSON.parse(args[4]) }); return rows([]); }
         if (sql.startsWith('INSERT INTO content_transfers')) { T.content_transfers.push({ from: args[2], name: args[3], to: args[4], org: args[5], nodes: args[6] }); return rows([]); }
@@ -113,6 +119,11 @@ function world() {
     };
     const bento = {
         async ownedNodes() { return s.nodes.filter(n => !n.moved).map(n => ({ node_id: n.node_id, tenant_id: n.tenant_id })); },
+        async nodeTenants(ids) {
+            s.nodeTenantCalls = (s.nodeTenantCalls || 0) + 1;
+            const known = { 'shared-to-them': PLATFORM_ORG, 'cust-shared': OTHER_ORG, 'n-plat-1': PLATFORM_ORG, 'n-plat-2': PLATFORM_ORG, 'n-cust-1': OTHER_ORG };
+            return Object.fromEntries(ids.filter(id => known[id]).map(id => [id, known[id]]));
+        },
         async transferOwner(from, transfers) {
             if (s.failTransfer) throw new Error('Bento down');
             const changed = {};
@@ -141,17 +152,18 @@ function world() {
 
     const r = await off.apply(p, { trigger: o.TRIGGERS.SWEEP });
     eq(s.tuples, [], 'every Permify tuple naming them is gone (access + owner)');
-    eq(s.sql.role_assignments[0].status, 'revoked', 'received share marked revoked (D6)');
+    eq(s.sql.role_assignments.map(r => r.status), ['revoked', 'revoked'], 'received shares marked revoked, every org (D6)');
     eq(s.sql.group_members, [], 'group membership removed (D6)');
-    eq(s.sql.invitations.map(i => i.status), ['cancelled', 'cancelled'], 'invitations sent and to their email cancelled (D3, D4)');
-    eq(s.linksRevoked, [['l1', GONE]], 'their link revoked (D4)');
+    eq(s.sql.invitations.map(i => i.status), ['cancelled', 'cancelled', 'cancelled'], 'invitations sent and to their email cancelled (D3, D4)');
+    eq(s.linksRevoked, [['l1', GONE], ['l2', GONE]], 'their links revoked (D4)');
+    eq(s.nodeTenantCalls || 0, 0, 'account deletion needs no tenant lookup');
     eq(s.ownerWrites.sort(), [['n-plat-1', OWNER], ['n-plat-2', OWNER]], 'platform content → platform owner in Permify (D2)');
     eq(s.nodes.filter(n => n.moved).map(n => n.node_id), ['n-plat-1', 'n-plat-2'], 'platform content moved in the graph');
     ok(!s.nodes.find(n => n.node_id === 'n-cust-1').moved, 'no steward for the customer org → content stays');
     eq(r.awaiting_steward, 1, 'counted as awaiting a steward');
     eq(s.sql.share_grants.map(g => g.issued_by), [OWNER, GONE], 'shares they granted move with transferred content only (D5)');
     eq(s.sql.groups[0].created_by, OWNER, 'groups they created move to the steward (D7)');
-    eq(s.sql.conversations.map(c => [c.conversation_id, c.status]), [['c-org', 'deleted']],
+    eq(s.sql.conversations.map(c => [c.conversation_id, c.status]), [['c-org', 'deleted'], ['c-cust', 'deleted']],
        'personal history deleted; organization history soft-deleted (D1)');
     eq(s.sql.people_directory, [], 'directory row removed');
     ok(s.redisDel.includes(`perm:${GONE}`) && s.redisDel.includes(`perm:${OWNER}`), 'caches of the person and the steward cleared');
@@ -160,6 +172,29 @@ function world() {
     eq(s.sql.content_transfers, [{ from: GONE, name: 'Ada L', to: OWNER, org: PLATFORM_ORG, nodes: ['n-plat-1', 'n-plat-2'] }],
        'one "Transferred from Ada L" group for the steward (D2)');
     eq(s.nodes.find(n => n.node_id === 'n-plat-1').from_name, 'Ada L', 'each moved node carries the former owner\'s name');
+
+    // ── E1: removed from one organization, account kept (design §2); the remover receives the content ──
+    {
+        const ACTOR = 'user_adminEEEEEEEEEEEEEEEEEEEEEEEEE';
+        const { s: e, off: o1 } = world();
+        const p1 = await o1.plan(GONE, { orgId: PLATFORM_ORG, receiver: ACTOR });
+        eq(p1.accessTuples.map(t => t.entityId), [PLATFORM_ORG, 'g1', 'shared-to-them'], 'E1: only this org\'s relations, groups and shares');
+        eq(p1.ownedNodes.map(n => n.node_id), ['n-plat-1', 'n-plat-2'], 'E1: only this org\'s content');
+        await o1.apply(p1, { trigger: o.TRIGGERS.REMOVE_PERSON, actor: ACTOR });
+        eq(e.sql.role_assignments.map(r => r.status), ['revoked', 'active'], 'E1: the share in another org stays');
+        eq(e.sql.role_assignments[0].revoked_by, ACTOR, 'E1: revoked by the remover');
+        eq(e.sql.group_members.map(g => g.group_id), ['g9'], 'E1: the other org\'s group seat stays');
+        eq(e.sql.invitations.map(i => i.status), ['cancelled', 'cancelled', 'pending'], 'E1: only this org\'s invitations');
+        eq(e.linksRevoked, [['l1', GONE]], 'E1: only this org\'s links');
+        eq(e.ownerWrites.sort(), [['n-plat-1', ACTOR], ['n-plat-2', ACTOR]], 'E1: content → the remover, not the steward');
+        ok(!e.nodes.find(n => n.node_id === 'n-cust-1').moved, 'E1: other org\'s content untouched');
+        eq(e.sql.conversations.map(c => [c.conversation_id, c.status]),
+           [['c-personal', 'active'], ['c-org', 'deleted'], ['c-cust', 'active']], 'E1: this org\'s history hidden; personal and other orgs kept');
+        eq(e.sql.people_directory.length, 1, 'E1: the account stays, so its directory row stays');
+        eq(e.sql.content_transfers.map(t => [t.to, t.org]), [[ACTOR, PLATFORM_ORG]], 'E1: one transfer group for the remover');
+        eq(e.tuples.map(t => t.entityId), ['n-vanished'], 'E1: an owner tuple outside this org stays');
+        ok(!e.tuples.some(t => t.entityId === PLATFORM_ORG || t.entityId === 'g1' || t.entityId === 'shared-to-them'), 'E1: this org\'s tuples gone');
+    }
 
     // ── Idempotent ──────────────────────────────────────────────────────────────────────────
     s.nodes = s.nodes.filter(n => !n.moved);   // what ownedNodes returns now: only the customer node, still theirs

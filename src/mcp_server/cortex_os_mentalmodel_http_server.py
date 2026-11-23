@@ -185,7 +185,7 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.send_error(400, str(e))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
-        elif self.path in ("/owner_ids", "/owned_nodes", "/transfer_owner"):
+        elif self.path in ("/owner_ids", "/owned_nodes", "/transfer_owner", "/node_tenants"):
             # Offboarding (S2-50): internal calls from the gateway's utils/offboarding.js only (Bento is IAM-locked).
             # No end-user identity: these read or move ownership by person, across organizations.
             try:
@@ -196,6 +196,8 @@ class ToolHandler(BaseHTTPRequestHandler):
                 driver = get_driver()
                 if self.path == "/owner_ids":
                     result = {"owner_ids": ownership.owner_ids(driver)}
+                elif self.path == "/node_tenants":
+                    result = {"tenants": ownership.node_tenants(driver, params.get("node_ids") or [])}
                 elif self.path == "/owned_nodes":
                     result = {"nodes": ownership.owned_nodes(driver, params.get("owner_id") or "",
                                                              params.get("extra_node_ids") or [])}

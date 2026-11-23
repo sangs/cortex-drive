@@ -24,7 +24,7 @@ const crypto = require('crypto');
 const CONFIG = require('../config/offboarding.json');
 const { ownerClerkSubs, PERSONAL_SCOPE_PREFIX } = require('./identity');
 
-const TRIGGERS = Object.freeze({ USER_DELETED: 'user_deleted', SWEEP: 'sweep' });
+const TRIGGERS = Object.freeze({ USER_DELETED: 'user_deleted', SWEEP: 'sweep', REMOVE_PERSON: 'remove_person', MEMBERSHIP_DELETED: 'membership_deleted' });
 const OFFBOARDING_ACTOR = 'offboarding';
 const ID_PATTERN = new RegExp(CONFIG.clerk_user_id_pattern);
 const ORG_ID_PREFIX = 'org_';   // Clerk organization ids
@@ -71,7 +71,7 @@ function transferLabel(fromDisplayName) {
 
 /**
  * db: { query }, permify: { listSubjectTuples, deleteUserTuple, writeNodeOwner },
- * redis: { del, incr }, bento: { ownedNodes(ownerId, extraNodeIds), transferOwner(fromSub, transfers) },
+ * redis: { del, incr }, bento: { ownedNodes(ownerId, extraNodeIds), transferOwner(fromSub, transfers), nodeTenants(ids) },
  * revokeLink(linkId, ownerSub)
  */
 function createOffboarding({ db, permify, redis, bento, revokeLink, env = process.env, log = console }) {
@@ -86,12 +86,17 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
             [person.userSub, person.displayName, person.email]);
     }
 
-    /** What offboarding this person would change. Read-only. */
-    async function plan(userSub) {
+    /**
+     * What offboarding this person would change. Read-only.
+     * opts.orgId (E1, design §2): only what belongs to that organization — its relations, its groups, shares on its
+     * content, its invitations, links and history; the account, personal history and directory row stay.
+     * opts.receiver: who receives the content (the "Remove person" actor); default the organization's steward (D2).
+     */
+    async function plan(userSub, { orgId = null, receiver = null } = {}) {
         const tuples = await permify.listSubjectTuples(userSub, CONFIG.permify_subject_entity_types);
-        const accessTuples = tuples.filter(t => !(t.entityType === 'node' && t.relation === ownerRelation));
-        const ownerTupleNodeIds = tuples.filter(t => t.entityType === 'node' && t.relation === ownerRelation).map(t => t.entityId);
-        const owned = await bento.ownedNodes(userSub, ownerTupleNodeIds);
+        let accessTuples = tuples.filter(t => !(t.entityType === 'node' && t.relation === ownerRelation));
+        let ownerTupleNodeIds = tuples.filter(t => t.entityType === 'node' && t.relation === ownerRelation).map(t => t.entityId);
+        let owned = await bento.ownedNodes(userSub, ownerTupleNodeIds);
 
         const q = async (sql, args) => (await db.query(sql, args)).rows;
         const [person] = await q('SELECT display_name, email FROM people_directory WHERE user_sub = $1', [userSub]);
@@ -103,28 +108,73 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
              WHERE e IS NOT NULL AND e <> ''`, [userSub]);
         const emails = emailRows.map(r => r.email);
 
+        let receivedShares = await q(`SELECT ra.assignment_id, sg.root_node_id FROM role_assignments ra
+                                        LEFT JOIN share_grants sg ON ra.resource_type = 'grant' AND ra.resource_id = sg.grant_id::text
+                                       WHERE ra.assignee_type = 'user' AND ra.assignee_id = $1 AND ra.status = 'active'`, [userSub]);
+        let groupMemberships = await q(`SELECT gm.group_id, g.org_id FROM group_members gm LEFT JOIN groups g ON g.group_id = gm.group_id
+                                         WHERE gm.user_sub = $1`, [userSub]);
+        let invitationsSent = await q(`SELECT invitation_id, org_id FROM invitations WHERE invited_by = $1 AND status = 'pending'`, [userSub]);
+        let invitationsToThem = emails.length ? await q(
+            `SELECT invitation_id, org_id FROM invitations WHERE lower(invited_email) = ANY($1) AND status = 'pending'`, [emails]) : [];
+        let links = await q('SELECT link_id, org_id FROM share_links WHERE owner_sub = $1 AND revoked_at IS NULL', [userSub]);
+        let grantsIssued = await q(`SELECT grant_id, root_node_id FROM share_grants WHERE issued_by = $1 AND status = 'active'`, [userSub]);
+        let groupsCreated = await q('SELECT group_id, org_id FROM groups WHERE created_by = $1', [userSub]);
+        let personalConversations = await q(`SELECT conversation_id FROM conversations WHERE user_sub = $1 AND org_id LIKE $2`,
+                                            [userSub, `${personal}%`]);
+        let orgConversations = await q(`SELECT conversation_id, org_id FROM conversations
+                                         WHERE user_sub = $1 AND org_id NOT LIKE $2 AND status = 'active'`, [userSub, `${personal}%`]);
+
+        if (orgId) {
+            // E1: keep only what belongs to this organization. Node tenants come from the graph (one Bento call).
+            const nodeIds = [...new Set([
+                ...accessTuples.filter(t => t.entityType === 'node').map(t => t.entityId),
+                ...receivedShares.map(r => r.root_node_id).filter(Boolean),
+                ...grantsIssued.map(g => g.root_node_id),
+            ])];
+            const tenantOf = nodeIds.length ? await bento.nodeTenants(nodeIds) : {};
+            const groupOrg = new Map((await q('SELECT group_id::text AS id, org_id FROM groups WHERE group_id::text = ANY($1)',
+                [accessTuples.filter(t => t.entityType === 'group').map(t => t.entityId)])).map(r => [r.id, r.org_id]));
+            const inOrg = t => (t.entityType === 'org' && t.entityId === orgId)
+                || (t.entityType === 'group' && groupOrg.get(t.entityId) === orgId)
+                || (t.entityType === 'node' && tenantOf[t.entityId] === orgId);
+            accessTuples = accessTuples.filter(inOrg);
+            owned = owned.filter(n => n.tenant_id === orgId);
+            const ownedIds = new Set(owned.map(n => n.node_id));
+            ownerTupleNodeIds = ownerTupleNodeIds.filter(id => ownedIds.has(id) || tenantOf[id] === orgId);
+            receivedShares = receivedShares.filter(r => r.root_node_id && tenantOf[r.root_node_id] === orgId);
+            groupMemberships = groupMemberships.filter(g => g.org_id === orgId);
+            invitationsSent = invitationsSent.filter(i => i.org_id === orgId);
+            invitationsToThem = invitationsToThem.filter(i => i.org_id === orgId);
+            links = links.filter(l => l.org_id === orgId);
+            grantsIssued = grantsIssued.filter(g => tenantOf[g.root_node_id] === orgId || ownedIds.has(g.root_node_id));
+            groupsCreated = groupsCreated.filter(g => g.org_id === orgId);
+            personalConversations = [];
+            orgConversations = orgConversations.filter(c => c.org_id === orgId);
+        }
+
         return {
             userSub,
+            orgId,
+            receiver,
             name: (person && (person.display_name || person.email)) || null,
             accessTuples,
             ownerTupleNodeIds,
             ownedNodes: owned,
-            receivedShares: await q(`SELECT assignment_id FROM role_assignments
-                                     WHERE assignee_type = 'user' AND assignee_id = $1 AND status = 'active'`, [userSub]),
-            groupMemberships: await q('SELECT group_id FROM group_members WHERE user_sub = $1', [userSub]),
-            invitationsSent: await q(`SELECT invitation_id FROM invitations WHERE invited_by = $1 AND status = 'pending'`, [userSub]),
-            invitationsToThem: emails.length ? await q(
-                `SELECT invitation_id FROM invitations WHERE lower(invited_email) = ANY($1) AND status = 'pending'`, [emails]) : [],
-            links: await q('SELECT link_id FROM share_links WHERE owner_sub = $1 AND revoked_at IS NULL', [userSub]),
-            grantsIssued: await q(`SELECT grant_id, root_node_id FROM share_grants WHERE issued_by = $1 AND status = 'active'`, [userSub]),
-            groupsCreated: await q('SELECT group_id, org_id FROM groups WHERE created_by = $1', [userSub]),
-            personalConversations: await q(`SELECT conversation_id FROM conversations WHERE user_sub = $1 AND org_id LIKE $2`,
-                                           [userSub, `${personal}%`]),
-            orgConversations: await q(`SELECT conversation_id, org_id FROM conversations
-                                       WHERE user_sub = $1 AND org_id NOT LIKE $2 AND status = 'active'`, [userSub, `${personal}%`]),
-            directoryRow: Boolean(person),
+            receivedShares,
+            groupMemberships,
+            invitationsSent,
+            invitationsToThem,
+            links,
+            grantsIssued,
+            groupsCreated,
+            personalConversations,
+            orgConversations,
+            directoryRow: !orgId && Boolean(person),
         };
     }
+
+    /** Who receives content of this tenant: the "Remove person" actor for its organization, else the steward (D2). */
+    const receiverFor = (p, tenantId) => (p.receiver && p.orgId && tenantId === p.orgId ? p.receiver : stewardFor(tenantId, env));
 
     /**
      * What this run can act on. Content in an organization with no steward can't move (D2); it is reported as
@@ -132,23 +182,23 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
      */
     function countsOf(p) {
         const nodeTenant = new Map(p.ownedNodes.map(n => [n.node_id, n.tenant_id]));
-        const movable = n => Boolean(stewardFor(n.tenant_id, env));
-        const ownerTupleActionable = id => !nodeTenant.has(id) || Boolean(stewardFor(nodeTenant.get(id), env));
+        const movable = n => Boolean(receiverFor(p, n.tenant_id));
+        const ownerTupleActionable = id => !nodeTenant.has(id) || Boolean(receiverFor(p, nodeTenant.get(id)));
         return {
             access_tuples: p.accessTuples.length,
             owner_tuples: p.ownerTupleNodeIds.filter(ownerTupleActionable).length,
             owned_nodes: p.ownedNodes.filter(movable).length,
             received_shares: p.receivedShares.length, group_memberships: p.groupMemberships.length,
             invitations_sent: p.invitationsSent.length, invitations_to_them: p.invitationsToThem.length, links: p.links.length,
-            grants_issued: p.grantsIssued.filter(g => nodeTenant.has(g.root_node_id) && stewardFor(nodeTenant.get(g.root_node_id), env)).length,
-            groups_created: p.groupsCreated.filter(g => stewardFor(g.org_id, env)).length,
+            grants_issued: p.grantsIssued.filter(g => nodeTenant.has(g.root_node_id) && receiverFor(p, nodeTenant.get(g.root_node_id))).length,
+            groups_created: p.groupsCreated.filter(g => receiverFor(p, g.org_id)).length,
             personal_conversations: p.personalConversations.length, org_conversations: p.orgConversations.length,
         };
     }
 
     /** Owned nodes that stay with the departed person because their organization has no steward. */
     function awaitingSteward(p) {
-        return p.ownedNodes.filter(n => !stewardFor(n.tenant_id, env)).length;
+        return p.ownedNodes.filter(n => !receiverFor(p, n.tenant_id)).length;
     }
 
     /** True when there is nothing left to do (the directory row alone doesn't count). */
@@ -168,9 +218,13 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
             for (const t of p.accessTuples) await permify.deleteUserTuple(t.entityType, t.entityId, t.relation, p.userSub);
             if (p.receivedShares.length) {
                 await db.query(`UPDATE role_assignments SET status = 'revoked', revoked_at = now(), revoked_by = $2
-                                WHERE assignee_type = 'user' AND assignee_id = $1 AND status = 'active'`, [p.userSub, OFFBOARDING_ACTOR]);
+                                WHERE assignee_type = 'user' AND assignee_id = $1 AND status = 'active' AND assignment_id = ANY($3)`,
+                               [p.userSub, actor || OFFBOARDING_ACTOR, p.receivedShares.map(r => r.assignment_id)]);
             }
-            if (p.groupMemberships.length) await db.query('DELETE FROM group_members WHERE user_sub = $1', [p.userSub]);
+            if (p.groupMemberships.length) {
+                await db.query('DELETE FROM group_members WHERE user_sub = $1 AND group_id = ANY($2)',
+                               [p.userSub, p.groupMemberships.map(g => g.group_id)]);
+            }
 
             // 2. Invitations (D3, D4).
             const invitationIds = [...p.invitationsSent, ...p.invitationsToThem].map(r => r.invitation_id);
@@ -191,7 +245,7 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
             const transferredNodes = new Set();
             const stewardOfNode = new Map();
             for (const [tenantId, nodeIds] of byTenant) {
-                const steward = stewardFor(tenantId, env);
+                const steward = receiverFor(p, tenantId);
                 if (!steward) { done.awaiting_steward += nodeIds.length; continue; }
                 transfers.push({ tenant_id: tenantId, to_sub: steward, transfer_id: crypto.randomUUID(),
                                  from_name: formerOwnerName(p.name, p.userSub), node_ids: nodeIds });
@@ -226,7 +280,7 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
                 done.kept_shares += 1;
             }
             for (const g of p.groupsCreated) {
-                const steward = stewardFor(g.org_id, env);
+                const steward = receiverFor(p, g.org_id);
                 if (steward) await db.query('UPDATE groups SET created_by = $1 WHERE group_id = $2', [steward, g.group_id]);
             }
 
@@ -236,7 +290,8 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
             }
             if (p.orgConversations.length) {
                 await db.query(`UPDATE conversations SET status = 'deleted', deleted_at = now()
-                                WHERE user_sub = $1 AND org_id NOT LIKE $2 AND status = 'active'`, [p.userSub, `${personal}%`]);
+                                WHERE user_sub = $1 AND status = 'active' AND conversation_id = ANY($2)`,
+                               [p.userSub, p.orgConversations.map(c => c.conversation_id)]);
                 p.orgConversations.forEach(c => tenantsTouched.add(c.org_id));
             }
 
@@ -249,7 +304,7 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
                 await redis.incr(`perm_version:${tenantId}`);
                 await redis.incr(`entcat_version:${tenantId}`);
             }
-            await db.query('DELETE FROM people_directory WHERE user_sub = $1', [p.userSub]);
+            if (!p.orgId) await db.query('DELETE FROM people_directory WHERE user_sub = $1', [p.userSub]);   // E1 keeps the account
             await db.query(`INSERT INTO offboarding_log (offboarding_id, user_sub, trigger, actor, status, counts, started_at, finished_at)
                             VALUES ($1, $2, $3, $4, 'completed', $5, $6, now())`,
                            [offboardingId, p.userSub, trigger, actor, JSON.stringify(done), startedAt]);
@@ -272,9 +327,9 @@ function createOffboarding({ db, permify, redis, bento, revokeLink, env = proces
     }
 
     /** Plan, then apply unless empty. Refuses protected ids. Returns { skipped, reason } or apply()'s result. */
-    async function offboard(userSub, { trigger, actor = null } = {}) {
+    async function offboard(userSub, { trigger, actor = null, orgId = null, receiver = null } = {}) {
         if (isProtected(userSub, env)) return { skipped: true, reason: 'protected' };
-        const p = await plan(userSub);
+        const p = await plan(userSub, { orgId, receiver });
         if (isEmpty(p)) {
             if (p.directoryRow) await db.query('DELETE FROM people_directory WHERE user_sub = $1', [userSub]);
             return { skipped: true, reason: 'nothing_to_do' };
