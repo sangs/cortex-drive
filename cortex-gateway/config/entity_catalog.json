@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-20T21:11:32.920309+00:00",
+  "generated_at": "2026-11-23T20:53:13.087371+00:00",
   "tenant_id": "org_3E0FtIXiFM6DHwXg05sEVvq2mi0",
   "node_count": 49,
   "domains": {
@@ -111,6 +111,135 @@
       "website",
       "podcast"
     ]
+  },
+  "bridge_anchors": {
+    "apache iceberg": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "34c370c7-d68f-494f-9ccc-cd2ed4606eaa",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        },
+        {
+          "node_id": "9fd383fd-cb46-4f7a-9e90-a8465272aa0f",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        },
+        {
+          "node_id": "0ac5e5b7-04ca-4ee1-ba6b-51d6b96765fc",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        },
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "trino": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "presto": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "hive": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "pig": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "sql": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    },
+    "acid transactions": {
+      "website": [
+        {
+          "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ],
+      "podcast": [
+        {
+          "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
+          "tier": "org",
+          "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+        }
+      ]
+    }
   },
   "entries": [
     {
@@ -408,7 +537,8 @@
       "tier": "org",
       "type": "DocumentSource",
       "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
-      "short_name": "BERT"
+      "short_name": "BERT",
+      "added": "2026-10-27"
     },
     {
       "name": "Ben Lorica",
@@ -600,7 +730,8 @@
       "node_id": "906c42ed-a7d0-4aea-8847-cc6c50518491",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2025-05-13"
     },
     {
       "name": "Data Archives - Software Engineering Daily",
@@ -624,7 +755,8 @@
       "node_id": "34c370c7-d68f-494f-9ccc-cd2ed4606eaa",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2025-08-14"
     },
     {
       "name": "High Performance And Low Overhead Graphs With KuzuDB",
@@ -632,7 +764,8 @@
       "node_id": "0ac5e5b7-04ca-4ee1-ba6b-51d6b96765fc",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2025-08-18"
     },
     {
       "name": "Iceberg at Netflix and Beyond with Ryan Blue",
@@ -640,7 +773,8 @@
       "node_id": "ca6a97b9-d931-4911-8c38-fafec86e5705",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2024-03-07"
     },
     {
       "name": "Prompts as Functions: The BAML Revolution in AI Engineering",
@@ -648,7 +782,8 @@
       "node_id": "1c8a09c4-00b8-4810-81af-4845a592bf6f",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2025-04-03"
     },
     {
       "name": "Simplifying Lakehouse Ecosystem With DuckLake",
@@ -656,7 +791,8 @@
       "node_id": "9fd383fd-cb46-4f7a-9e90-a8465272aa0f",
       "tier": "org",
       "type": "Episode",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2025-09-10"
     },
     {
       "name": "Software Engineering Daily",
@@ -2428,7 +2564,8 @@
       "node_id": "d5093eeb-88b0-40b3-8799-cb02460e3854",
       "tier": "org",
       "type": "WebsiteSource",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2026-09-24"
     },
     {
       "name": "Graph database",
@@ -2436,7 +2573,8 @@
       "node_id": "3d6a6c28-8f25-4d1b-9e10-edbceb7ea751",
       "tier": "org",
       "type": "WebsiteSource",
-      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF"
+      "owner_id": "user_3E07ZZZL4kDTo2vzAgpC1erDxjF",
+      "added": "2026-09-24"
     }
   ]
 }
