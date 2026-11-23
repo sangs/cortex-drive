@@ -90,7 +90,20 @@ class ExpertTools:
         owner_user_id = os.environ.get("OWNER_USER_ID", "")
         return bool(owner_user_id) and self.requesting_user_id == owner_user_id
 
+    # S2-50 §3b (2026-11-23): content transferred to a steward stays out of that steward's chat answers until they
+    # choose "Keep as mine" (which removes transfer_id). Set by the chat server (MCP) and Bento's chat-facing routes;
+    # node details and the transfer's own graph view still show it (the steward owns it). Others it was shared with
+    # are unaffected: the rule only matches nodes the requester owns.
+    exclude_in_review_transfers = False
+
     def _get_security_clause(self, node_var: str) -> str:
+        clause = self._base_security_clause(node_var)
+        if self.exclude_in_review_transfers and self.requesting_user_id:
+            clause = (f"({clause} AND NOT ({node_var}.transfer_id IS NOT NULL "
+                      f"AND {node_var}.owner_id = $transfer_review_owner))")
+        return clause
+
+    def _base_security_clause(self, node_var: str) -> str:
         """
         Authorization clause.
         - Owner / internal: Permify allowlist + tenant_id fallback (defense-in-depth against nodes
@@ -116,6 +129,12 @@ class ExpertTools:
 
     def _security_params(self) -> dict:
         """Returns the kwargs for _exec_query matched to _get_security_clause."""
+        params = self._base_security_params()
+        if self.exclude_in_review_transfers and self.requesting_user_id:
+            params["transfer_review_owner"] = self.requesting_user_id
+        return params
+
+    def _base_security_params(self) -> dict:
         if not self._has_tenant_visibility():
             return {"allowed_ids": self.allowed_ids or []}
         params = {"tenant_id": self.tenant_id}
@@ -152,6 +171,10 @@ class ExpertTools:
             kwargs.setdefault("fallback_owner_id", self.requesting_user_id)
         else:
             kwargs.pop("fallback_owner_id", None)
+        if "$transfer_review_owner" in q:   # S2-50 §3b clause, same discipline (AP-2)
+            kwargs.setdefault("transfer_review_owner", self.requesting_user_id)
+        else:
+            kwargs.pop("transfer_review_owner", None)
         return self.driver.execute_query(cast(LiteralString, q), **kwargs)
 
     def _fragment_taxonomy_expansion(self) -> str:

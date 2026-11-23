@@ -101,7 +101,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
               AND any(l IN labels(n) WHERE l IN $labels)
             RETURN n.name AS name, labels(n) AS labels, n.node_id AS node_id, n.tenant_id AS tenant,
                    n.owner_id AS owner_id,
-                   toString(coalesce(n.last_synced_at, n.published_date, n.aired_date, n.created_at)) AS added
+                   toString(coalesce(n.last_synced_at, n.published_date, n.aired_date, n.created_at)) AS added,
+                   n.transfer_id AS transfer_id
             """,
             tiers=tiers, labels=label_list).data()
         for r in rows:
@@ -124,6 +125,8 @@ def build_entity_catalog(driver, tenant_id: str) -> dict:
                 sn = short_name(name)
                 if sn:
                     entry["short_name"] = sn
+            if r.get("transfer_id"):
+                entry["transfer_id"] = r["transfer_id"]   # in the steward's review: not routed for them (S2-50 §3b)
             added = _iso_date(r["added"])
             if added:
                 entry["added"] = added   # newest-first starter questions (S2-102 §3.2 slot 2)

@@ -1,6 +1,7 @@
 "use client";
 
 import React from 'react';
+import { transferredLabel } from "@/utils/transfers";
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ExternalLink, Target, Cpu, History, MessageSquare, Share2, Network, Mic, CalendarDays, Tag, Hash, Radio, Loader2, FileText, ListTree } from 'lucide-react';
 import { useAuth } from '@clerk/nextjs';
@@ -217,6 +218,11 @@ const BentoDetailPanel: React.FC<BentoDetailPanelProps> = ({ node, allNodes = []
                     <span className="text-[8px] text-slate-500 lowercase font-normal tracking-normal">(Double-click map to expand)</span>
                 </span>
                 <h2 className="text-2xl font-bold text-white tracking-tight leading-tight">{node.name}</h2>
+                {transferredLabel(node) && (
+                    <span className="text-[11px] text-amber-300">
+                        {transferredLabel(node)} · review it in Settings → Sharing &amp; Access
+                    </span>
+                )}
             </div>
             <div className="flex items-center gap-2">
                 {caps.share && (

@@ -178,7 +178,10 @@ function buildRoutingLookups(catalog, viewer) {
     // founder; found 2026-11-10: the owner's routing dropped every built-in topic).
     const ownerCanOpen = e => GLOBAL_TIERS.has(e.tier) || !e.owner_id || e.owner_id === viewer.userId
         || Boolean(allowedIds && allowedIds.has(e.node_id));
-    const canOpen = e => (viewer && viewer.isOwner ? ownerCanOpen(e)
+    // Content transferred to this viewer stays out of their routing and suggestions until "Keep as mine" removes its
+    // transfer_id (S2-50 §3b; the MCP search applies the same rule). Others it was shared with route to it as before.
+    const inReviewForViewer = e => Boolean(e.transfer_id && viewer && viewer.userId && e.owner_id === viewer.userId);
+    const canOpen = e => !inReviewForViewer(e) && (viewer && viewer.isOwner ? ownerCanOpen(e)
         : (!allowed || GLOBAL_TIERS.has(e.tier) || (e.node_id && allowed.has(e.node_id))));
     const entity = new Map();   // lowerCaseName → domain
     const person = new Map();   // lowerCaseName → original-case name

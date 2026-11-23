@@ -586,6 +586,37 @@ const offboarding = createOffboarding({
     revokeLink: (linkId, ownerSub) => shareLinks.revokeLink(linkId, ownerSub),
 });
 
+// Steward review of transferred content (S2-50 §3b): "Transferred to you". Bento does the graph work, the module the rest.
+const { createTransfers, TransferError } = require('./utils/transfers');
+const transfers = createTransfers({
+    db, permify, redis,
+    bento: {
+        items: a => bentoPost('/transfer_items', a.tenant_id, a),
+        keep: a => bentoPost('/transfer_keep', a.tenant_id, a),
+        remove: a => bentoPost('/transfer_delete', a.tenant_id, a),
+    },
+});
+function transferRoute(handler) {
+    return async (req, res) => {
+        if (req.guestAuth === true) return res.status(403).json({ error: 'Not available for guest links' });
+        try {
+            res.json(await handler(req.headers['x-user-id'], req));
+        } catch (err) {
+            if (err instanceof TransferError) return res.status(err.status).json({ error: err.message });
+            console.error(`[TRANSFER] ${req.method} ${req.path} failed:`, err.message);
+            res.status(500).json({ error: 'Could not complete that. Nothing was changed if this was a delete that failed before it started; refresh to see the current state.' });
+        }
+    };
+}
+app.get('/api/transfers', authMiddleware, transferRoute(userSub => transfers.list(userSub)));
+app.get('/api/transfers/:id/items', authMiddleware, transferRoute((userSub, req) => transfers.items(userSub, req.params.id)));
+app.post('/api/transfers/:id/keep', authMiddleware, transferRoute((userSub, req) =>
+    transfers.keep(userSub, req.params.id, Array.isArray(req.body && req.body.source_ids) ? req.body.source_ids : null)));
+app.post('/api/transfers/:id/delete', authMiddleware, transferRoute((userSub, req) =>
+    transfers.remove(userSub, req.params.id, req.body && req.body.source_ids, { confirm: Boolean(req.body && req.body.confirm === true) })));
+app.post('/api/transfers/:id/purge-history', authMiddleware, transferRoute((userSub, req) =>
+    transfers.purgeHistory(userSub, req.params.id, { confirm: Boolean(req.body && req.body.confirm === true) })));
+
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
 const { runCrossMode, crossEvidenceText, withConnectionsSection } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');

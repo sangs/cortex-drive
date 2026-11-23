@@ -40,9 +40,11 @@ OWNER_DUAL = f"(n.node_id IN $allowed_ids OR n.tenant_id IN ['SYSTEM', 'PUBLIC']
 OWNER_TENANT_ONLY = f"(n.tenant_id IN ['SYSTEM', 'PUBLIC'] OR {OWNER_FALLBACK})"
 
 
-def tools(user="", guest="", allowed=None):
+def tools(user="", guest="", allowed=None, exclude_in_review=False):
     t = ExpertTools.__new__(ExpertTools)
     t.tenant_id, t.requesting_user_id, t.guest_share_anchor, t.allowed_ids = TEST_TENANT_ID, user, guest, allowed
+    # Importing the chat server turns S2-50 §3b on for the class; each case states it explicitly.
+    t.exclude_in_review_transfers = exclude_in_review
     return t
 
 
@@ -77,6 +79,20 @@ class VisibilityClauseTest(unittest.TestCase):
                 self.assertEqual(t._security_params(), params)
                 # AP-2: every parameter the clause uses is supplied, and nothing extra is passed
                 self.assertEqual(params_used(clause), set(params))
+
+    def test_chat_clause_leaves_out_in_review_transfers(self):
+        """S2-50 §3b: in the chat server every caller's clause also skips nodes they own that still carry a
+        transfer_id; the extra parameter is supplied exactly where it is used (AP-2)."""
+        for label, user, guest, allowed, clause, params in self.CASES:
+            with self.subTest(label):
+                t = tools(user, guest, allowed, exclude_in_review=True)
+                wrapped = t._get_security_clause("n")
+                if user:
+                    self.assertEqual(wrapped, f"({clause} AND NOT (n.transfer_id IS NOT NULL AND n.owner_id = $transfer_review_owner))")
+                    self.assertEqual(t._security_params(), {**params, "transfer_review_owner": user})
+                else:
+                    self.assertEqual(wrapped, clause, "internal calls have no requester: unchanged")
+                self.assertEqual(params_used(wrapped), set(t._security_params()))
 
     def test_exec_query_supplies_fallback_owner_only_where_used(self):
         """AP-2: $fallback_owner_id reaches every query whose (inline-substituted) clause uses it, and no other."""

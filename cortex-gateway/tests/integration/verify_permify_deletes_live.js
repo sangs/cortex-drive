@@ -70,6 +70,11 @@ let passed = 0;
             await p.deleteUserTuple('node', 'n2', 'shared_viewer', 'alice');
         }, ['node:n2#shared_viewer@user:alice']],
         ['offboarding: owner moved', async p => { await p.writeNodeOwner('n2', 'steward'); }, [], ['node:n2#owner@user:steward']],
+        // Steward review (S2-50 §3b): a deleted node loses every tuple on it, one exact delete each; n2's stay.
+        ['transfer delete: every tuple on one node', async p => {
+            const tuples = await p.listNodeAccess('n1');
+            for (const t of tuples) await p.deleteTuple('node', 'n1', t.relation, t.subject);
+        }, ['node:n1#shared_viewer@user:alice', 'node:n1#shared_viewer@user:bob', 'node:n1#shared_viewer@group:g1#member', 'node:n1#tenant_viewer@org:o1#member']],
     ];
     for (const [i, [label, act, removed, added = []]] of cases.entries()) {
         const tenant = `live${Date.now()}x${i}`;

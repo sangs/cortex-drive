@@ -7,12 +7,25 @@
   "transfer_label": "Transferred from {name}",
   "unknown_person_label": "a former user ({short_id})",
   "clerk_user_id_pattern": "^user_[A-Za-z0-9]{20,40}$",
-  "never_offboard_env": ["OWNER_USER_ID", "PUBLIC_TRIAL_USER_ID"],
-  "permify_subject_entity_types": ["org", "group", "node", "agent"],
+  "never_offboard_env": [
+    "OWNER_USER_ID",
+    "PUBLIC_TRIAL_USER_ID"
+  ],
+  "permify_subject_entity_types": [
+    "org",
+    "group",
+    "node",
+    "agent"
+  ],
   "node_owner_relation": "owner",
   "sweep": {
     "_comment": "The orphan sweep refuses to change anything when more people than this look deleted (likely a Clerk outage or the wrong Clerk instance); rerun with --force after checking. Before acting it confirms the platform owner exists in this Clerk instance.",
     "max_people_per_run": 10,
     "apply_on_deploy": true
+  },
+  "review": {
+    "_comment": "Steward review of transferred content (design §3b). transfer_review_days: after this many days an unreviewed transfer shows a reminder. history_retention_days: hidden organization chats of a departed person are purged this many days after they were hidden (D1; the purge job is build c — until then the date is shown and 'Delete hidden chats now' purges at once).",
+    "transfer_review_days": 30,
+    "history_retention_days": 30
   }
 }

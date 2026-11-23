@@ -186,17 +186,22 @@ async function listViewableNodeIds(userId) {
 /** Return all relationship tuples for a node. */
 async function listNodeAccess(nodeId) {
   if (!configured()) return [];
-  const data = await _post('/data/relationships/read', {
-    metadata:          { schema_version: '', snap_token: '' },
-    filter:            { entity: { type: 'node', ids: [nodeId] }, relation: '' },
-    page_size:         100,
-    continuous_token:  '',
-  });
-  return (data.tuples || []).map(t => ({
-    subject:  t.subject,
-    relation: t.relation,
-    entity:   t.entity,
-  }));
+  if (!nodeId) throw new Error('refusing an unscoped node read');
+  const out = [];
+  let token = '';
+  do {   // every page (a node shared widely has more than one)
+    const data = await _post('/data/relationships/read', {
+      metadata:          { schema_version: '', snap_token: '' },
+      filter:            { entity: { type: 'node', ids: [nodeId] }, relation: '' },
+      page_size:         100,
+      continuous_token:  token,
+    });
+    for (const t of data.tuples || []) {
+      if (t.entity && t.entity.id === String(nodeId)) out.push({ subject: t.subject, relation: t.relation, entity: t.entity });
+    }
+    token = data.continuous_token || '';
+  } while (token);
+  return out;
 }
 
 /** Write ONE shared_viewer tuple on a node for a group (group#member pattern). */
@@ -298,6 +303,14 @@ async function deleteUserTuple(entityType, entityId, relation, userId) {
   return _post('/relationships/delete', { filter: exactTupleFilter(entityType, entityId, relation, { type: 'user', id: userId }) });
 }
 
+/** Delete ONE tuple on a node for any subject (as read by listNodeAccess), exact filter (AP-28). Used when a node is
+ *  deleted (S2-50 §3b). The subject must carry type and id; a subject relation (group#member) is kept. Throws. */
+async function deleteTuple(entityType, entityId, relation, subject) {
+  const s = subject || {};
+  return _post('/relationships/delete', { filter: exactTupleFilter(entityType, entityId, relation,
+    { type: s.type, id: s.id, ...(s.relation ? { relation: s.relation } : {}) }) });
+}
+
 /** Make a user the owner of a node (node#owner @user). Used when content is transferred (S2-50). */
 async function writeNodeOwner(nodeId, userId) {
   if (!nodeId || !userId) throw new Error('refusing an owner write without node and user');
@@ -308,6 +321,7 @@ async function writeNodeOwner(nodeId, userId) {
 
 module.exports = {
   configured,
+  deleteTuple,
   listSubjectTuples,
   deleteUserTuple,
   writeNodeOwner,

@@ -162,6 +162,29 @@ class ToolHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(result).encode("utf-8"))
             except Exception as e:
                 self.send_error(500, f"Internal server error: {str(e)}")
+        elif self.path in ("/transfer_items", "/transfer_keep", "/transfer_delete"):
+            # Steward review (S2-50 §3b): internal calls from the gateway's utils/transfers.js only (Bento is
+            # IAM-locked). The gateway checks the requester is the transfer's steward before calling.
+            try:
+                from neo4j_connection import get_driver
+                import ownership
+                content_length = int(self.headers.get("Content-Length", 0))
+                params = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                args = (get_driver(), params.get("steward") or "", params.get("transfer_id") or "", params.get("tenant_id") or "")
+                if self.path == "/transfer_items":
+                    result = ownership.transfer_items(*args)
+                elif self.path == "/transfer_keep":
+                    result = {"changed": ownership.keep_transferred(*args, params.get("source_ids"))}
+                else:
+                    result = ownership.delete_transferred_sources(*args, params.get("source_ids") or [])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+            except ValueError as e:
+                self.send_error(400, str(e))
+            except Exception as e:
+                self.send_error(500, f"Internal server error: {str(e)}")
         elif self.path in ("/owner_ids", "/owned_nodes", "/transfer_owner"):
             # Offboarding (S2-50): internal calls from the gateway's utils/offboarding.js only (Bento is IAM-locked).
             # No end-user identity: these read or move ownership by person, across organizations.
@@ -222,6 +245,7 @@ class ToolHandler(BaseHTTPRequestHandler):
                 allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
                 expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
                                      guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
+                expert.exclude_in_review_transfers = True   # a chat answer (S2-50 §3b)
                 try:
                     result = expert.overview()
                 finally:
@@ -249,6 +273,7 @@ class ToolHandler(BaseHTTPRequestHandler):
                 allowed_ids = _resolve_allowed_ids_sync(user_id, tenant_id)
                 expert = ExpertTools(tenant_id=tenant_id, requesting_user_id=user_id,
                                      guest_share_anchor=guest_share_anchor, allowed_ids=allowed_ids)
+                expert.exclude_in_review_transfers = True   # routes a chat question (S2-50 §3b)
                 try:
                     coverage = expert.domain_coverage(terms)
                 finally:

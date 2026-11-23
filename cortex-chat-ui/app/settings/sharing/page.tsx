@@ -12,6 +12,7 @@ import {
 import { GATEWAY_URL as GATEWAY } from '@/lib/gateway';
 import { readShareResult } from '@/utils/shareResult';
 import AccountMenu from '@/components/AccountMenu';
+import TransferredToYou from '@/components/TransferredToYou';
 
 type Tab = 'public-links' | 'named-shares' | 'pending-invites';
 
@@ -311,6 +312,9 @@ export default function SharingSettingsPage() {
                         Manage public graph links, named grants, and pending invites.
                     </p>
                 </div>
+
+                {/* Content of people who left, moved to this steward (S2-50 §3b); hidden when there is none. */}
+                <TransferredToYou />
 
                 {/* Tab strip */}
                 <div className="flex gap-1 p-1 bg-slate-100 rounded-2xl w-fit">

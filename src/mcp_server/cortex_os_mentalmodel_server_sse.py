@@ -20,6 +20,8 @@ from typing import List, Optional
 
 # Local dependency
 from expert_tools import ExpertTools
+# The chat server: content transferred to a steward stays out of their answers until "Keep as mine" (S2-50 §3b).
+ExpertTools.exclude_in_review_transfers = True
 from domain_registry import BRIDGE_DEFAULT_LIMIT, BRIDGE_MAX_LIMIT, MCP_HTTP_PATH, MCP_TOOL_THREADS
 from entity_catalog import version_key as entity_catalog_version_key
 
