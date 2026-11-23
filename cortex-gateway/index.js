@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { classifyDomain, initClassifier, getBridgeContext, classifyNamedPerson, buildRoutingLookups } = require('./utils/intent_classifier');
+const { getCloudRunToken } = require('./utils/cloud_run_token');   // AP-18 (shared with scripts)
 const { toolsOfferedFor, offeredToolNames, refusedToolMessage } = require('./utils/tool_policy.js');
 const { fetchWithColdStartRetry } = require('./utils/upstream_fetch.js');
 
@@ -850,23 +851,6 @@ async function resolveAndCachePermissions(userId, tenantId) {
         }
     }
     return { allowedIds, permVersion };
-}
-
-/**
- * OIDC token for Cloud Run service-to-service auth.
- * Returns null in local dev (NODE_ENV !== 'production').
- */
-async function getCloudRunToken(targetUrl) {
-    if (process.env.NODE_ENV !== 'production') return null;
-    try {
-        const { GoogleAuth } = require('google-auth-library');
-        const client = await new GoogleAuth().getIdTokenClient(targetUrl);
-        const h = await client.getRequestHeaders(targetUrl);
-        return h.Authorization;
-    } catch (e) {
-        console.warn('[OIDC] token fetch failed:', e.message);
-        return null;
-    }
 }
 
 const app = express();

@@ -24,6 +24,7 @@ const permify = require('../utils/permify_gateway');
 const db = require('../utils/db');
 const { createShareLinks } = require('../utils/share_links');
 const { createOffboarding, personFromClerkUser, isProtected, TRIGGERS, CONFIG } = require('../utils/offboarding');
+const { getCloudRunToken } = require('../utils/cloud_run_token');
 
 const PAGE_SIZE = 100;
 const REQUIRED_ENV = ['CLERK_SECRET_KEY', 'PERMIFY_API_URL', 'OWNER_USER_ID', 'TENANT_ID', 'REDIS_URL', 'BENTO_SERVER_URL'];
@@ -39,10 +40,12 @@ async function listAll(fetchPage) {
 
 async function bentoPost(path, body) {
     const base = process.env.BENTO_SERVER_URL.replace(/\/$/, '');
+    // Operator runs pass BENTO_ID_TOKEN; the daily job (Cloud Run) fetches one from its service account.
+    const auth = process.env.BENTO_ID_TOKEN ? `Bearer ${process.env.BENTO_ID_TOKEN}` : await getCloudRunToken(base);
     const res = await fetch(`${base}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-tenant-id': process.env.TENANT_ID,
-                   ...(process.env.BENTO_ID_TOKEN ? { Authorization: `Bearer ${process.env.BENTO_ID_TOKEN}` } : {}) },
+                   ...(auth ? { Authorization: auth } : {}) },
         body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`Bento ${path} → ${res.status}`);
@@ -95,6 +98,7 @@ async function main() {
             bento: {
                 ownedNodes: async (ownerId, extra) => (await bentoPost('/owned_nodes', { owner_id: ownerId, extra_node_ids: extra })).nodes,
                 transferOwner: async (fromSub, transfers) => (await bentoPost('/transfer_owner', { from_sub: fromSub, transfers })).changed,
+                nodeTenants: async nodeIds => (await bentoPost('/node_tenants', { node_ids: nodeIds })).tenants,
             },
             revokeLink: (linkId, ownerSub) => shareLinks.revokeLink(linkId, ownerSub),
             log: { log: m => console.log(m), error: m => console.error(m) },

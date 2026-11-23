@@ -24,8 +24,12 @@
     "apply_on_deploy": true
   },
   "review": {
-    "_comment": "Steward review of transferred content (design §3b). transfer_review_days: after this many days an unreviewed transfer shows a reminder. history_retention_days: hidden organization chats of a departed person are purged this many days after they were hidden (D1; the purge job is build c — until then the date is shown and 'Delete hidden chats now' purges at once).",
-    "transfer_review_days": 30,
-    "history_retention_days": 30
+    "_comment": "Steward review of transferred content (design §3b). transfer_review_days: after this many days an unreviewed transfer shows a reminder. The hidden-chat window is retention.history_retention_days.",
+    "transfer_review_days": 30
+  },
+  "retention": {
+    "_comment": "Daily purge (S2-50 build 2c, design D1/D8): hidden (soft-deleted) chats older than history_retention_days are deleted, whoever hid them (a user deleting a chat, or offboarding); reviewed transfer groups and audit rows older than audit_retention_days are deleted (the former person's name goes with them). Run by scripts/retention_purge.js in the daily maintenance job, then the orphan sweep.",
+    "history_retention_days": 30,
+    "audit_retention_days": 365
   }
 }

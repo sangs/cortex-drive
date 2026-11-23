@@ -48,7 +48,7 @@ function createTransfers({ db, permify, redis, bento, log = console, now = Date.
             `SELECT count(*)::int AS n, min(deleted_at) AS first FROM conversations
               WHERE user_sub = $1 AND org_id = $2 AND status = 'deleted'`, [t.from_sub, t.org_id]);
         const r = rows[0] || { n: 0, first: null };
-        const purgeOn = r.first ? new Date(new Date(r.first).getTime() + (REVIEW.history_retention_days || 30) * DAY_MS) : null;
+        const purgeOn = r.first ? new Date(new Date(r.first).getTime() + ((CONFIG.retention || {}).history_retention_days || 30) * DAY_MS) : null;
         return { count: r.n, purgeOn: purgeOn ? purgeOn.toISOString().slice(0, 10) : null };
     }
 
