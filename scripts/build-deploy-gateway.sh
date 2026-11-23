@@ -63,7 +63,7 @@ fi
 BCTX="/tmp/cortex-gateway-ctx"
 echo "Preparing build context at ${BCTX}..."
 rm -rf "$BCTX"
-mkdir -p "$BCTX/cortex-gateway/config" "$BCTX/cortex-gateway/utils" "$BCTX/prompts"
+mkdir -p "$BCTX/cortex-gateway/config" "$BCTX/cortex-gateway/utils" "$BCTX/cortex-gateway/scripts" "$BCTX/prompts"
 
 cp "$REPO/cortex-gateway/Dockerfile"        "$BCTX/"
 cp "$REPO/cortex-gateway/package.json"      "$BCTX/cortex-gateway/"
@@ -71,6 +71,8 @@ cp "$REPO/cortex-gateway/package-lock.json" "$BCTX/cortex-gateway/"
 cp "$REPO/cortex-gateway/index.js"          "$BCTX/cortex-gateway/"
 cp "$REPO/cortex-gateway/config/"*          "$BCTX/cortex-gateway/config/"
 cp "$REPO/cortex-gateway/utils/"*           "$BCTX/cortex-gateway/utils/"
+# The daily maintenance job (scripts/deploy-maintenance-job.sh) runs these two from the gateway image (S2-50 2c).
+cp "$REPO/cortex-gateway/scripts/retention_purge.js" "$REPO/cortex-gateway/scripts/reconcile_offboarding.js" "$BCTX/cortex-gateway/scripts/"
 cp "$REPO/prompts/"*                        "$BCTX/prompts/"
 
 echo "Context size: $(du -sh "$BCTX" | cut -f1)"
