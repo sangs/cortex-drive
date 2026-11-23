@@ -596,27 +596,6 @@ const transfers = createTransfers({
         remove: a => bentoPost('/transfer_delete', a.tenant_id, a),
     },
 });
-function transferRoute(handler) {
-    return async (req, res) => {
-        if (req.guestAuth === true) return res.status(403).json({ error: 'Not available for guest links' });
-        try {
-            res.json(await handler(req.headers['x-user-id'], req));
-        } catch (err) {
-            if (err instanceof TransferError) return res.status(err.status).json({ error: err.message });
-            console.error(`[TRANSFER] ${req.method} ${req.path} failed:`, err.message);
-            res.status(500).json({ error: 'Could not complete that. Nothing was changed if this was a delete that failed before it started; refresh to see the current state.' });
-        }
-    };
-}
-app.get('/api/transfers', authMiddleware, transferRoute(userSub => transfers.list(userSub)));
-app.get('/api/transfers/:id/items', authMiddleware, transferRoute((userSub, req) => transfers.items(userSub, req.params.id)));
-app.post('/api/transfers/:id/keep', authMiddleware, transferRoute((userSub, req) =>
-    transfers.keep(userSub, req.params.id, Array.isArray(req.body && req.body.source_ids) ? req.body.source_ids : null)));
-app.post('/api/transfers/:id/delete', authMiddleware, transferRoute((userSub, req) =>
-    transfers.remove(userSub, req.params.id, req.body && req.body.source_ids, { confirm: Boolean(req.body && req.body.confirm === true) })));
-app.post('/api/transfers/:id/purge-history', authMiddleware, transferRoute((userSub, req) =>
-    transfers.purgeHistory(userSub, req.params.id, { confirm: Boolean(req.body && req.body.confirm === true) })));
-
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
 const { runCrossMode, crossEvidenceText, withConnectionsSection } = require('./utils/cross_mode');
 const gatewayCrossDomainAnswerPrompt = fs.readFileSync(path.join(promptsDir, 'gateway_cross_domain_answer.md'), 'utf-8');
@@ -2328,6 +2307,28 @@ const receivedShares = createReceivedShares({
         return `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.emailAddresses?.[0]?.emailAddress || '';
     },
 });
+// Steward review of transferred content (S2-50 §3b): routes (the module is created with the other services above).
+function transferRoute(handler) {
+    return async (req, res) => {
+        if (req.guestAuth === true) return res.status(403).json({ error: 'Not available for guest links' });
+        try {
+            res.json(await handler(req.headers['x-user-id'], req));
+        } catch (err) {
+            if (err instanceof TransferError) return res.status(err.status).json({ error: err.message });
+            console.error(`[TRANSFER] ${req.method} ${req.path} failed:`, err.message);
+            res.status(500).json({ error: 'Could not complete that. Nothing was changed if this was a delete that failed before it started; refresh to see the current state.' });
+        }
+    };
+}
+app.get('/api/transfers', authMiddleware, transferRoute(userSub => transfers.list(userSub)));
+app.get('/api/transfers/:id/items', authMiddleware, transferRoute((userSub, req) => transfers.items(userSub, req.params.id)));
+app.post('/api/transfers/:id/keep', authMiddleware, transferRoute((userSub, req) =>
+    transfers.keep(userSub, req.params.id, Array.isArray(req.body && req.body.source_ids) ? req.body.source_ids : null)));
+app.post('/api/transfers/:id/delete', authMiddleware, transferRoute((userSub, req) =>
+    transfers.remove(userSub, req.params.id, req.body && req.body.source_ids, { confirm: Boolean(req.body && req.body.confirm === true) })));
+app.post('/api/transfers/:id/purge-history', authMiddleware, transferRoute((userSub, req) =>
+    transfers.purgeHistory(userSub, req.params.id, { confirm: Boolean(req.body && req.body.confirm === true) })));
+
 // Starter questions under the empty chat (S2-102 §3.3): built from the titles this user can open (AP-30), no LLM.
 // ?page=N is "More ideas". Guest links have no chat box.
 app.get('/api/suggestions/starters', authMiddleware, async (req, res) => {
