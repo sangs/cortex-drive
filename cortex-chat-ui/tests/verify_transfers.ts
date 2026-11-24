@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readTransferItems, readTransferParams, readTransfers, transferGraphHref, transferOpenedNote, transferredLabel } from '../utils/transfers.ts';
+import { readTransferItems, readTransferParams, readTransfers, transferGraphHref, transferOpenedNote, transferredLabel, waitingNotice } from '../utils/transfers.ts';
 
 let passed = 0;
 const ok = (c: unknown, m: string) => { assert.ok(c, m); passed++; };
@@ -31,7 +31,12 @@ eq(readTransferParams('?transfer=../../x'), null, 'malformed transfer id ignored
 eq(readTransferParams(`?transfer=${T}&source=<script>`), { transferId: T, sourceId: null }, 'malformed source ignored');
 ok(transferOpenedNote({ fromName: 'Ada L', nodes: [1, 2] }).startsWith('Showing 2 items transferred from Ada L.'), 'note');
 eq(transferOpenedNote({ fromName: 'Ada L', nodes: [] }), 'Nothing from Ada L is left in review.', 'empty note');
+const ada = { transferId: 'a', fromName: 'Ada L', createdAt: '', status: 'in_review' as const, nodes: 3, sharesKept: 0, hiddenChats: 0, hiddenChatsPurgeOn: null, reminder: false };
+eq(waitingNotice([ada]), '3 items were transferred to you from Ada L.', 'notice: one transfer');
+eq(waitingNotice([ada, { ...ada, transferId: 'b', nodes: 1 }]), '2 transfers (4 items) are waiting for your review.', 'notice: several');
+eq(waitingNotice([{ ...ada, status: 'reviewed' as const }]), null, 'notice: nothing waiting → none');
 const dash = readFileSync(new URL('../app/dashboard/page.tsx', import.meta.url), 'utf8');
+ok(dash.includes('<TransfersWaitingNotice />'), 'dashboard notice');
 ok(dash.includes('/api/transfers/${encodeURIComponent(q.transferId)}/graph') && dash.includes("window.history.replaceState(null, '', '/dashboard')"), 'dashboard opens the group once and clears the link');
 
 const comp = readFileSync(new URL('../components/TransferredToYou.tsx', import.meta.url), 'utf8');

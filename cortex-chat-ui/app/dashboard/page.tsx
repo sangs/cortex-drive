@@ -54,6 +54,7 @@ const ConversationHistoryModal = dynamic(() => import("@/components/Conversation
 const AddSourceModal = dynamic(() => import("@/components/AddSourceModal"), { ssr: false });
 const SharedWithMe = dynamic(() => import("@/components/SharedWithMe"), { ssr: false });
 const StarterQuestions = dynamic(() => import("@/components/StarterQuestions"), { ssr: false });
+const TransfersWaitingNotice = dynamic(() => import("@/components/TransfersWaitingNotice"), { ssr: false });
 
 // System Health panel polling — see documents/architecture/neo4j-status-indicator-design-2026-08-27.md
 const SYSTEM_STATUS_POLL_INTERVAL_MS = 30000;
@@ -1369,6 +1370,9 @@ export default function DashboardPage() {
                         </button>
                         )}
                     </div>
+
+                    {/* Transferred content waiting for review (S2-50 §3b); nothing when there is none */}
+                    <TransfersWaitingNotice />
 
                     {/* Shared with me (unified shares phase 2) */}
                     <SharedWithMe onAsk={askSuggested} onOpen={openSharedItem}

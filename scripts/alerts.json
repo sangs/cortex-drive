@@ -84,7 +84,7 @@
     },
     {
       "name": "job failed",
-      "doc": "A Cloud Run job execution failed (cortex-finops-push, cortex-ingest-worker or permify-migrate). Logs: gcloud run jobs executions list --job <job> --region us-central1.",
+      "doc": "A Cloud Run job execution failed (cortex-finops-push, cortex-ingest-worker, permify-migrate or cortex-maintenance: the daily retention purge + orphan sweep). Logs: gcloud run jobs executions list --job <job> --region us-central1.",
       "condition": {
         "displayName": "failed job execution",
         "conditionThreshold": {

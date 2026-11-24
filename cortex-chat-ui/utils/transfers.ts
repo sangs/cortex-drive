@@ -69,3 +69,14 @@ export function transferOpenedNote(data: { fromName?: unknown; nodes?: unknown[]
     return `Showing ${n} item${n === 1 ? '' : 's'} transferred from ${who}. Click an item to read it. ` +
         'They stay out of your chat answers until you keep them (Settings → Sharing & Access → Transferred to you).';
 }
+
+/** The dashboard notice for transfers waiting for review, or null when there are none. */
+export function waitingNotice(transfers: Transfer[]): string | null {
+    const waiting = transfers.filter(t => t.status === 'in_review');
+    if (!waiting.length) return null;
+    const items = waiting.reduce((n, t) => n + t.nodes, 0);
+    const itemText = `${items} item${items === 1 ? '' : 's'}`;
+    return waiting.length === 1
+        ? `${itemText} ${items === 1 ? 'was' : 'were'} transferred to you from ${waiting[0].fromName}.`
+        : `${waiting.length} transfers (${itemText}) are waiting for your review.`;
+}
