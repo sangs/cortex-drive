@@ -144,6 +144,8 @@ class StewardReviewTest(unittest.TestCase):
         self.assertEqual([(s["node_id"], s["type"], s["nodes"]) for s in items["sources"]],
                          [("rv-w1", "WebsiteSource", 4), ("rv-w2", "WebsiteSource", 2)])
         self.assertEqual(items["total_nodes"], 5)
+        self.assertEqual(items["sources"][1]["node_ids"], ["rv-shared", "rv-w2"], "what each source reaches")
+        self.assertEqual(items["node_ids"], ["rv-shared", "rv-snap", "rv-tech", "rv-w1", "rv-w2"], "everything in review")
         with self.assertRaises(ValueError):
             ownership.transfer_items(self.driver, STEWARD, self.TID, "SYSTEM")
         self.assertEqual(ownership.transfer_items(self.driver, OTHER, self.TID, TEST_TENANT_ID)["total_nodes"], 0,

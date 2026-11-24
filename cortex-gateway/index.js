@@ -606,6 +606,7 @@ const transfers = createTransfers({
         items: a => bentoPost('/transfer_items', a.tenant_id, a),
         keep: a => bentoPost('/transfer_keep', a.tenant_id, a),
         remove: a => bentoPost('/transfer_delete', a.tenant_id, a),
+        nodesByIds: (tenantId, steward, nodeIds) => bentoPost('/nodes_by_ids', tenantId, { node_ids: nodeIds }, steward),
     },
 });
 // Cross-domain search mode (cross-domain design 2026-11-09 §4.2): routing v2 mode `cross`.
@@ -2323,6 +2324,8 @@ function transferRoute(handler) {
 }
 app.get('/api/transfers', authMiddleware, transferRoute(userSub => transfers.list(userSub)));
 app.get('/api/transfers/:id/items', authMiddleware, transferRoute((userSub, req) => transfers.items(userSub, req.params.id)));
+app.get('/api/transfers/:id/graph', authMiddleware, transferRoute((userSub, req) =>
+    transfers.graph(userSub, req.params.id, typeof req.query.source === 'string' && req.query.source ? req.query.source : null)));
 app.post('/api/transfers/:id/keep', authMiddleware, transferRoute((userSub, req) =>
     transfers.keep(userSub, req.params.id, Array.isArray(req.body && req.body.source_ids) ? req.body.source_ids : null)));
 app.post('/api/transfers/:id/delete', authMiddleware, transferRoute((userSub, req) =>

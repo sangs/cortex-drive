@@ -45,3 +45,27 @@ export function transferredLabel(node: { transferred_from_name?: unknown; transf
     const at = node ? str(node.transferred_at).slice(0, 10) : '';
     return /^\d{4}-\d{2}-\d{2}$/.test(at) ? `Transferred from ${name} on ${at}` : `Transferred from ${name}`;
 }
+
+/** "Open in graph" link to the dashboard for a transfer (and optionally one source). */
+export function transferGraphHref(transferId: string, sourceId?: string): string {
+    const q = new URLSearchParams({ transfer: transferId, ...(sourceId ? { source: sourceId } : {}) });
+    return `/dashboard?${q.toString()}`;
+}
+
+/** The dashboard's ?transfer=…&source=… (validated), or null. */
+export function readTransferParams(search: string): { transferId: string; sourceId: string | null } | null {
+    const q = new URLSearchParams(search || '');
+    const transferId = q.get('transfer') || '';
+    if (!/^[0-9a-f-]{36}$/i.test(transferId)) return null;
+    const source = q.get('source');
+    return { transferId, sourceId: source && /^[A-Za-z0-9_-]{1,80}$/.test(source) ? source : null };
+}
+
+/** The line shown in the chat when the group is drawn (fixed text, not an AI answer). */
+export function transferOpenedNote(data: { fromName?: unknown; nodes?: unknown[] }): string {
+    const n = Array.isArray(data?.nodes) ? data.nodes.length : 0;
+    const who = typeof data?.fromName === 'string' && data.fromName ? data.fromName : 'a former member';
+    if (!n) return `Nothing from ${who} is left in review.`;
+    return `Showing ${n} item${n === 1 ? '' : 's'} transferred from ${who}. Click an item to read it. ` +
+        'They stay out of your chat answers until you keep them (Settings → Sharing & Access → Transferred to you).';
+}

@@ -41,6 +41,7 @@ import { GATEWAY_URL } from "@/lib/gateway";
 import type { BridgeOptions, BridgeProgressItem } from "@/utils/bridgeTypes";
 import { clarifyChoiceFor, readClarify } from "@/utils/clarify";
 import { inferredLinkCount, readSuggestions, withoutSuggestionList } from "@/utils/suggestions";
+import { readTransferParams, transferOpenedNote } from "@/utils/transfers";
 import type { Clarify, ClarifyChoice, ClarifyOption } from "@/utils/clarify";
 import { bridgeDomainName, bridgeProgressText, combineBridgeSummaries } from "@/utils/bridgeTypes";
 import { useCapabilities } from "@/hooks/use-capabilities";
@@ -748,6 +749,36 @@ export default function DashboardPage() {
         setShowStarters(false);
         await executeQuery(question, [...messages], false, conversationId);
     };
+    // "Open in graph" from Settings → Sharing & Access → Transferred to you (S2-50 §3b): draw the transfer's items still
+    // in review, read as you through the gateway (no question, no AI); clicking one opens its panel as usual.
+    const transferOpened = useRef(false);
+    useEffect(() => {
+        if (transferOpened.current || !authLoaded || !userId) return;
+        const q = readTransferParams(window.location.search);
+        if (!q) return;
+        transferOpened.current = true;
+        (async () => {
+            try {
+                const token = await getToken();
+                const path = `/api/transfers/${encodeURIComponent(q.transferId)}/graph${q.sourceId ? `?source=${encodeURIComponent(q.sourceId)}` : ''}`;
+                const resp = await fetch(`${GATEWAY_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+                const data = await resp.json().catch(() => ({}));
+                window.history.replaceState(null, '', '/dashboard');
+                if (!resp.ok) {
+                    setMessages(prev => [...prev, { role: 'assistant', content: data?.error || 'Could not open the transferred items.' }]);
+                    return;
+                }
+                expandedNodes.current = new Set();
+                expansionContributions.current = new Map();
+                setGraphData(parseDataToGraph({ nodes: data.nodes || [], links: data.links || [] }));
+                setMessages(prev => [...prev, { role: 'assistant', content: transferOpenedNote(data) }]);
+            } catch {
+                setMessages(prev => [...prev, { role: 'assistant', content: 'Could not open the transferred items.' }]);
+            }
+        })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [authLoaded, userId]);
+
     const openSharedItem = async (item: { title: string }) => {
         if (!isConnected || isProcessing) return;
         setIsProcessing(true);

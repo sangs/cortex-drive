@@ -49,7 +49,11 @@ function setup({ left = 0, createdDaysAgo = 1 } = {}) {
     };
     const redis = { async incr(k) { calls.redis.push(['incr', k]); }, async del(k) { calls.redis.push(['del', k]); } };
     const bento = {
-        async items(a) { calls.bento.push(['items', a]); return { sources: [], other_nodes: 0, total_nodes: left }; },
+        async items(a) { calls.bento.push(['items', a]);
+            return { sources: [{ node_id: 's1', name: 'Site', type: 'WebsiteSource', nodes: 2, node_ids: ['s1', 'n1'] }],
+                     other_nodes: 0, total_nodes: left, node_ids: ['s1', 'n1', 'n2'] }; },
+        async nodesByIds(tenant, steward, ids) { calls.bento.push(['nodesByIds', tenant, steward, ids]);
+            return { nodes: ids.map(id => ({ id: `e-${id}`, node_id: id })), links: [] }; },
         async keep(a) { calls.bento.push(['keep', a]); return { changed: ['s1', 'n1'] }; },
         async remove(a) { calls.bento.push(['remove', a]); return { deleted: ['s1', 'n1'], kept_in_use: ['n2'] }; },
     };
@@ -72,6 +76,18 @@ function setup({ left = 0, createdDaysAgo = 1 } = {}) {
     eq(calls.bento.length, 0, 'no graph call for a refused request');
     ok(setup({ createdDaysAgo: 31 }).t.list(STEWARD).then(l => l[0].reminder), 'reminder after 30 days');
     eq((await setup({ createdDaysAgo: 31 }).t.list(STEWARD))[0].reminder, true, 'reminder flag');
+
+    // Open in graph
+    ({ t, calls } = setup());
+    await rejects(t.graph('user_other', T1), 404, 'another user cannot open the group');
+    eq(calls.bento.length, 0, 'not even a graph read for them');
+    const g = await t.graph(STEWARD, T1);
+    eq([g.fromName, g.nodes.map(n => n.node_id)], ['Ada L', ['s1', 'n1', 'n2']], 'the whole group');
+    eq(calls.bento.at(-1), ['nodesByIds', 'org_a', STEWARD, ['s1', 'n1', 'n2']], 'read as the steward, in the transfer\'s org');
+    eq((await t.graph(STEWARD, T1, 's1')).nodes.map(n => n.node_id), ['s1', 'n1'], 'one source');
+    await rejects(t.graph(STEWARD, T1, 'not-in-it'), 404, 'a source outside this transfer');
+    const shown = await t.items(STEWARD, T1);
+    eq([shown.node_ids, shown.sources[0].node_ids, shown.sources[0].name], [undefined, undefined, 'Site'], 'the card gets names and counts, not ids');
 
     // Delete
     ({ t, calls } = setup());

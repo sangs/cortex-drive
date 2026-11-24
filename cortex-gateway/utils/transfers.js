@@ -26,7 +26,8 @@ class TransferError extends Error {
  * @param deps.db        { query }
  * @param deps.permify   permify_gateway (listNodeAccess, exactTupleFilter via deleteNodeTuple)
  * @param deps.redis     ioredis
- * @param deps.bento     { items(args), keep(args), remove(args) } → Bento /transfer_items, /transfer_keep, /transfer_delete
+ * @param deps.bento     { items(args), keep(args), remove(args), nodesByIds(tenantId, steward, ids) } → Bento /transfer_items,
+ *                       /transfer_keep, /transfer_delete, /nodes_by_ids (the live-link graph reader, as the steward)
  * @param deps.now       () => ms (tests)
  */
 function createTransfers({ db, permify, redis, bento, log = console, now = Date.now }) {
@@ -85,7 +86,26 @@ function createTransfers({ db, permify, redis, bento, log = console, now = Date.
 
     async function items(userSub, transferId) {
         const t = await load(userSub, transferId);
-        return { ...(await summary(t)), ...(await bento.items(args(t))) };
+        const it = await bento.items(args(t));
+        const { node_ids: _all, ...rest } = it;   // ids stay server-side; the card needs names and counts
+        return { ...(await summary(t)), ...rest, sources: (it.sources || []).map(({ node_ids: _ids, ...src }) => src) };
+    }
+
+    /**
+     * "Open in graph": the transfer's items still in review (or one source's), drawn without a question. Read through
+     * Bento /nodes_by_ids as the steward (their permissions), so nothing beyond what they own appears. No LLM.
+     */
+    async function graph(userSub, transferId, sourceId = null) {
+        const t = await load(userSub, transferId);
+        const it = await bento.items(args(t));
+        let ids = it.node_ids || [];
+        if (sourceId) {
+            const src = (it.sources || []).find(x => x.node_id === sourceId);
+            if (!src) throw new TransferError(404, 'Source not found in this transfer');
+            ids = src.node_ids || [];
+        }
+        const g = ids.length ? await bento.nodesByIds(t.org_id, t.to_sub, ids) : { nodes: [], links: [] };
+        return { fromName: t.from_display_name, transferId: t.transfer_id, sourceId, nodes: g.nodes || [], links: g.links || [] };
     }
 
     /** Record a decision; the transfer is reviewed when nothing is left in review. */
@@ -152,7 +172,7 @@ function createTransfers({ db, permify, redis, bento, log = console, now = Date.
         return { deleted: rowCount };
     }
 
-    return { list, items, keep, remove, purgeHistory };
+    return { list, items, graph, keep, remove, purgeHistory };
 }
 
 module.exports = { createTransfers, TransferError, STATUS };

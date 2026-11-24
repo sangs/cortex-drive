@@ -9,7 +9,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Archive, Check, Loader2, MessageSquareX, Trash2 } from "lucide-react";
 import { GATEWAY_URL as GATEWAY } from "@/lib/gateway";
-import { readTransferItems, readTransfers, type Transfer, type TransferItems } from "@/utils/transfers";
+import Link from "next/link";
+import { readTransferItems, readTransfers, transferGraphHref, type Transfer, type TransferItems } from "@/utils/transfers";
 
 type Pending = { transferId: string; action: "delete" | "purge"; sourceIds?: string[]; label: string } | null;
 
@@ -97,6 +98,12 @@ export default function TransferredToYou() {
                                 {isOpen ? "Hide items" : "Review items"}
                             </button>
                             {t.status !== "reviewed" && (
+                                <Link href={transferGraphHref(t.transferId)}
+                                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700">
+                                    Open in graph
+                                </Link>
+                            )}
+                            {t.status !== "reviewed" && (
                                 <button disabled={busy === t.transferId}
                                     onClick={() => run(t.transferId, `/api/transfers/${t.transferId}/keep`, {}, r => `Kept ${r.changed} item(s) as yours.`)}
                                     className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 flex items-center gap-1">
@@ -140,6 +147,8 @@ export default function TransferredToYou() {
                                             <span className="text-sm text-slate-800 font-medium">{s.name}</span>
                                             <span className="text-[10px] text-slate-400">{s.type} · {s.nodes} item{s.nodes === 1 ? "" : "s"}</span>
                                             <div className="ml-auto flex gap-2">
+                                                <Link href={transferGraphHref(t.transferId, s.nodeId)}
+                                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100">Open in graph</Link>
                                                 <button disabled={busy === t.transferId}
                                                     onClick={() => run(t.transferId, `/api/transfers/${t.transferId}/keep`, { source_ids: [s.nodeId] }, r => `Kept ${r.changed} item(s) as yours.`)}
                                                     className="px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Keep</button>

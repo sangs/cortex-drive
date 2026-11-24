@@ -132,7 +132,7 @@ def _transfer_graph(tx, steward: str, transfer_id: str, tenant_id: str):
 
 def transfer_items(driver, steward: str, transfer_id: str, tenant_id: str) -> dict:
     """What is still in review for one transfer. Read-only.
-    {sources: [{node_id, name, type, nodes}], other_nodes: n, total_nodes: n}."""
+    {sources: [{node_id, name, type, nodes, node_ids}], other_nodes: n, total_nodes: n, node_ids: [...]}."""
     _check_review_args(steward, transfer_id, tenant_id)
     with driver.session() as session:
         nodes, sources, reach = session.execute_read(_transfer_graph, steward, transfer_id, tenant_id)
@@ -141,9 +141,10 @@ def transfer_items(driver, steward: str, transfer_id: str, tenant_id: str) -> di
     return {
         "sources": [{"node_id": s, "name": nodes[s]["name"],
                      "type": next((l for l in nodes[s]["labels"] if l in source_labels), None),
-                     "nodes": len(reach[s])} for s in sources],
+                     "nodes": len(reach[s]), "node_ids": sorted(reach[s])} for s in sources],
         "other_nodes": len(set(nodes) - covered),
         "total_nodes": len(nodes),
+        "node_ids": sorted(nodes),   # everything still in review: "Open in graph" draws these (S2-50 §3b)
     }
 
 
