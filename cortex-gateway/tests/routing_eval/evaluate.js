@@ -82,11 +82,11 @@ function snapshotCoverage(terms) {
     return out;
 }
 let v2Lookups = null;
-async function predictV2(q) {
+async function predictV2(q, history = []) {
     const { buildRoutingLookups } = require('../../utils/intent_classifier.js');
     const { routeQuestion } = require('../../utils/routing_v2.js');
     v2Lookups = v2Lookups || buildRoutingLookups(require('../../config/entity_catalog.json'));
-    const r = await routeQuestion(q, v2Lookups, { coverage: async terms => snapshotCoverage(terms) });
+    const r = await routeQuestion(q, v2Lookups, { coverage: async terms => snapshotCoverage(terms), history });
     return { domains: r.domains, mode: r.mode };
 }
 

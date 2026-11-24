@@ -1,6 +1,6 @@
 {
  "_comment": "HELD-OUT round 2 (routing-v2-rollout-plan-2026-11-23.md T1; bridge design §4.5 C1). Drafted 2026-11-23, never used to tune routing_v2.js, bridge_plan.js, intent_keywords.js or the catalog. bridge: same labels as round 1 (rule named | kind | subject | topic_words | clarify; sources; target or target_domains; 'her …' / 'owner to confirm' = checkable only live). routing: non-bridge questions labelled by README rules G1–G9 (mode + domains, owner's view, coverage from coverage_snapshot.json). A miss is recorded with its cause and fixed by mechanism or data, never by these words; then round 3 is drafted for the next measurement.",
- "status": "draft (awaiting owner review)",
+ "status": "reviewed (owner 2026-11-23)",
  "drafted_at": "2026-11-23",
  "cases": [
   {
@@ -171,11 +171,12 @@
    "expected": {
     "rule": "kind",
     "sources": [
-     "owner to confirm: MCP server for internal news access + Open-Source AI Agents Contribution @ JPMC"
+     "MCP server for internal news access",
+     "Open-Source AI Agents Contribution @ JPMC"
     ],
     "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
    },
-   "note": "'open-source' matches an OpenSource item and a Project whose name says Open-Source"
+   "note": "owner 2026-11-23: both (the OpenSource item and the project). Private prep notes and the 'Open Source & Independent Ventures' grouper are not items"
   },
   {
    "id": "R2-B14",
@@ -213,13 +214,15 @@
    "expected": {
     "rule": "kind",
     "sources": [
-     "owner to confirm: her Degree items (and MIT Professional Education?)"
+     "[1997] Bachelor's Degree (B.E.) in Electronics and Communication",
+     "[2011] Master's Degree in Computer Science",
+     "[2024] MIT: Applied Data Science"
     ],
     "target_domains": [
      "career"
     ]
    },
-   "note": "'education' as a kind word"
+   "note": "owner 2026-11-23: all education (degrees + professional education). Certification is not education. '[2024] MIT: Applied Data Science' (ProfessionalEducation) is not in the routing catalog today (gap N6)"
   },
   {
    "id": "R2-B17",
@@ -401,7 +404,7 @@
      "podcast"
     ]
    },
-   "note": "'article' → her publication, not the certification (B14 rule)"
+   "note": "owner 2026-11-23: there is only the written article, no talk. The second node 'Architectural Shifts for Platform Engineers in the Age of AI' is a duplicate of it (data fix D1)"
   },
   {
    "id": "R2-B31",
@@ -533,11 +536,9 @@
   {
    "id": "R2-R09",
    "q": "What did she work on at JPMorgan Chase?",
-   "mode": "single",
-   "domains": [
-    "career"
-   ],
-   "note": "pronoun, but the company title gives the context (owner to confirm: or clarify?)"
+   "mode": "clarify",
+   "domains": [],
+   "note": "owner 2026-11-23: no earlier question names her → ask who 'she' is"
   },
   {
    "id": "R2-R10",
@@ -637,11 +638,12 @@
   {
    "id": "R2-R21",
    "q": "Who is Ryan Blue?",
-   "mode": "single",
+   "mode": "cross",
    "domains": [
-    "podcast"
+    "podcast",
+    "website"
    ],
-   "note": "named person → his work domain"
+   "note": "owner 2026-11-23: search both (he is in a podcast episode and on the Apache Iceberg page)"
   },
   {
    "id": "R2-R22",
@@ -720,7 +722,7 @@
    "q": "Can you book a meeting for me?",
    "mode": "out_of_scope",
    "domains": [],
-   "note": "G9 (owner to confirm the label)"
+   "note": "owner 2026-11-23: out of scope ('Cortex-Drive can't do that')"
   },
   {
    "id": "R2-R31",
@@ -739,6 +741,25 @@
     "career"
    ],
    "note": "G5 one domain"
+  },
+  {
+   "id": "R2-R33",
+   "q": "What did she work on at JPMorgan Chase?",
+   "history": [
+    {
+     "role": "user",
+     "content": "Show career map of Sangeetha Ramadurai"
+    },
+    {
+     "role": "assistant",
+     "content": "Here is the career map of Sangeetha Ramadurai."
+    }
+   ],
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "owner 2026-11-23: a follow-up after a question that named her → infer her"
   }
  ]
 }

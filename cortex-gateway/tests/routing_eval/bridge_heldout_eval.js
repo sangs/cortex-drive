@@ -67,7 +67,7 @@ const coverage = async terms => {
         for (const c of set.routing) {
             console.log = () => {};
             let p;
-            try { p = await predictV2(c.q); } finally { console.log = quiet; }
+            try { p = await predictV2(c.q, c.history); } finally { console.log = quiet; }
             const want = [...c.domains].map(d => canonicalDomain(d) || d).sort().join('+');
             const got = [...p.domains].map(d => canonicalDomain(d) || d).sort().join('+');
             const noDomains = ['discovery', 'small_talk', 'out_of_scope', 'overview', 'clarify'].includes(c.mode);
