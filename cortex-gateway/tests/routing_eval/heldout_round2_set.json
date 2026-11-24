@@ -1,0 +1,744 @@
+{
+ "_comment": "HELD-OUT round 2 (routing-v2-rollout-plan-2026-11-23.md T1; bridge design §4.5 C1). Drafted 2026-11-23, never used to tune routing_v2.js, bridge_plan.js, intent_keywords.js or the catalog. bridge: same labels as round 1 (rule named | kind | subject | topic_words | clarify; sources; target or target_domains; 'her …' / 'owner to confirm' = checkable only live). routing: non-bridge questions labelled by README rules G1–G9 (mode + domains, owner's view, coverage from coverage_snapshot.json). A miss is recorded with its cause and fixed by mechanism or data, never by these words; then round 3 is drafted for the next measurement.",
+ "status": "draft (awaiting owner review)",
+ "drafted_at": "2026-11-23",
+ "cases": [
+  {
+   "id": "R2-B01",
+   "pair": "career→podcast",
+   "q": "In what way is the Volarisation Engine @ IBM Dev Day 2026 linked to the Data Engineering Podcast?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Volarisation Engine @ IBM Dev Day 2026"
+    ],
+    "target": "Data Engineering Podcast"
+   },
+   "note": "'in what way is … linked to' phrasing"
+  },
+  {
+   "id": "R2-B02",
+   "pair": "career→podcast",
+   "q": "Show the link between Metadata Agent Architecture and the MCP episode",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Metadata Agent Architecture"
+    ],
+    "target": "Anthropic And Model Context Protocol (MCP) With David Soria Parra"
+   },
+   "note": "to-side: kind word + short name → one episode"
+  },
+  {
+   "id": "R2-B03",
+   "pair": "website→podcast",
+   "q": "Connect the Graph database page to the KuzuDB episode",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Graph database"
+    ],
+    "target": "High Performance And Low Overhead Graphs With KuzuDB"
+   },
+   "note": "imperative 'connect … to'"
+  },
+  {
+   "id": "R2-B04",
+   "pair": "career→career",
+   "q": "What ties Sangeetha's degrees to Cortex-Drive?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "[1997] Bachelor's Degree (B.E.) in Electronics and Communication",
+     "[2011] Master's Degree in Computer Science"
+    ],
+    "target": "Cortex-Drive"
+   },
+   "note": "'what ties … to' phrasing; Degree kind"
+  },
+  {
+   "id": "R2-B05",
+   "pair": "career→website",
+   "q": "Link Sangeetha's talks to the website pages",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "her ThoughtLeadership items that are talks (owner to confirm which)"
+    ],
+    "target_domains": [
+     "website"
+    ]
+   },
+   "note": "'talk' added as a kind word in round 1 (G4)"
+  },
+  {
+   "id": "R2-B06",
+   "pair": "document→career",
+   "q": "How did the BERT paper shape the Metadata Agent Architecture?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+    ],
+    "target": "Metadata Agent Architecture"
+   },
+   "note": "'shape' as the influence verb"
+  },
+  {
+   "id": "R2-B07",
+   "pair": "podcast→website",
+   "q": "Trace the path from Ryan Blue's Iceberg episode to the Apache Iceberg page",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Iceberg at Netflix and Beyond with Ryan Blue"
+    ],
+    "target": "Apache Iceberg"
+   },
+   "note": "guest possessive + kind + word; target is the website page, not the topic"
+  },
+  {
+   "id": "R2-B08",
+   "pair": "podcast→career",
+   "q": "What links Data Archives - Software Engineering Daily to Sangeetha's thought leadership?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Data Archives - Software Engineering Daily"
+    ],
+    "target_domains": [
+     "career"
+    ]
+   },
+   "note": "a podcast title containing a hyphen"
+  },
+  {
+   "id": "R2-B09",
+   "pair": "career→document",
+   "q": "How does the Settlement Setup Instruction Verification System relate to the BERT paper?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Settlement Setup Instruction Verification System"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   }
+  },
+  {
+   "id": "R2-B10",
+   "pair": "podcast→career",
+   "q": "Trace from the Delayed View Semantics episode to Sangeetha's projects",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Delayed View Semantics In Incremental Data Processing"
+    ],
+    "target_domains": [
+     "career"
+    ]
+   },
+   "note": "short title + kind word"
+  },
+  {
+   "id": "R2-B11",
+   "pair": "podcast→career",
+   "q": "How did the Prompts as Functions episode influence the Metadata Agent Architecture?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Prompts as Functions: The BAML Revolution in AI Engineering"
+    ],
+    "target": "Metadata Agent Architecture"
+   }
+  },
+  {
+   "id": "R2-B12",
+   "pair": "website→career",
+   "q": "Connect the Apache Iceberg page with the Instrument Data on DataMesh project",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Apache Iceberg"
+    ],
+    "target": "Instrument Data on DataMesh"
+   },
+   "note": "two similar titles: 'Instrument Data on DataMesh' and 'Infrastructure for Instrument Data on DataMesh'; the exact one wins"
+  },
+  {
+   "id": "R2-B13",
+   "pair": "career→document",
+   "q": "What is the connection between Sangeetha's open-source contributions and the BERT paper?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "owner to confirm: MCP server for internal news access + Open-Source AI Agents Contribution @ JPMC"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   },
+   "note": "'open-source' matches an OpenSource item and a Project whose name says Open-Source"
+  },
+  {
+   "id": "R2-B14",
+   "pair": "podcast→website",
+   "q": "How do the Software Engineering Daily episodes connect to the Graph database page?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Software Engineering Daily"
+    ],
+    "target": "Graph database"
+   },
+   "note": "podcast title vs 'Data Archives - Software Engineering Daily'"
+  },
+  {
+   "id": "R2-B15",
+   "pair": "career→podcast",
+   "q": "Trace Sangeetha's Ignite community work to the podcasts",
+   "expected": {
+    "rule": "topic_words",
+    "sources": [
+     "Ignite Social Learning Community @ JPMC",
+     "Ignite takes New York City by storm"
+    ],
+    "target_domains": [
+     "podcast"
+    ]
+   },
+   "note": "paraphrase of two titles"
+  },
+  {
+   "id": "R2-B16",
+   "pair": "career→career",
+   "q": "How did Sangeetha's education influence her projects?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "owner to confirm: her Degree items (and MIT Professional Education?)"
+    ],
+    "target_domains": [
+     "career"
+    ]
+   },
+   "note": "'education' as a kind word"
+  },
+  {
+   "id": "R2-B17",
+   "pair": "?→career",
+   "q": "How did that page influence Cortex-Drive?",
+   "expected": {
+    "rule": "clarify"
+   },
+   "note": "pointing word + kind, nothing named"
+  },
+  {
+   "id": "R2-B18",
+   "pair": "?→podcast",
+   "q": "What's the relation between it and the podcasts?",
+   "expected": {
+    "rule": "clarify"
+   },
+   "note": "pronoun only"
+  },
+  {
+   "id": "R2-B19",
+   "pair": "podcast→career",
+   "q": "How did Tobias Macey's podcast influence Sangeetha's projects?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Data Engineering Podcast"
+    ],
+    "target_domains": [
+     "career"
+    ]
+   },
+   "note": "host owns the podcast (G6); needs the live ownership lookup"
+  },
+  {
+   "id": "R2-B20",
+   "pair": "podcast→career",
+   "q": "How did David Soria Parra's episode connect to Cortex-Drive?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Anthropic And Model Context Protocol (MCP) With David Soria Parra"
+    ],
+    "target": "Cortex-Drive"
+   },
+   "note": "guest = subject-matter expert of the episode (G6); needs the live lookup"
+  },
+  {
+   "id": "R2-B21",
+   "pair": "career→podcast",
+   "q": "Trace from Sangeetha's JPMorgan Chase work to the podcast episodes",
+   "expected": {
+    "rule": "subject",
+    "sources": [
+     "owner to confirm: her items linked to JPMorgan Chase"
+    ],
+    "target_domains": [
+     "podcast"
+    ]
+   },
+   "note": "G7: organization → its projects (not built)"
+  },
+  {
+   "id": "R2-B22",
+   "pair": "career→document",
+   "q": "How does Sangeetha's work at GE Healthcare connect to the BERT paper?",
+   "expected": {
+    "rule": "subject",
+    "sources": [
+     "owner to confirm: her items linked to GE Healthcare"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   },
+   "note": "G7"
+  },
+  {
+   "id": "R2-B23",
+   "pair": "website→career",
+   "q": "How does the Graph database page relate to Sangeetha's thought leadership?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Graph database"
+    ],
+    "target_domains": [
+     "career"
+    ]
+   }
+  },
+  {
+   "id": "R2-B24",
+   "pair": "podcast→website",
+   "q": "In what way did the KuzuDB episode shape the Graph database page?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "High Performance And Low Overhead Graphs With KuzuDB"
+    ],
+    "target": "Graph database"
+   }
+  },
+  {
+   "id": "R2-B25",
+   "pair": "podcast→document",
+   "q": "Link the Data Engineering Podcast with the BERT paper",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Data Engineering Podcast"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   },
+   "note": "imperative 'link … with'"
+  },
+  {
+   "id": "R2-B26",
+   "pair": "career→website",
+   "q": "How is the Corporate Action Report Automation project connected to the website pages?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Corporate Action Report Automation"
+    ],
+    "target_domains": [
+     "website"
+    ]
+   }
+  },
+  {
+   "id": "R2-B27",
+   "pair": "career→document",
+   "q": "Trace from Sangeetha's certification to the BERT paper",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "[2026] InfoQ Certified Architect"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   }
+  },
+  {
+   "id": "R2-B28",
+   "pair": "career→podcast",
+   "q": "How did the Humanless Autocode at Scale for SRE project draw on the podcast episodes?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Humanless Autocode at Scale for SRE @ JPMorgan Chase"
+    ],
+    "target_domains": [
+     "podcast"
+    ]
+   },
+   "note": "title without its '@ JPMorgan Chase' suffix; 'draw on' phrasing"
+  },
+  {
+   "id": "R2-B29",
+   "pair": "career→podcast",
+   "q": "What connects Cortex-Drive and the Iceberg at Netflix episode?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Cortex-Drive"
+    ],
+    "target": "Iceberg at Netflix and Beyond with Ryan Blue"
+   },
+   "note": "'what connects A and B'"
+  },
+  {
+   "id": "R2-B30",
+   "pair": "career→podcast",
+   "q": "How did Sangeetha's article on platform engineering influence the podcasts?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "InfoQ: Architectural Shifts for Platform Engineers in the Age of AI"
+    ],
+    "target_domains": [
+     "podcast"
+    ]
+   },
+   "note": "'article' → her publication, not the certification (B14 rule)"
+  },
+  {
+   "id": "R2-B31",
+   "pair": "document→career",
+   "q": "Connect the BERT paper to Sangeetha's hackathon projects",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+    ],
+    "target": "Global Hackathons @ JPMorgan Chase"
+   },
+   "note": "to-side kind + word matching one item → that item"
+  },
+  {
+   "id": "R2-B32",
+   "pair": "podcast→career",
+   "q": "How do the DuckLake and KuzuDB episodes relate to Cortex-Drive?",
+   "expected": {
+    "rule": "kind",
+    "sources": [
+     "Simplifying Lakehouse Ecosystem With DuckLake",
+     "High Performance And Low Overhead Graphs With KuzuDB"
+    ],
+    "target": "Cortex-Drive"
+   },
+   "note": "two sources by short name"
+  },
+  {
+   "id": "R2-B33",
+   "pair": "website→podcast",
+   "q": "What does the Graph database page have to do with the Anthropic MCP episode?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Graph database"
+    ],
+    "target": "Anthropic And Model Context Protocol (MCP) With David Soria Parra"
+   },
+   "note": "'have to do with' phrasing"
+  },
+  {
+   "id": "R2-B34",
+   "pair": "career→document",
+   "q": "Is there any link between Simulation systems development at Macmet and the BERT paper?",
+   "expected": {
+    "rule": "named",
+    "sources": [
+     "Simulation systems development and evaluation (Macmet)"
+    ],
+    "target": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"
+   },
+   "note": "partial title; yes/no phrasing"
+  }
+ ],
+ "routing": [
+  {
+   "id": "R2-R01",
+   "q": "Which episodes talk about DuckDB?",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "G1 scope word"
+  },
+  {
+   "id": "R2-R02",
+   "q": "Summarise the BERT paper's method",
+   "mode": "single",
+   "domains": [
+    "document"
+   ],
+   "note": "G2 container"
+  },
+  {
+   "id": "R2-R03",
+   "q": "What does the Apache Iceberg page say about snapshots?",
+   "mode": "single",
+   "domains": [
+    "website"
+   ],
+   "note": "G2 container makes the title a source, not the topic"
+  },
+  {
+   "id": "R2-R04",
+   "q": "Tell me about Kafka",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast"
+   ],
+   "note": "G5 coverage"
+  },
+  {
+   "id": "R2-R05",
+   "q": "Neo4j",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast"
+   ],
+   "note": "G5 one word"
+  },
+  {
+   "id": "R2-R06",
+   "q": "What has Sangeetha built with Kubernetes?",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "G4 person + own work"
+  },
+  {
+   "id": "R2-R07",
+   "q": "Did David mention agents?",
+   "mode": "clarify",
+   "domains": [],
+   "note": "G8 two visible Davids"
+  },
+  {
+   "id": "R2-R08",
+   "q": "Who were the guests on the Data Engineering Podcast?",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "G3 title"
+  },
+  {
+   "id": "R2-R09",
+   "q": "What did she work on at JPMorgan Chase?",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "pronoun, but the company title gives the context (owner to confirm: or clarify?)"
+  },
+  {
+   "id": "R2-R10",
+   "q": "What's the weather in New York?",
+   "mode": "out_of_scope",
+   "domains": [],
+   "note": "G9"
+  },
+  {
+   "id": "R2-R11",
+   "q": "thanks!",
+   "mode": "small_talk",
+   "domains": [],
+   "note": "G9"
+  },
+  {
+   "id": "R2-R12",
+   "q": "What's new?",
+   "mode": "overview",
+   "domains": [],
+   "note": "G9"
+  },
+  {
+   "id": "R2-R13",
+   "q": "Tell me something about quantum computing",
+   "mode": "discovery",
+   "domains": [],
+   "note": "G5 no coverage → no data"
+  },
+  {
+   "id": "R2-R14",
+   "q": "Compare what the podcasts and Sangeetha's projects say about RAG",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast"
+   ],
+   "note": "G1 two scopes"
+  },
+  {
+   "id": "R2-R15",
+   "q": "What is self-attention?",
+   "mode": "single",
+   "domains": [
+    "document"
+   ],
+   "note": "G5 one domain"
+  },
+  {
+   "id": "R2-R16",
+   "q": "Which of Sangeetha's projects used Terraform?",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "G1"
+  },
+  {
+   "id": "R2-R17",
+   "q": "Show me lakehouse content",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast"
+   ],
+   "note": "G5"
+  },
+  {
+   "id": "R2-R18",
+   "q": "What does the Graph database website say about Cypher?",
+   "mode": "single",
+   "domains": [
+    "website"
+   ],
+   "note": "G2 container 'website'"
+  },
+  {
+   "id": "R2-R19",
+   "q": "Explain graph databases",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast",
+    "website"
+   ],
+   "note": "G5 three domains"
+  },
+  {
+   "id": "R2-R20",
+   "q": "List Sangeetha's thought leadership",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "G1"
+  },
+  {
+   "id": "R2-R21",
+   "q": "Who is Ryan Blue?",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "named person → his work domain"
+  },
+  {
+   "id": "R2-R22",
+   "q": "What do my documents say about fine-tuning?",
+   "mode": "single",
+   "domains": [
+    "document"
+   ],
+   "note": "G1 'my documents'"
+  },
+  {
+   "id": "R2-R23",
+   "q": "Find podcast discussions of vector search",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "G1 beats coverage (career has it too)"
+  },
+  {
+   "id": "R2-R24",
+   "q": "Where does Trino come up?",
+   "mode": "cross",
+   "domains": [
+    "podcast",
+    "website"
+   ],
+   "note": "G5"
+  },
+  {
+   "id": "R2-R25",
+   "q": "Tell me about the Ignite community",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "partial title"
+  },
+  {
+   "id": "R2-R26",
+   "q": "What did Hannes Mühleisen talk about?",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "named guest, non-ASCII name"
+  },
+  {
+   "id": "R2-R27",
+   "q": "Give me an overview of everything about Snowflake",
+   "mode": "cross",
+   "domains": [
+    "career",
+    "podcast"
+   ],
+   "note": "G5; 'overview' word must not trigger the overview answer"
+  },
+  {
+   "id": "R2-R28",
+   "q": "How many episodes are there?",
+   "mode": "single",
+   "domains": [
+    "podcast"
+   ],
+   "note": "G1 scope only"
+  },
+  {
+   "id": "R2-R29",
+   "q": "What is in my graph?",
+   "mode": "overview",
+   "domains": [],
+   "note": "G9 open discovery"
+  },
+  {
+   "id": "R2-R30",
+   "q": "Can you book a meeting for me?",
+   "mode": "out_of_scope",
+   "domains": [],
+   "note": "G9 (owner to confirm the label)"
+  },
+  {
+   "id": "R2-R31",
+   "q": "What did Sangeetha study?",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "person + education"
+  },
+  {
+   "id": "R2-R32",
+   "q": "Explain zero trust",
+   "mode": "single",
+   "domains": [
+    "career"
+   ],
+   "note": "G5 one domain"
+  }
+ ]
+}
